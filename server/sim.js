@@ -397,6 +397,15 @@ class Troop {
   }
 
   /**
+   * Orders pass only between bodies that each stand alone on their row.
+   * A second body on a row, even one that does not collide, is overlapping
+   * and neither gives nor takes a line order.
+   */
+  canPassLineOrder(ally, allies) {
+    return !this.sameRowMate(allies) && !ally.sameRowMate(allies);
+  }
+
+  /**
    * True when this unit can still enter ally's line. The check ignores
    * this unit, so a skirmisher passing through a full rank is not counted
    * as the member of its row. A full rank has no room left.
@@ -467,6 +476,9 @@ class Troop {
         continue;
       }
       if (this.alongSigned(ally) < -this.stationSlack("parallel")) {
+        continue;
+      }
+      if (!this.canPassLineOrder(ally, allies)) {
         continue;
       }
       if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this)) {
@@ -556,6 +568,9 @@ class Troop {
       }
       const along = this.alongSigned(ally);
       if (along <= beside || !this.withinLine(ally)) {
+        continue;
+      }
+      if (!this.canPassLineOrder(ally, allies)) {
         continue;
       }
       if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this) || !this.canTakeLineOrder(ally, allies)) {

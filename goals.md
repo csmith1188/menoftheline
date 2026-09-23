@@ -14,3 +14,15 @@
 - select sublane in opposite lane to fall back to capital, then enter other lane
 - halting without shooting for 10 seconds digs in (10% cover)
 - skirmishers automatically fall back if not halted or charging and in range of an enemy troop or dragoon
+
+- Fatigue and Discipline
+    blue fatigue bar under health bar
+    Fatigue drains over time
+    Fatigue drains faster when charging or in melee (doesn't stack)
+    charging now always increases speed, not just when in range
+    halting stops fatigue drain
+    when a unit takes damage, they may break
+    very low chances of breaking when fatigue and health over 50% (average combined)
+    high chances under 25% (average combined)
+    officers restore fatigue when nearby
+    skirmishers target officers first

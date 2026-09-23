@@ -385,13 +385,17 @@ const boardMethods = {
       && point.y >= box.y - extra && point.y <= box.y + box.h + extra;
   },
 
-  /** Map a pointer onto logical canvas pixels (CSS size and DPR independent). */
+  /**
+   * Map a pointer onto logical canvas pixels (CSS size and DPR independent).
+   * Southpaw draws a mirrored board, so the point is flipped back into the
+   * unmirrored view the rest of the input code uses.
+   */
   canvasPoint(event) {
     const rect = this.canvas.getBoundingClientRect();
-    return {
-      x: (event.clientX - rect.left) * (CONFIG.canvasWidth / rect.width),
-      y: (event.clientY - rect.top) * (CONFIG.canvasHeight / rect.height),
-    };
+    let x = (event.clientX - rect.left) * (CONFIG.canvasWidth / rect.width);
+    const y = (event.clientY - rect.top) * (CONFIG.canvasHeight / rect.height);
+    if (this.southpaw) x = CONFIG.canvasWidth - x;
+    return { x, y };
   },
 
   /** Closest friendly troop under the cursor, or null. */
@@ -564,7 +568,7 @@ const boardMethods = {
     ctx.stroke();
     ctx.restore();
     const playerGps = Math.round(CONFIG.centerIncome * t);
-    this.drawLaneBonus(ctx, x, top - 2, `${playerGps}🪙`, "bottom");
+    this.drawLaneBonus(ctx, x, top - 2, `+${playerGps}💰`, "bottom");
   },
 
   /** Short ray that only crosses the bottom rings. */
@@ -591,7 +595,7 @@ const boardMethods = {
       ctx,
       c.x + (rOut + pad) * Math.cos(theta),
       c.y + (rOut + pad) * Math.sin(theta),
-      `${playerLps}🌿`,
+      `+${playerLps}🌿`,
       "middle",
     );
   },
@@ -648,6 +652,9 @@ const boardMethods = {
   render() {
     if (!this.player) return;
     const ctx = this.ctx;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
     ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
     ctx.fillStyle = CONFIG.colors.bg;
     ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
@@ -983,6 +990,65 @@ function orderAnnouncement(troop, action) {
   return null;
 }
 
+const SOUTHPAW_KEY = "motl-southpaw";
+const nativeText = new WeakMap();
+
+export function readSouthpaw() {
+  try {
+    return localStorage.getItem(SOUTHPAW_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+export function writeSouthpaw(on) {
+  try {
+    localStorage.setItem(SOUTHPAW_KEY, on ? "1" : "0");
+  } catch (err) {
+    // Storage can be blocked; the in-memory flag still applies this session.
+  }
+}
+
+function nativeTextFns(ctx) {
+  let saved = nativeText.get(ctx);
+  if (!saved) {
+    saved = {
+      fill: ctx.fillText.bind(ctx),
+      stroke: ctx.strokeText.bind(ctx),
+    };
+    nativeText.set(ctx, saved);
+  }
+  return saved;
+}
+
+/**
+ * Mirror the view so the player side is on the right. Glyphs stay readable:
+ * each text call is flipped back, and left/right alignment swaps so labels
+ * still sit inside the mirrored buttons and scoreboard.
+ */
+export function applySouthpaw(ctx, width, on) {
+  const saved = nativeTextFns(ctx);
+  if (!on) {
+    ctx.fillText = saved.fill;
+    ctx.strokeText = saved.stroke;
+    return;
+  }
+  ctx.translate(width, 0);
+  ctx.scale(-1, 1);
+  const mirror = (fn) => (text, x, y, maxWidth) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(-1, 1);
+    if (ctx.textAlign === "left") ctx.textAlign = "right";
+    else if (ctx.textAlign === "right") ctx.textAlign = "left";
+    if (maxWidth === undefined) fn(text, 0, 0);
+    else fn(text, 0, 0, maxWidth);
+    ctx.restore();
+  };
+  ctx.fillText = mirror(saved.fill);
+  ctx.strokeText = mirror(saved.stroke);
+}
+
 function fillChevron(ctx, cx, cy, up) {
   const s = 4 * CONFIG.uiScale;
   ctx.beginPath();
@@ -1105,6 +1171,7 @@ export function createBoard(canvas) {
     status: "waiting",
     countdownEnds: null,
     cssScale: 1,
+    southpaw: readSouthpaw(),
     topCenter: 0.5,
     bottomCenter: 0.5,
     onCommand() {},

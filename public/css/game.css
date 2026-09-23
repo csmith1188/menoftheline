@@ -112,13 +112,17 @@ body {
   background: #4a4232;
 }
 
-.gear {
+.gear,
+.book {
   position: absolute;
   top: 8px;
-  right: 8px;
   z-index: 5;
   width: 44px;
   height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -129,7 +133,22 @@ body {
   touch-action: manipulation;
 }
 
-.gear:hover {
+.gear {
+  right: 8px;
+}
+
+.book {
+  right: 60px;
+}
+
+.book svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+.gear:hover,
+.book:hover {
   border-color: var(--gold);
 }
 
@@ -167,6 +186,44 @@ body {
   width: 100%;
 }
 
+.southpaw {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.southpaw .mark {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #121821;
+  flex: 0 0 auto;
+}
+
+.southpaw .mark::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.southpaw[aria-pressed="true"] .mark {
+  border-color: var(--gold);
+  background: #3a3120;
+}
+
+.southpaw[aria-pressed="true"] .mark::after {
+  left: 18px;
+  background: var(--gold);
+}
+
 .confirm {
   display: flex;
   flex-direction: column;
@@ -178,4 +235,185 @@ body {
   font-size: 1rem;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.rules {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(12, 16, 22, 0.84);
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+.rules-card {
+  width: min(720px, 100%);
+  max-height: 100%;
+  margin: 0 auto;
+  overflow: auto;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  touch-action: pan-y;
+}
+
+.rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rules-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.rules-head .action {
+  width: auto;
+  padding: 8px 14px;
+}
+
+.rules-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+#rules-art {
+  display: block;
+  width: 100%;
+  height: 240px;
+  background: #172c20;
+  border: 1px solid var(--line);
+  touch-action: pan-y;
+}
+
+/* Phone landscape: the diagram sits beside the text and stays inside the window. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .rules-card {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .rules-body {
+    display: flow-root;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  #rules-art {
+    float: left;
+    width: 48%;
+    max-width: 48%;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 13.5rem);
+    margin: 0 12px 8px 0;
+  }
+}
+
+.rules-copy p,
+.rules-copy li {
+  margin: 0 0 8px;
+  line-height: 1.45;
+  font-size: 0.95rem;
+}
+
+.rules-copy ul {
+  margin: 0 0 8px;
+  padding-left: 1.15rem;
+}
+
+.rules-copy p:last-child,
+.rules-copy ul:last-child,
+.rules-copy li:last-child {
+  margin-bottom: 0;
+}
+
+.rules-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rules-mid {
+  flex: 1 0 100%;
+  order: -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.rules-nav .action {
+  width: auto;
+}
+
+.rules-nav .action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.rules-nav .action:disabled:hover {
+  background: #3a3120;
+}
+
+.rules-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.rules-dot {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  position: relative;
+  cursor: pointer;
+}
+
+.rules-dot::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 9px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.rules-dot[aria-current="true"]::after {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+#rules-page {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
+.rules:focus {
+  outline: none;
+}
+
+.rules button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }

@@ -841,6 +841,12 @@ class Troop {
     return CONFIG.troopRange;
   }
 
+  /** True when other, or a keep's capital, is inside melee reach. */
+  insideMeleeRange(other) {
+    const pos = other && other.capital ? other.capital : other;
+    return distance(this, pos) <= CONFIG.troopRange;
+  }
+
   /** Distance at which this troop may open fire on its own. */
   openFireRange() {
     return this.attackRange() * CONFIG.openFireFactor;
@@ -1244,8 +1250,9 @@ class Troop {
 
   /**
    * Closest living enemy inside a world-space circle. Lane and sublane
-   * do not matter, but units locked in melee cannot be shot. The enemy
-   * keep is a valid target when no unit is closer.
+   * do not matter, but units locked in melee cannot be shot. Cannons
+   * also skip anyone inside melee range. The enemy keep is a valid
+   * target when no unit is closer.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     let best = null;
@@ -1260,6 +1267,9 @@ class Troop {
         continue;
       }
       const d = distance(this, other);
+      if (this.type === "cannon" && this.insideMeleeRange(other)) {
+        continue;
+      }
       if (d <= range && d < bestD) {
         bestD = d;
         best = other;
@@ -1267,7 +1277,7 @@ class Troop {
     }
     if (!best && enemySide && enemySide.capitalHP > 0) {
       const d = distance(this, enemySide.capital);
-      if (d <= range) {
+      if (d <= range && !(this.type === "cannon" && this.insideMeleeRange(enemySide))) {
         return enemySide;
       }
     }
@@ -1312,7 +1322,7 @@ class Troop {
     }
   }
 
-  /** True when this body overlaps a quarter-mark cover line. */
+  /** True when this body overlaps this side's fort line. */
   onQuarterLine() {
     return touchesQuarterLine(this);
   }
@@ -1375,6 +1385,9 @@ class Troop {
   /** Fire a shell that ignores bodies between this unit and its target. */
   fire(target, allies, projectiles, kind) {
     const strike = kind || "shoot";
+    if (this.type === "cannon" && this.insideMeleeRange(target)) {
+      return;
+    }
     if (strike === "melee") {
       this.side.sim.emitSound({ type: "melee" });
     } else {
@@ -1572,12 +1585,16 @@ class Checkpoint {
     return CONFIG.checkpointRadius * CONFIG.uiScale;
   }
 
-  /** Last troop inside the capture radius claims the point. */
+  /** Last bottom-lane troop to pass this town, on any row, claims it. */
   tryCapture(troop) {
     if (troop.lane !== "bottom" || troop.hp <= 0) {
       return false;
     }
-    if (distance(this, troop) > CONFIG.captureRadius) {
+    const center = Path.bottomCenter();
+    const radius = Math.hypot(troop.x - center.x, troop.y - center.y);
+    const slack = Path.arcDegrees(CONFIG.captureRadius, radius);
+    const gap = Math.abs(troop.station() - Path.bottomStationDeg(this.x, this.y));
+    if (gap > slack) {
       return false;
     }
     if (this.owner === troop.side.id) {
@@ -1627,7 +1644,7 @@ class Side {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
 
-  /** Apply armor (plus cover if standing on a quarter line), then round. */
+  /** Apply armor (plus cover on this side's fort line), then round. */
   mitigate(amount, cover) {
     let reduction = this.armorReduction();
     if (cover) {
@@ -1700,20 +1717,13 @@ class Side {
   }
 
   /**
-   * Recalculate gold/sec from checkpoints plus this side's share of
-   * the top-lane center pool.
+   * Recalculate gold/sec from the base, this side's share of the
+   * top-lane center pool, and unlocked banks. Towns do not pay gold.
    */
-  refreshIncome(checkpoints, share) {
-    let owned = 0;
-    for (let i = 0; i < checkpoints.length; i += 1) {
-      if (checkpoints[i].owner === this.id) {
-        owned += 1;
-      }
-    }
+  refreshIncome(share) {
     const portion = share === undefined ? 0.5 : share;
     this.income = Math.round(
       CONFIG.baseIncome
-        + owned * CONFIG.incomePerCheckpoint
         + CONFIG.centerIncome * portion
         + this.bankIncome(),
     );
@@ -2049,8 +2059,8 @@ export class GameSim {
   refreshIncomes() {
     const top = this.topLaneCenterT();
     const bottom = this.bottomLaneCenterT();
-    this.player.refreshIncome(this.checkpoints, top);
-    this.enemy.refreshIncome(this.checkpoints, 1 - top);
+    this.player.refreshIncome(top);
+    this.enemy.refreshIncome(1 - top);
     this.player.refreshLand(bottom);
     this.enemy.refreshLand(1 - bottom);
   }
@@ -2119,7 +2129,7 @@ export class GameSim {
 
   /**
    * One side's push in a lane: each living unit adds progress-from-its
-   * keep times its gold cost.
+   * keep times its remaining hit points.
    */
   laneValue(side, lane) {
     let total = 0;
@@ -2128,7 +2138,7 @@ export class GameSim {
       if (troop.hp <= 0 || troop.lane !== lane) {
         continue;
       }
-      total += troop.progress * side.unitCost(troop.type);
+      total += troop.progress * troop.hp;
     }
     return total;
   }

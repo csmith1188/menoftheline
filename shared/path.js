@@ -265,7 +265,8 @@ export const Path = {
 
   /**
    * Cover bars at 1/4 of the lane from each keep: vertical on top,
-   * radial on the bottom rings. Thickness matches a troop.
+   * radial on the bottom rings. Thickness matches a troop. Each bar
+   * belongs to the keep it sits in front of.
    */
 export function quarterSegments() {
     const left = CONFIG.playerCapital;
@@ -281,14 +282,15 @@ export function quarterSegments() {
     const pTheta = Math.PI * (1 - CONFIG.quarterMark);
     const eTheta = Math.PI * CONFIG.quarterMark;
     return [
-      { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player },
-      { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy },
+      { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player, side: "player" },
+      { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy, side: "enemy" },
       {
         x1: c.x + rIn * Math.cos(pTheta),
         y1: c.y + rIn * Math.sin(pTheta),
         x2: c.x + rOut * Math.cos(pTheta),
         y2: c.y + rOut * Math.sin(pTheta),
         color: CONFIG.colors.player,
+        side: "player",
       },
       {
         x1: c.x + rIn * Math.cos(eTheta),
@@ -296,6 +298,7 @@ export function quarterSegments() {
         x2: c.x + rOut * Math.cos(eTheta),
         y2: c.y + rOut * Math.sin(eTheta),
         color: CONFIG.colors.enemy,
+        side: "enemy",
       },
     ];
   }
@@ -306,11 +309,19 @@ export function quarterThickness() {
   }
 
 
+/** True when this body overlaps its own side's fort line. */
 export function touchesQuarterLine(troop) {
+    const sideId = troop.side && troop.side.id;
+    if (!sideId) {
+      return false;
+    }
     const reach = troop.bodyRadius() + quarterThickness() / 2;
     const segs = quarterSegments();
     for (let i = 0; i < segs.length; i += 1) {
       const s = segs[i];
+      if (s.side !== sideId) {
+        continue;
+      }
       if (pointToSegment(troop, s.x1, s.y1, s.x2, s.y2) <= reach) {
         return true;
       }

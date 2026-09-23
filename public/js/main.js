@@ -1,6 +1,7 @@
-import { applySnapshot, createBoard } from "./render.js";
+import { applySnapshot, createBoard, writeSouthpaw } from "./render.js";
 import { bindInput } from "./input.js";
 import { playSounds } from "./audio.js";
+import { bindRules } from "./rules.js";
 
 const canvas = document.getElementById("board");
 const lobby = document.getElementById("lobby");
@@ -19,8 +20,22 @@ const concede = document.getElementById("concede");
 const confirmBox = document.getElementById("confirm");
 const concedeYes = document.getElementById("concede-yes");
 const concedeNo = document.getElementById("concede-no");
+const southpawBtn = document.getElementById("southpaw");
+
+const rulesUi = bindRules({
+  onOpen() {
+    menu.classList.add("hidden");
+  },
+});
 
 const board = createBoard(canvas);
+southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");
+southpawBtn.addEventListener("click", () => {
+  board.southpaw = !board.southpaw;
+  writeSouthpaw(board.southpaw);
+  southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");
+  rulesUi.repaint();
+});
 const meta = { you: null, opponent: null };
 let seat = null;
 let pending = null;
@@ -52,7 +67,6 @@ function syncChrome() {
   const showBanner = Boolean(board.winner);
   banner.classList.toggle("hidden", !showBanner);
   if (showBanner) bannerText.textContent = bannerCopy();
-  gear.classList.toggle("hidden", !meta.opponent);
   menuYou.textContent = meta.you ? meta.you.name : "";
   oppName.textContent = meta.opponent ? meta.opponent.name : "";
   oppKind.textContent = meta.opponent ? (meta.opponent.kind === "bot" ? "Bot" : "Player") : "";
@@ -107,8 +121,8 @@ socket.on("replaced", () => {
   lobbyText.textContent = "This match is open in another tab.";
   playBot.classList.add("hidden");
   banner.classList.add("hidden");
-  gear.classList.add("hidden");
   menu.classList.add("hidden");
+  rulesUi.close();
 });
 
 socket.on("disconnect", () => {
@@ -117,12 +131,14 @@ socket.on("disconnect", () => {
   lobbyText.textContent = "Connection lost. Reload to rejoin.";
   playBot.classList.add("hidden");
   banner.classList.add("hidden");
+  rulesUi.close();
 });
 
 playBot.addEventListener("click", () => socket.emit("play-bot"));
 leave.addEventListener("click", () => socket.emit("leave"));
 
 gear.addEventListener("click", () => {
+  rulesUi.close();
   menu.classList.toggle("hidden");
   confirmBox.classList.add("hidden");
   if (board.status === "playing" && !board.winner) concede.classList.remove("hidden");

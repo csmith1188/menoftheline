@@ -1,0 +1,15 @@
+- Officer unit. skirmishers always shoot them, but they provide benefits
+- checkpoints can also upgrade unit types
+    - skrimisher
+    - troop
+    - dragoon
+    - cannon
+    - officer
+- dragoons take less damage while charging?
+- matchmaking lobby / MMR
+- bot / ai / matchmaking button on start
+- benefits of far checkpoints? (skirm, troop, drag, cannon, officer)
+- upkeep tax for spam / many units? spam cooldown?
+- select sublane in opposite lane to fall back to capital, then enter other lane
+- halting without shooting for 10 seconds digs in (10% cover)
+- skirmishers automatically fall back if not halted or charging and in range of an enemy troop or dragoon

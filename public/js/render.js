@@ -111,10 +111,18 @@ const viewTroopMethods = {
     const barW = this.bodyRadius() * 2;
     const barH = 3;
     const ratio = Math.max(0, this.hp) / this.maxHP();
+    const barX = this.x - barW / 2;
+    const barY = this.y - barH / 2;
+    const fillW = barW * ratio;
+    // Southpaw mirrors the board, so fill from the other end and it still
+    // grows from the left side of the unit on screen.
+    const fillX = this.side.board && this.side.board.southpaw
+      ? barX + barW - fillW
+      : barX;
     ctx.fillStyle = "#1a1510";
-    ctx.fillRect(this.x - barW / 2, this.y - barH / 2, barW, barH);
+    ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = CONFIG.colors.gold;
-    ctx.fillRect(this.x - barW / 2, this.y - barH / 2, barW * ratio, barH);
+    ctx.fillRect(fillX, barY, fillW, barH);
     if (this.side.board && this.side.board.inspectedId === this.id) {
       ctx.beginPath();
       ctx.arc(this.x, this.y + barH / 2 + 5, 3, 0, Math.PI * 2);

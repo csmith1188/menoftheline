@@ -6,6 +6,7 @@
     - cannon
     - officer
 - dragoons take less damage while charging?
+- skirmishers 
 - matchmaking lobby / MMR
 - bot / ai / matchmaking button on start
 - benefits of far checkpoints? (skirm, troop, drag, cannon, officer)

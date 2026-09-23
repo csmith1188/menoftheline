@@ -899,7 +899,7 @@ const pages = [
         items: [
           "Advance: walk and shoot.",
           "Halt: hold still.",
-          "Reform: square up, then walk at half speed.",
+          "Reform: a perfect line stops to shoot. Troops behind it walk forward.",
           "Charge: drag toward the enemy. No shooting until contact. Troops and skirmishers speed up near a foe. Cannons do not fire.",
           "Fall back: drag toward your keep, at half speed, still fighting. The only order that works in melee.",
           "Change row: drag across, one row at a time. They wait if the next row is blocked.",
@@ -913,7 +913,7 @@ const pages = [
     artHeight: 240,
     blocks: [
       { kind: "p", text: "A line is same-type units in neighboring rows, close enough to count as one rank, one per row. An empty row splits them. An order applies to the whole line." },
-      { kind: "p", text: "Reform squares an uneven line: the rear walks fastest, and each rank ahead walks at half the speed of the one behind. A square line holds and shoots if anyone has opened fire. Units still catching up keep walking into place. An advancing unit that pulls even with another takes that order, but a charger keeps charging." },
+      { kind: "p", text: "A perfect line stops to shoot. Only troops behind it walk forward. An advancing unit that pulls even with another takes that order, but a charger keeps charging." },
     ],
     draw: drawLines,
   },

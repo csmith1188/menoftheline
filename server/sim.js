@@ -588,16 +588,137 @@ class Troop {
     return this.isReformSquare(rear);
   }
 
+  /** Station error still treated as a finished reform square. */
+  reformSlack() {
+    const px = 0.5;
+    return this.lane === "bottom"
+      ? Path.arcDegrees(px, Path.bottomMidRadius())
+      : px;
+  }
+
   /**
    * Reform keeps closing a stagger until the stations match. Combat
    * parallel is looser, so a halted line can still need this pass.
    */
   isReformSquare(other) {
-    const px = 0.5;
-    const slack = this.lane === "bottom"
-      ? Path.arcDegrees(px, Path.bottomMidRadius())
-      : px;
-    return Math.abs(this.station() - other.station()) <= slack;
+    return Math.abs(this.station() - other.station()) <= this.reformSlack();
+  }
+
+  /**
+   * Same-type reforming neighbors on adjacent rows, even when a stagger
+   * is wider than the combat line window. An empty row still splits them.
+   */
+  reformFormation(allies) {
+    const cap = Path.sublaneCount(this.lane);
+    const group = [this];
+    const seen = {};
+    const usedRow = {};
+    seen[this.id] = true;
+    usedRow[this.sublane] = true;
+    let added = true;
+    while (added && group.length < cap) {
+      added = false;
+      for (let i = 0; i < group.length && group.length < cap; i += 1) {
+        const member = group[i];
+        for (let j = 0; j < allies.length; j += 1) {
+          const ally = allies[j];
+          if (seen[ally.id] || ally.hp <= 0 || usedRow[ally.sublane]) {
+            continue;
+          }
+          if (ally.lane !== this.lane || ally.order !== "reform") {
+            continue;
+          }
+          if (!member.sameLineType(ally) || !member.adjacentRow(ally)) {
+            continue;
+          }
+          seen[ally.id] = true;
+          usedRow[ally.sublane] = true;
+          group.push(ally);
+          added = true;
+          if (group.length >= cap) {
+            break;
+          }
+        }
+      }
+    }
+    return group;
+  }
+
+  /** True when another reforming neighbor already shares this station. */
+  inPerfectLine(formation) {
+    for (let i = 0; i < formation.length; i += 1) {
+      if (formation[i] !== this && this.isReformSquare(formation[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Forward-most station where at least two reforming neighbors are
+   * already square. Null when the formation is still fully staggered.
+   */
+  frontPerfectStation(formation) {
+    const facing = this.side.id === "player";
+    let best = null;
+    for (let i = 0; i < formation.length; i += 1) {
+      let paired = false;
+      for (let j = 0; j < formation.length; j += 1) {
+        if (i !== j && formation[i].isReformSquare(formation[j])) {
+          paired = true;
+          break;
+        }
+      }
+      if (!paired) {
+        continue;
+      }
+      const station = formation[i].station();
+      if (best === null || (facing ? station > best : station < best)) {
+        best = station;
+      }
+    }
+    return best;
+  }
+
+  /** True when this troop still has to walk up to station. */
+  isBehindStation(station) {
+    const delta = this.station() - station;
+    if (Math.abs(delta) <= this.reformSlack()) {
+      return false;
+    }
+    return this.side.id === "player" ? delta < 0 : delta > 0;
+  }
+
+  /**
+   * A perfect reforming rank holds. Only troops behind it may walk
+   * forward. Until any pair is square, the line may still close up.
+   */
+  reformMayAdvance(allies) {
+    if (this.order !== "reform") {
+      return true;
+    }
+    const formation = this.reformFormation(allies);
+    if (formation.length < 2) {
+      return true;
+    }
+    const front = this.frontPerfectStation(formation);
+    if (front === null) {
+      return true;
+    }
+    if (this.inPerfectLine(formation)) {
+      return false;
+    }
+    return this.isBehindStation(front);
+  }
+
+  /** True when this reforming troop is behind a perfect rank. */
+  behindPerfectReform(allies) {
+    if (this.order !== "reform" || !this.reformMayAdvance(allies)) {
+      return false;
+    }
+    const formation = this.reformFormation(allies);
+    const front = this.frontPerfectStation(formation);
+    return front !== null && this.isBehindStation(front);
   }
 
   /**
@@ -783,9 +904,9 @@ class Troop {
 
   /**
    * Reform speeds. A staggered line compounds (last full, each ahead at
-   * half the next behind) so it squares up with or without a target.
-   * A perfect line walks at half speed. A lone troop uses half the next
-   * rear ally. Bottom-lane rings also apply ringSpeedScale.
+   * half the next behind) until a rank is square. A perfect rank holds.
+   * A lone troop uses half the next rear ally. Bottom-lane rings also
+   * apply ringSpeedScale.
    */
   marchSpeed(allies) {
     const scale = this.ringSpeedScale() * this.shotSlowScale() * this.dragoonSpeedScale(allies);
@@ -802,6 +923,9 @@ class Troop {
     }
     if (this.order !== "reform") {
       return base;
+    }
+    if (!this.reformMayAdvance(allies)) {
+      return 0;
     }
     const line = this.lineGroup(allies);
     if (line.length >= 2 && this.reformNeedsAlign) {
@@ -1489,7 +1613,9 @@ class Troop {
       if (this.cooldown <= 0) {
         this.fire(target, allies, projectiles, "shoot");
       }
-      if (!closingLine) {
+      // A perfect rank stops after the shot. Troops still behind that
+      // rank keep walking, and so does a line that has not squared yet.
+      if (!closingLine && !this.behindPerfectReform(allies)) {
         return;
       }
     }
@@ -1498,8 +1624,12 @@ class Troop {
       return;
     }
 
+    if (!this.reformMayAdvance(allies)) {
+      return;
+    }
+
     if (forming && !catchAhead) {
-      if (this.atFrontOfLine(allies)) {
+      if (this.atFrontOfLine(allies) && !this.behindPerfectReform(allies)) {
         return;
       }
     } else if (!catchAhead) {

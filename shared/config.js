@@ -139,7 +139,7 @@ export const CONFIG = {
   /** Melee damage of a skirmisher. */
   skirmisherMeleeDamage: 2,
   /** Farthest a skirmisher can shoot, in pixels. */
-  skirmisherRange: 400,
+  skirmisherRange: 300,
   /** Seconds between skirmisher strikes. */
   skirmisherAttackCooldown: 1,
   /** Body radius of a skirmisher, in pixels. */

@@ -1,3 +1,4 @@
+import "./server/load-env.js";
 import path from "path";
 import { createServer } from "http";
 import { createRequire } from "module";

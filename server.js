@@ -345,5 +345,5 @@ io.on("connection", (socket) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`Men Of The Line listening on http://localhost:${PORT}`);
+  console.log(`Men Of The Line listening on ${THIS_URL}`);
 });

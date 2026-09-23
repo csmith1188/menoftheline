@@ -90,6 +90,7 @@ export class BotController {
     for (let i = 0; i < allies.length; i += 1) {
       const troop = allies[i];
       if (troop.hp <= 0 || troop.type !== "dragoon" || seen[troop.id]) continue;
+      if (troop.sameRowMate(allies)) continue;
       const line = troop.lineGroup(allies);
       const lead = troop.sortRearToFront(line)[line.length - 1];
       const next = this.dragoonOrder(lead, allies, foes);
@@ -143,6 +144,7 @@ export class BotController {
       for (let i = 0; i < allies.length; i += 1) {
         const troop = allies[i];
         if (troop.hp <= 0 || troop.lane !== lane || troop.type === "dragoon") continue;
+        if (troop.sameRowMate(allies)) continue;
         if (troop.order === "charge" || troop.order === "halt" || troop.order === "fallback") continue;
         if (troop.lineInMelee(allies, foes)) continue;
         const line = troop.lineGroup(allies);

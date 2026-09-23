@@ -1,13 +1,13 @@
 import { applySnapshot, createBoard, writeSouthpaw } from "./render.js";
 import { bindInput } from "./input.js";
-import { playSounds } from "./audio.js";
+import { playCountdownBeep, playSounds, unlockAudio } from "./audio.js";
 import { bindRules } from "./rules.js";
 
 const canvas = document.getElementById("board");
 const lobby = document.getElementById("lobby");
 const lobbyYou = document.getElementById("lobby-you");
 const lobbyText = document.getElementById("lobby-text");
-const playBot = document.getElementById("play-bot");
+const lobbyLeave = document.getElementById("lobby-leave");
 const banner = document.getElementById("banner");
 const bannerText = document.getElementById("banner-text");
 const leave = document.getElementById("leave");
@@ -41,6 +41,9 @@ let seat = null;
 let pending = null;
 let lastTick = -1;
 let replaced = false;
+let leaving = false;
+let lobbyMessage = "Connecting...";
+let lastCountdownBeep = null;
 
 const socket = window.io();
 board.onCommand = (cmd) => socket.emit("command", cmd);
@@ -57,11 +60,17 @@ function syncChrome() {
   const countdown = board.status === "countdown";
   const playing = board.status === "playing";
   lobby.classList.toggle("hidden", !(waiting || countdown) || Boolean(board.winner));
-  playBot.classList.toggle("hidden", !waiting);
-  if (waiting) lobbyText.textContent = "Waiting for an opponent";
+  lobbyLeave.classList.toggle("hidden", lobby.classList.contains("hidden"));
+  if (waiting) lobbyText.textContent = lobbyMessage || "Waiting for an opponent";
   if (countdown) {
     const left = Math.max(0, Math.ceil((board.countdownEnds - Date.now()) / 1000));
     lobbyText.textContent = `Match starts in ${left}`;
+    if (Number.isFinite(left) && left !== lastCountdownBeep) {
+      lastCountdownBeep = left;
+      playCountdownBeep();
+    }
+  } else {
+    lastCountdownBeep = null;
   }
   lobbyYou.textContent = meta.you ? `You are ${meta.you.name}` : "";
   const showBanner = Boolean(board.winner);
@@ -89,6 +98,7 @@ socket.on("lobby", (lobbyState) => {
   seat = lobbyState.seat;
   meta.you = lobbyState.you;
   meta.opponent = lobbyState.opponent;
+  if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
   board.countdownEnds = lobbyState.countdownEnds;
   if (lobbyState.status === "waiting") {
@@ -117,25 +127,36 @@ socket.on("state", (snap) => {
 
 socket.on("replaced", () => {
   replaced = true;
+  lobbyMessage = "This match is open in another tab.";
   lobby.classList.remove("hidden");
-  lobbyText.textContent = "This match is open in another tab.";
-  playBot.classList.add("hidden");
+  lobbyLeave.classList.remove("hidden");
+  lobbyText.textContent = lobbyMessage;
   banner.classList.add("hidden");
   menu.classList.add("hidden");
   rulesUi.close();
 });
 
+socket.on("go-home", () => {
+  leaving = true;
+  window.location.assign("/");
+});
+
 socket.on("disconnect", () => {
-  if (replaced) return;
+  if (replaced || leaving) return;
+  lobbyMessage = "Connection lost. Reload to rejoin.";
   lobby.classList.remove("hidden");
-  lobbyText.textContent = "Connection lost. Reload to rejoin.";
-  playBot.classList.add("hidden");
+  lobbyLeave.classList.remove("hidden");
+  lobbyText.textContent = lobbyMessage;
   banner.classList.add("hidden");
   rulesUi.close();
 });
 
-playBot.addEventListener("click", () => socket.emit("play-bot"));
-leave.addEventListener("click", () => socket.emit("leave"));
+function askLeave() {
+  socket.emit("leave");
+}
+
+lobbyLeave.addEventListener("click", askLeave);
+leave.addEventListener("click", askLeave);
 
 gear.addEventListener("click", () => {
   rulesUi.close();
@@ -159,6 +180,9 @@ concedeYes.addEventListener("click", () => {
   menu.classList.add("hidden");
   confirmBox.classList.add("hidden");
 });
+
+document.addEventListener("pointerdown", () => unlockAudio());
+document.addEventListener("keydown", () => unlockAudio());
 
 document.addEventListener("pointerdown", (event) => {
   if (menu.classList.contains("hidden")) return;

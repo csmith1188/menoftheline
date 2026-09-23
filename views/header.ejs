@@ -1,0 +1,12 @@
+<header class="top">
+  <a class="brand" href="/">Men Of The Line</a>
+  <nav>
+    <% if (viewer) { %>
+      <a href="/profile/<%= viewer.formbar_id %>"><%= viewer.name %></a>
+      <span class="tickets"><%= viewer.tickets %> tickets<% if (viewer.held > 0) { %> (<%= viewer.held %> in use)<% } %></span>
+      <a href="/logout">Log out</a>
+    <% } else { %>
+      <a href="/login">Log in with Formbar</a>
+    <% } %>
+  </nav>
+</header>

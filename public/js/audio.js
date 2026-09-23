@@ -50,6 +50,27 @@ const ShotTone = {
     osc.stop(now + 0.16);
   },
 
+  /** Short tone for one second of the match-start countdown. */
+  playCountdown() {
+    const ctx = this.unlock();
+    if (!ctx) return;
+    const start = () => {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.14);
+    };
+    if (ctx.state === "running") start();
+    else ctx.resume().then(start).catch(() => {});
+  },
+
   /** Quick high-passed noise tick for a melee hit. */
   playMelee() {
     const ctx = this.unlock();
@@ -79,6 +100,10 @@ const ShotTone = {
 
 export function unlockAudio() {
   ShotTone.unlock();
+}
+
+export function playCountdownBeep() {
+  ShotTone.playCountdown();
 }
 
 export function playSounds(events) {

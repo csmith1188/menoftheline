@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title><%= account ? account.name : "Player" %> · Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+    <% if (!account) { %>
+      <section>
+        <h2>Player not found</h2>
+        <p class="hint">No account uses that Formbar id.</p>
+        <a class="action" href="/">Back</a>
+      </section>
+    <% } else { %>
+      <section>
+        <h2><%= account.name %></h2>
+        <dl class="stats">
+          <div><dt>MMR</dt><dd><%= account.mmr %></dd></div>
+          <div><dt>Wins</dt><dd><%= account.wins %></dd></div>
+          <div><dt>Losses</dt><dd><%= account.losses %></dd></div>
+          <div><dt>Ranked games</dt><dd><%= account.wins + account.losses %></dd></div>
+          <% if (isOwner) { %>
+            <div><dt>Tickets</dt><dd><%= account.tickets %></dd></div>
+          <% } %>
+        </dl>
+      </section>
+      <% if (isOwner) { %>
+        <section>
+          <h2>Tickets</h2>
+          <%- include("buy", { nextPath: "/profile/" + account.formbar_id }) %>
+        </section>
+      <% } %>
+    <% } %>
+  </div>
+</body>
+</html>

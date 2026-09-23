@@ -899,8 +899,8 @@ const pages = [
         items: [
           "Advance: walk and shoot.",
           "Halt: hold still.",
-          "Reform: a perfect line stops to shoot. Troops behind it walk forward.",
-          "Charge: drag toward the enemy. No shooting until contact. Troops and skirmishers speed up near a foe. Cannons do not fire.",
+          "Reform: move at half speed. The front stops until the rear walks into a perfect line, and a stopped unit still shoots. A perfect line keeps walking together at half speed. A unit that joins from behind takes the reform order, unless that line already fills every row. A full line keeps its order. A unit walking through it keeps its own order and does not halt, reform, or charge that line.",
+          "Charge: drag toward the enemy. No shooting until contact. Troops and skirmishers speed up near a foe. Cannons do not fire. Coming into line charges that line only when it is reforming and still has an open row. A full line never takes another unit's order.",
           "Fall back: drag toward your keep, at half speed, still fighting. The only order that works in melee.",
           "Change row: drag across, one row at a time. They wait if the next row is blocked.",
         ],
@@ -913,7 +913,7 @@ const pages = [
     artHeight: 240,
     blocks: [
       { kind: "p", text: "A line is same-type units in neighboring rows, close enough to count as one rank, one per row. An empty row splits them. An order applies to the whole line." },
-      { kind: "p", text: "A perfect line stops to shoot. Only troops behind it walk forward. An advancing unit that pulls even with another takes that order, but a charger keeps charging." },
+      { kind: "p", text: "While advancing, a perfect line holds and shoots if anyone in it has opened fire. On reform, the front stops until the rear walks into that line, then the whole line walks at half speed, and a unit joining from behind takes the reform order unless that line already fills every row. A full line keeps its order. A unit walking through it keeps its own order and does not halt, reform, or charge that line. A charger puts a line onto charge only when that line is reforming and still has an open row. A retreat does not spread to matching units it lines up with." },
     ],
     draw: drawLines,
   },

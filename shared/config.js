@@ -38,15 +38,15 @@ export const CONFIG = {
   // Gold, land, and banks
 
   /** Gold each side starts with. */
-  startGold: 500,
+  startGold: 600,
   /** Gold price of a melee troop. */
-  troopCost: 100,
+  troopCost: 120,
   /** Gold price of a skirmisher (long range, light hits). */
-  skirmisherCost: 50,
+  skirmisherCost: 60,
   /** Gold price of a dragoon (weaker shots, extra flanking damage). */
-  dragoonCost: 200,
+  dragoonCost: 240,
   /** Gold price of a cannon (ranged, fires over the line). */
-  cannonCost: 300,
+  cannonCost: 360,
   /** Gold per second before the top-lane share and banks. */
   baseIncome: 10,
   /** Extra gold per second split by the top-lane center ratio. */
@@ -56,9 +56,9 @@ export const CONFIG = {
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
-  bankBaseCost: 100,
+  bankBaseCost: 120,
   /** Extra gold per bank already unlocked on that side. */
-  bankCostStep: 100,
+  bankCostStep: 120,
   /** Gold/sec granted per unlock, times current unlocked count. */
   bankIncomePer: 1,
   /** Match time (seconds) when each bank becomes purchasable. */

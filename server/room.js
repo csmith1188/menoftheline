@@ -1,4 +1,12 @@
 import { BotController } from "./bot.js";
+import {
+  chargeHeld,
+  eloK,
+  insertGame,
+  refundTicket,
+  setRankedResult,
+} from "./db.js";
+import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
 
 export const TICK_MS = 50;
@@ -11,6 +19,8 @@ function emptySeat(key, sideId) {
     sideId,
     userId: null,
     name: null,
+    formbarId: null,
+    mmr: null,
     socket: null,
     bot: null,
     queue: [],
@@ -22,9 +32,11 @@ function emptySeat(key, sideId) {
  * Humans, bots, and later agents all sit in a seat and feed the same sim.
  */
 export class GameRoom {
-  constructor(matchmaker, io) {
+  constructor(matchmaker, io, mode) {
     this.matchmaker = matchmaker;
     this.io = io;
+    this.mode = mode;
+    this.paid = mode === "ranked" || mode === "listed";
     this.id = crypto.randomUUID();
     this.roomName = `game:${this.id}`;
     this.sim = new GameSim();
@@ -32,6 +44,10 @@ export class GameRoom {
     this.countdownEnds = null;
     this.countdownTimer = null;
     this.tickTimer = null;
+    this.createdAt = Date.now();
+    this.charged = false;
+    this.recorded = false;
+    this.closing = false;
     this.seat = {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),
@@ -57,6 +73,8 @@ export class GameRoom {
   clearSeat(seat) {
     seat.userId = null;
     seat.name = null;
+    seat.formbarId = null;
+    seat.mmr = null;
     seat.socket = null;
     seat.bot = null;
     seat.queue = [];
@@ -66,15 +84,23 @@ export class GameRoom {
     const session = socket.request.session;
     if (!session) return;
     session.gameId = this.id;
+    session.search = null;
+    session.intent = null;
     session.save(() => {});
+  }
+
+  copyPlayer(seat, player) {
+    seat.userId = player.id;
+    seat.name = player.name;
+    seat.formbarId = player.formbarId || null;
+    seat.mmr = Number.isFinite(player.mmr) ? player.mmr : null;
+    seat.bot = null;
   }
 
   seatHuman(key, socket) {
     const seat = this.seat[key];
     const previous = seat.socket;
-    seat.userId = socket.data.user.id;
-    seat.name = socket.data.user.name;
-    seat.bot = null;
+    this.copyPlayer(seat, socket.data.user);
     seat.socket = socket;
     socket.data.gameId = this.id;
     socket.data.seatKey = key;
@@ -89,6 +115,18 @@ export class GameRoom {
     this.broadcastState();
   }
 
+  seatReserved(key, player) {
+    const seat = this.seat[key];
+    this.copyPlayer(seat, {
+      id: player.userId || player.id,
+      name: player.name,
+      formbarId: player.formbarId,
+      mmr: player.mmr,
+    });
+    seat.socket = null;
+    seat.queue = [];
+  }
+
   attach(socket) {
     const seat = this.seatForUser(socket.data.user.id);
     if (!seat) return;
@@ -99,18 +137,46 @@ export class GameRoom {
     const seat = this.seat[key];
     seat.userId = null;
     seat.name = "Bot";
+    seat.formbarId = null;
+    seat.mmr = null;
     seat.socket = null;
     seat.queue = [];
     seat.bot = new BotController(seat.sideId);
   }
 
-  startCountdown() {
-    if (this.status !== "waiting") return;
+  async startCountdown() {
+    if (this.status !== "waiting" || this.closing) return false;
+    if (this.paid && !this.charged) {
+      const ids = [this.seat.a.formbarId, this.seat.b.formbarId]
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (ids.length < 2) return false;
+      const done = [];
+      for (let i = 0; i < ids.length; i += 1) {
+        const ok = await chargeHeld(ids[i]);
+        if (!ok) {
+          for (let r = 0; r < done.length; r += 1) {
+            await refundTicket(done[r]);
+          }
+          return false;
+        }
+        done.push(ids[i]);
+      }
+      this.charged = true;
+    }
+    if (this.status !== "waiting" || this.closing) {
+      if (this.charged) {
+        await refundTicket(this.seat.a.formbarId);
+        await refundTicket(this.seat.b.formbarId);
+        this.charged = false;
+      }
+      return false;
+    }
     this.status = "countdown";
     this.countdownEnds = Date.now() + COUNTDOWN_MS;
     this.pushLobby();
     this.broadcastState();
     this.countdownTimer = setTimeout(() => this.beginPlay(), COUNTDOWN_MS);
+    return true;
   }
 
   cancelCountdown() {
@@ -120,7 +186,7 @@ export class GameRoom {
   }
 
   beginPlay() {
-    if (this.status !== "countdown") return;
+    if (this.status !== "countdown" || this.closing) return;
     this.countdownTimer = null;
     this.status = "playing";
     this.countdownEnds = null;
@@ -175,61 +241,42 @@ export class GameRoom {
   }
 
   leave(socket) {
-    if (this.status === "dead" || !this.sim.winner) return;
+    if (this.status === "dead" || this.closing) return;
     const seat = this.seatBySocket(socket);
     if (!seat) return;
-    this.clearSeat(seat);
-    socket.leave(this.roomName);
-    socket.data.gameId = null;
-    socket.data.seatKey = null;
-    const session = socket.request.session;
-    if (session) {
-      session.gameId = null;
-      session.save(() => {});
+    if (this.status === "playing" && !this.sim.winner) return;
+    if (this.sim.winner) {
+      this.sendHome(socket);
+      return;
     }
-    if (this.connectedSockets().length === 0) this.destroy();
-    this.matchmaker.enqueue(socket);
+    this.matchmaker.abandonSeat(this, seat, { goHome: true }).catch((err) => {
+      console.error(err);
+    });
   }
 
   disconnect(socket) {
-    if (socket.data.replaced || this.status === "dead") return;
+    if (socket.data.replaced || this.status === "dead" || this.closing) return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.socket !== socket) return;
-    seat.socket = null;
     if (this.status === "waiting" || this.status === "countdown") {
-      this.abandonLobby(seat);
+      this.matchmaker.abandonSeat(this, seat, { goHome: false }).catch((err) => {
+        console.error(err);
+      });
       return;
     }
+    seat.socket = null;
     if (this.connectedSockets().length === 0) this.destroy();
   }
 
-  /** Countdown or waiting: the remaining human becomes the waiter, or the room ends. */
-  abandonLobby(seat) {
-    this.cancelCountdown();
-    const other = seat.key === "a" ? this.seat.b : this.seat.a;
-    const otherSocket = other.socket;
-    if (!otherSocket) {
-      this.destroy();
-      return;
-    }
-    this.status = "waiting";
-    this.countdownEnds = null;
-    this.sim.reset();
-    if (seat.key === "a") {
-      this.seat.a.userId = other.userId;
-      this.seat.a.name = other.name;
-      this.seat.a.socket = otherSocket;
-      this.seat.a.bot = null;
-      this.seat.a.queue = [];
-      otherSocket.data.seatKey = "a";
-      this.clearSeat(this.seat.b);
-    } else {
-      this.clearSeat(seat);
-    }
-    this.matchmaker.waiting = this;
-    this.remember(this.seat.a.socket);
-    this.pushLobby();
-    this.broadcastState();
+  sendHome(socket) {
+    const seat = this.seatBySocket(socket);
+    if (seat) this.clearSeat(seat);
+    socket.leave(this.roomName);
+    socket.data.gameId = null;
+    socket.data.seatKey = null;
+    this.matchmaker.clearPlaySession(socket);
+    if (this.status !== "dead" && this.connectedSockets().length === 0) this.destroy();
+    socket.emit("go-home");
   }
 
   opponentOf(seat) {
@@ -239,10 +286,17 @@ export class GameRoom {
     return null;
   }
 
+  waitingText() {
+    if (this.mode === "ranked") return "Searching for a ranked match";
+    return "Waiting for an opponent";
+  }
+
   lobbyFor(seat) {
     return {
       seat: seat.key,
       status: this.status,
+      mode: this.mode,
+      text: this.status === "waiting" ? this.waitingText() : "",
       countdownEnds: this.countdownEnds,
       you: seat.userId ? { id: seat.userId, name: seat.name } : null,
       opponent: this.opponentOf(seat),
@@ -265,7 +319,52 @@ export class GameRoom {
   }
 
   broadcastState() {
+    this.noteOutcome();
     this.io.to(this.roomName).emit("state", this.publicState());
+  }
+
+  noteOutcome() {
+    if (this.recorded || !this.sim.winner || this.status !== "playing") return;
+    this.recorded = true;
+    const winner = this.sim.winner;
+    const a = this.seat.a;
+    const b = this.seat.b;
+    let mmrAAfter = null;
+    let mmrBAfter = null;
+    const tasks = [];
+    if (
+      this.mode === "ranked"
+      && a.formbarId
+      && b.formbarId
+      && Number.isFinite(a.mmr)
+      && Number.isFinite(b.mmr)
+    ) {
+      const aScore = winner === "player" ? 1 : 0;
+      const bScore = winner === "enemy" ? 1 : 0;
+      const k = eloK();
+      mmrAAfter = nextMmr(a.mmr, b.mmr, aScore, k);
+      mmrBAfter = nextMmr(b.mmr, a.mmr, bScore, k);
+      tasks.push(setRankedResult(a.formbarId, mmrAAfter, aScore === 1));
+      tasks.push(setRankedResult(b.formbarId, mmrBAfter, bScore === 1));
+    }
+    tasks.push(insertGame({
+      id: this.id,
+      mode: this.mode,
+      playerA: a.userId,
+      playerB: b.userId,
+      nameA: a.name,
+      nameB: b.name,
+      formbarA: a.formbarId,
+      formbarB: b.formbarId,
+      winnerSide: winner,
+      mmrABefore: Number.isFinite(a.mmr) ? a.mmr : null,
+      mmrBBefore: Number.isFinite(b.mmr) ? b.mmr : null,
+      mmrAAfter,
+      mmrBAfter,
+      createdAt: this.createdAt,
+      endedAt: Date.now(),
+    }));
+    Promise.all(tasks).catch((err) => console.error(err));
   }
 
   destroy() {

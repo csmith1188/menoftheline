@@ -8,7 +8,7 @@
 - dragoons take less damage while charging?
 - skirmishers 
 - matchmaking lobby / MMR
-- bot / ai / matchmaking button on start
+- Reinforced Learning player
 - benefits of far checkpoints? (skirm, troop, drag, cannon, officer)
 - upkeep tax for spam / many units? spam cooldown?
 - select sublane in opposite lane to fall back to capital, then enter other lane

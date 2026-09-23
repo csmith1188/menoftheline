@@ -2,10 +2,13 @@ import { CONFIG } from "../shared/config.js";
 import { Path, distance } from "../shared/path.js";
 import { unlockAudio } from "./audio.js";
 
+/** A press this long selects the unit instead of cycling its order. */
+const SELECT_HOLD_MS = 400;
+
 const pointerMethods = {
   /**
    * Left-press on a friendly starts a possible drag-to-row. A short
-   * press still issues halt / reform / advance.
+   * press still issues halt / reform / advance. Holding selects it.
    */
   onPointerDown(event) {
     if ((this.winner || this.status !== "playing") || !event.isPrimary) {
@@ -38,7 +41,14 @@ const pointerMethods = {
     if (!troop) {
       return;
     }
-    this.drag = { troop, x: point.x, y: point.y, hx: point.x, hy: point.y };
+    this.drag = {
+      troop,
+      x: point.x,
+      y: point.y,
+      hx: point.x,
+      hy: point.y,
+      downAt: performance.now(),
+    };
     this.canvas.setPointerCapture(event.pointerId);
   },
 
@@ -67,7 +77,8 @@ const pointerMethods = {
   /**
    * Left-release: drag across to change row, forward to charge, back
    * to fall back, click to cycle halt / reform / advance, or click a
-   * town you own to buy its upgrade. Only fallback works in melee.
+   * town you own to buy its upgrade. A hold only selects. Only
+   * fallback works in melee.
    */
   onPointerUp(event) {
     if (!event.isPrimary) {
@@ -108,6 +119,12 @@ const pointerMethods = {
     const pulled = distance(start, point);
     const troopId = start.troop.id;
     const intent = this.dragIntent(start.troop, start, point);
+    const held = start.downAt != null && performance.now() - start.downAt >= SELECT_HOLD_MS;
+    // A held press that never becomes a charge or fallback only selects.
+    if (held && pulled < this.uiMetrics().dragMin) {
+      this.inspectedId = start.troop.id;
+      return;
+    }
     // Row changes commit once the pointer has crossed into the highlighted
     // sublane. The longer drag minimum is for charge and fallback only;
     // that screen-pixel floor is wider than one row when the board is scaled down.
@@ -130,6 +147,22 @@ const pointerMethods = {
     }
     this.announceOrder(start.troop, "cycle");
     this.onCommand({ type: "order", troopId, action: "cycle" });
+  },
+
+  /** While a press is held still, show that unit's stats without an order. */
+  refreshHoldSelect() {
+    const drag = this.drag;
+    if (!drag || !drag.troop || drag.troop.hp <= 0 || drag.downAt == null) {
+      return;
+    }
+    if (performance.now() - drag.downAt < SELECT_HOLD_MS) {
+      return;
+    }
+    const pulled = distance(drag, { x: drag.hx, y: drag.hy });
+    if (pulled >= this.uiMetrics().dragMin) {
+      return;
+    }
+    this.inspectedId = drag.troop.id;
   },
 
   /**

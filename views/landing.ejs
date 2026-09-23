@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title>Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Play</h2>
+      <div class="stack">
+        <% if (rejoin) { %>
+          <a class="action" href="/play">Rejoin match</a>
+        <% } %>
+        <form method="post" action="/play/bot">
+          <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
+        </form>
+        <form method="post" action="/play/casual">
+          <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
+        </form>
+        <% if (viewer) { %>
+          <form method="post" action="/play/lobby">
+            <button type="submit" <%= canTicket ? "" : "disabled" %>>Create unranked lobby</button>
+          </form>
+          <form method="post" action="/play/ranked">
+            <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
+          </form>
+          <% if (!canTicket && !rejoin) { %>
+            <p class="hint">A free ticket is required for a lobby, a specific join, or ranked search.</p>
+          <% } %>
+          <%- include("buy", { nextPath: "/" }) %>
+        <% } %>
+      </div>
+    </section>
+
+    <section>
+      <h2>Open games</h2>
+      <% if (!lobbies.length) { %>
+        <p class="hint">No open games.</p>
+      <% } %>
+      <ul class="list">
+        <% lobbies.forEach(function (lobby) { %>
+          <li class="card">
+            <p><%= lobby.host %></p>
+            <% if (rejoin) { %>
+              <p class="hint">You are already in a match.</p>
+            <% } else if (!viewer) { %>
+              <p class="hint">Log in to join.</p>
+            <% } else if (!canTicket) { %>
+              <p class="hint">You need a free ticket.</p>
+            <% } else { %>
+              <form method="post" action="/play/join/<%= lobby.id %>">
+                <button type="submit">Join</button>
+              </form>
+            <% } %>
+          </li>
+        <% }) %>
+      </ul>
+    </section>
+
+    <section>
+      <h2>High scores</h2>
+      <% if (!leaders.length) { %>
+        <p class="hint">No ranked games yet.</p>
+      <% } else { %>
+        <ol class="scores">
+          <% leaders.forEach(function (row) { %>
+            <li>
+              <a href="/profile/<%= row.formbar_id %>"><%= row.name %></a>
+              <span><%= row.mmr %> MMR</span>
+            </li>
+          <% }) %>
+        </ol>
+      <% } %>
+    </section>
+
+    <% if (admin) { %>
+      <section>
+        <h2>System</h2>
+        <dl class="stats">
+          <div><dt>Accounts</dt><dd><%= admin.stats.accounts %></dd></div>
+          <div><dt>Active games</dt><dd><%= admin.stats.active %></dd></div>
+          <div><dt>Games played</dt><dd><%= admin.stats.finished %></dd></div>
+          <div><dt>Ranked games</dt><dd><%= admin.stats.ranked %></dd></div>
+          <div><dt>Tickets out</dt><dd><%= admin.stats.tickets %></dd></div>
+          <div><dt>Digipogs spent</dt><dd><%= admin.stats.digipogs %></dd></div>
+        </dl>
+        <% if (!admin.games.length) { %>
+          <p class="hint">No active games.</p>
+        <% } else { %>
+          <ul class="list">
+            <% admin.games.forEach(function (game) { %>
+              <li class="card">
+                <p><%= game.players %></p>
+                <p class="hint"><%= game.mode %> · <%= game.status %></p>
+              </li>
+            <% }) %>
+          </ul>
+        <% } %>
+      </section>
+    <% } %>
+
+    <% if (news.length) { %>
+      <section>
+        <h2>News</h2>
+        <ul class="list">
+          <% news.forEach(function (item) { %>
+            <li class="card patch">
+              <p class="hint"><%= item.date %></p>
+              <h3><%= item.title %></h3>
+              <% if (item.summary) { %><p><%= item.summary %></p><% } %>
+              <% if (item.items && item.items.length) { %>
+                <ul class="notes">
+                  <% item.items.forEach(function (line) { %>
+                    <li><%= line %></li>
+                  <% }) %>
+                </ul>
+              <% } %>
+            </li>
+          <% }) %>
+        </ul>
+      </section>
+    <% } %>
+  </div>
+</body>
+</html>

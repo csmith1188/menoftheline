@@ -659,6 +659,7 @@ const boardMethods = {
   /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
   render() {
     if (!this.player) return;
+    if (this.refreshHoldSelect) this.refreshHoldSelect();
     const ctx = this.ctx;
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -698,7 +699,7 @@ const boardMethods = {
     this.drawOrderCallout(ctx);
   },
 
-  /** The unit last given an order, or null once it is gone. */
+  /** The selected unit, or null once it is gone. */
   inspectedTroop() {
     if (this.inspectedId == null || !this.player) return null;
     const troop = this.player.troops.find((unit) => unit.id === this.inspectedId);
@@ -710,8 +711,8 @@ const boardMethods = {
   },
 
   /**
-   * Type, line size, health, and live bonuses for the last ordered unit,
-   * centered above the buy row until it dies or another unit is ordered.
+   * Type, line size, health, and live bonuses for the selected unit,
+   * centered above the buy row until it dies or another unit is selected.
    */
   drawInspectedUnit(ctx) {
     const troop = this.inspectedTroop();
@@ -720,7 +721,7 @@ const boardMethods = {
     const allies = this.player.troops;
     const line = lineSize(troop, allies);
     const hp = Math.max(0, Math.round(troop.hp));
-    const main = `${unitTypeLabel(troop.type)}   Line ${line}   ${hp}/${troop.maxHP()}`;
+    const main = `${unitTypeLabel(troop.type)}   Line x ${line}   ${hp}/${troop.maxHP()}`;
     const bonuses = activeBonuses(this, troop, allies);
     const gap = 6 * CONFIG.uiScale;
     const yBonus = layout.y - gap;

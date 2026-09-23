@@ -319,21 +319,6 @@ class Troop {
     return false;
   }
 
-  /**
-   * Ally ahead on an adjacent row who is not yet in this line. A
-   * reforming shooter walks up to them to claim the line-damage bonus.
-   */
-  reformTargetAhead(allies) {
-    if (this.order !== "reform") {
-      return null;
-    }
-    const ahead = this.nextAheadOtherSublane(allies);
-    if (!ahead || this.withinLine(ahead)) {
-      return null;
-    }
-    return ahead;
-  }
-
   /** Closest ally ahead in an adjacent sublane of the same lane. */
   nextAheadOtherSublane(allies) {
     let best = null;
@@ -362,51 +347,100 @@ class Troop {
   }
 
   /**
-   * First ally behind the whole line (any sublane), not a line-mate.
-   * The line slows together so this troop can catch up.
+   * True when this rank already fills every row of the lane. `outsider`
+   * is left out, so a skirmisher on a taken row is not what fills it and
+   * is not a reason for the rank to change order.
    */
-  nextBehindLine(line, allies) {
-    const rear = this.sortRearToFront(line)[0];
-    const inLine = {};
-    for (let i = 0; i < line.length; i += 1) {
-      inLine[line[i].id] = true;
-    }
-    let best = null;
-    let bestGap = Infinity;
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (inLine[ally.id] || ally.hp <= 0 || ally.lane !== this.lane) {
-        continue;
-      }
-      if (!this.sameLineType(ally)) {
-        continue;
-      }
-      let nextToLine = false;
-      for (let k = 0; k < line.length; k += 1) {
-        if (line[k].adjacentRow(ally)) {
-          nextToLine = true;
-          break;
+  rankIsFull(allies, outsider) {
+    const cap = Path.sublaneCount(this.lane);
+    const rows = {};
+    const seen = {};
+    const queue = [this];
+    seen[this.id] = true;
+    rows[this.sublane] = true;
+    let head = 0;
+    while (head < queue.length && Object.keys(rows).length < cap) {
+      const member = queue[head];
+      head += 1;
+      for (let i = 0; i < allies.length; i += 1) {
+        const other = allies[i];
+        if (other === outsider || other === this || seen[other.id] || other.hp <= 0) {
+          continue;
         }
-      }
-      if (!nextToLine) {
-        continue;
-      }
-      const along = rear.alongSigned(ally);
-      if (along >= 0) {
-        continue;
-      }
-      const gap = -along;
-      if (gap < bestGap) {
-        bestGap = gap;
-        best = ally;
+        if (!member.inLineWith(other)) {
+          continue;
+        }
+        if (rows[other.sublane]) {
+          continue;
+        }
+        seen[other.id] = true;
+        rows[other.sublane] = true;
+        queue.push(other);
       }
     }
-    return best;
+    return Object.keys(rows).length >= cap;
+  }
+
+  /** Another living unit of this type already standing on this row. */
+  sameRowMate(allies) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const other = allies[i];
+      if (other === this || other.hp <= 0 || other.lane !== this.lane) {
+        continue;
+      }
+      if (other.sublane !== this.sublane || !this.sameLineType(other)) {
+        continue;
+      }
+      return other;
+    }
+    return null;
+  }
+
+  /**
+   * True when this unit can still enter ally's line. The check ignores
+   * this unit, so a skirmisher passing through a full rank is not counted
+   * as the member of its row. A full rank has no room left.
+   */
+  canTakeLineOrder(ally, allies) {
+    const cap = Path.sublaneCount(this.lane);
+    const rows = {};
+    const seen = {};
+    const queue = [ally];
+    seen[ally.id] = true;
+    rows[ally.sublane] = true;
+    let head = 0;
+    while (head < queue.length) {
+      const member = queue[head];
+      head += 1;
+      for (let i = 0; i < allies.length; i += 1) {
+        const other = allies[i];
+        if (other === this || seen[other.id] || other.hp <= 0) {
+          continue;
+        }
+        if (!member.inLineWith(other)) {
+          continue;
+        }
+        if (rows[other.sublane]) {
+          continue;
+        }
+        seen[other.id] = true;
+        rows[other.sublane] = true;
+        queue.push(other);
+      }
+    }
+    if (rows[this.sublane]) {
+      return false;
+    }
+    return queue.length < cap;
   }
 
   /**
    * An advancing troop that becomes perfectly parallel with another
-   * absorbs that troop or line's order. Chargers keep going to flank.
+   * absorbs that troop or line's order, if that line still has an open
+   * row. Chargers keep going to flank. They put a line onto charge only
+   * when that line is reforming and still has an open row. A retreat
+   * stays with the unit that was given it. A full line neither takes
+   * an outsider's order nor hands its own order on.
    */
   tryJoinAhead(allies) {
     if (this.order === "charge" || this.order === "fallback") {
@@ -423,7 +457,7 @@ class Troop {
       if (!this.sameLineType(ally)) {
         continue;
       }
-      if (!ally.order) {
+      if (!ally.order || ally.order === "fallback") {
         continue;
       }
       if (this.order === ally.order) {
@@ -435,24 +469,100 @@ class Troop {
       if (this.alongSigned(ally) < -this.stationSlack("parallel")) {
         continue;
       }
-      const theirs = ally.lineGroup(allies);
-      let alreadyIn = false;
-      let rowTaken = false;
-      for (let t = 0; t < theirs.length; t += 1) {
-        if (theirs[t] === this) {
-          alreadyIn = true;
-        } else if (theirs[t].sublane === this.sublane) {
-          rowTaken = true;
-        }
+      if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this)) {
+        continue;
       }
-      if (rowTaken || (!alreadyIn && theirs.length >= Path.sublaneCount(this.lane))) {
+      if (ally.order === "charge") {
+        if (this.order === "reform") {
+          this.issueChargeToReformLine(allies);
+        }
+        continue;
+      }
+      if (!this.canTakeLineOrder(ally, allies)) {
         continue;
       }
       const group = this.lineGroup(allies);
       for (let g = 0; g < group.length; g += 1) {
-        group[g].order = ally.order;
-        group[g].reformNeedsAlign = ally.reformNeedsAlign;
+        const member = group[g];
+        if (member !== this && member.rankIsFull(allies, ally)) {
+          continue;
+        }
+        member.order = ally.order;
+        member.reformNeedsAlign = ally.reformNeedsAlign;
       }
+      return;
+    }
+  }
+
+  /**
+   * The reforming line this unit belongs to, chained through the line
+   * window. Stops at anyone who is not reforming, so a charger beside
+   * the rank does not pull in the next line over.
+   */
+  issueChargeToReformLine(allies) {
+    const group = [this];
+    const seen = {};
+    seen[this.id] = true;
+    let added = true;
+    while (added) {
+      added = false;
+      for (let i = 0; i < group.length; i += 1) {
+        const member = group[i];
+        for (let j = 0; j < allies.length; j += 1) {
+          const other = allies[j];
+          if (seen[other.id] || other.hp <= 0 || other.order !== "reform") {
+            continue;
+          }
+          if (!member.inLineWith(other)) {
+            continue;
+          }
+          seen[other.id] = true;
+          group.push(other);
+          added = true;
+        }
+      }
+    }
+    const cap = Path.sublaneCount(this.lane);
+    const rows = {};
+    for (let g = 0; g < group.length; g += 1) {
+      rows[group[g].sublane] = true;
+    }
+    if (Object.keys(rows).length >= cap) {
+      return;
+    }
+    for (let g = 0; g < group.length; g += 1) {
+      group[g].order = "charge";
+      group[g].reformNeedsAlign = false;
+    }
+  }
+
+  /**
+   * A unit that reaches a reforming line from behind takes that order,
+   * unless that line is already full. Charge and fallback are left alone.
+   * Perfectly beside an open line is handled by tryJoinAhead.
+   */
+  takeReformFromBehind(allies) {
+    if (this.order === "charge" || this.order === "fallback" || this.order === "reform") {
+      return;
+    }
+    const beside = this.stationSlack("parallel");
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.order !== "reform") {
+        continue;
+      }
+      if (ally.lane !== this.lane || !this.sameLineType(ally) || !this.adjacentRow(ally)) {
+        continue;
+      }
+      const along = this.alongSigned(ally);
+      if (along <= beside || !this.withinLine(ally)) {
+        continue;
+      }
+      if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this) || !this.canTakeLineOrder(ally, allies)) {
+        continue;
+      }
+      this.order = "reform";
+      this.reformNeedsAlign = true;
       return;
     }
   }
@@ -550,10 +660,7 @@ class Troop {
    * fire. Troops still closing up are not held — they walk into square.
    */
   lineIsHolding(allies, enemies, enemySide) {
-    if (this.order === "charge" || this.order === "fallback") {
-      return false;
-    }
-    if (this.order === "reform" && this.reformNeedsAlign) {
+    if (this.order === "charge" || this.order === "fallback" || this.order === "reform") {
       return false;
     }
     const line = this.lineGroup(allies);
@@ -567,41 +674,6 @@ class Troop {
       }
     }
     return false;
-  }
-
-  /**
-   * Reforming troops already square with the rear wait so the rest can
-   * catch up. The rearmost never waits. A finished line walks at half speed.
-   */
-  atFrontOfLine(allies) {
-    if (this.order !== "reform" || !this.reformNeedsAlign) {
-      return false;
-    }
-    const line = this.lineGroup(allies);
-    if (line.length < 2) {
-      return false;
-    }
-    const rear = this.sortRearToFront(line)[0];
-    if (rear === this) {
-      return false;
-    }
-    return this.isReformSquare(rear);
-  }
-
-  /** Station error still treated as a finished reform square. */
-  reformSlack() {
-    const px = 0.5;
-    return this.lane === "bottom"
-      ? Path.arcDegrees(px, Path.bottomMidRadius())
-      : px;
-  }
-
-  /**
-   * Reform keeps closing a stagger until the stations match. Combat
-   * parallel is looser, so a halted line can still need this pass.
-   */
-  isReformSquare(other) {
-    return Math.abs(this.station() - other.station()) <= this.reformSlack();
   }
 
   /**
@@ -644,100 +716,25 @@ class Troop {
     return group;
   }
 
-  /** True when another reforming neighbor already shares this station. */
-  inPerfectLine(formation) {
-    for (let i = 0; i < formation.length; i += 1) {
-      if (formation[i] !== this && this.isReformSquare(formation[i])) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   /**
-   * Forward-most station where at least two reforming neighbors are
-   * already square. Null when the formation is still fully staggered.
+   * While a reforming formation is staggered, units already at the
+   * front station wait. Rear units walk up. A perfect line does not wait.
    */
-  frontPerfectStation(formation) {
-    const facing = this.side.id === "player";
-    let best = null;
-    for (let i = 0; i < formation.length; i += 1) {
-      let paired = false;
-      for (let j = 0; j < formation.length; j += 1) {
-        if (i !== j && formation[i].isReformSquare(formation[j])) {
-          paired = true;
-          break;
-        }
-      }
-      if (!paired) {
-        continue;
-      }
-      const station = formation[i].station();
-      if (best === null || (facing ? station > best : station < best)) {
-        best = station;
-      }
-    }
-    return best;
-  }
-
-  /** True when this troop still has to walk up to station. */
-  isBehindStation(station) {
-    const delta = this.station() - station;
-    if (Math.abs(delta) <= this.reformSlack()) {
-      return false;
-    }
-    return this.side.id === "player" ? delta < 0 : delta > 0;
-  }
-
-  /**
-   * A perfect reforming rank holds. Only troops behind it may walk
-   * forward. Until any pair is square, the line may still close up.
-   */
-  reformMayAdvance(allies) {
+  reformShouldStop(allies) {
     if (this.order !== "reform") {
-      return true;
+      return false;
     }
     const formation = this.reformFormation(allies);
     if (formation.length < 2) {
-      return true;
-    }
-    const front = this.frontPerfectStation(formation);
-    if (front === null) {
-      return true;
-    }
-    if (this.inPerfectLine(formation)) {
       return false;
     }
-    return this.isBehindStation(front);
-  }
-
-  /** True when this reforming troop is behind a perfect rank. */
-  behindPerfectReform(allies) {
-    if (this.order !== "reform" || !this.reformMayAdvance(allies)) {
-      return false;
-    }
-    const formation = this.reformFormation(allies);
-    const front = this.frontPerfectStation(formation);
-    return front !== null && this.isBehindStation(front);
-  }
-
-  /**
-   * True when this unit's line is staggered, or a lone leader has an
-   * adjacent ally behind who is not yet square.
-   */
-  needsLineAlign(allies) {
-    const group = this.lineGroup(allies);
-    if (group.length >= 2) {
-      const rear = this.sortRearToFront(group)[0];
-      for (let i = 0; i < group.length; i += 1) {
-        if (!group[i].isReformSquare(rear)) {
-          return true;
-        }
+    const front = this.sortRearToFront(formation)[formation.length - 1];
+    for (let i = 0; i < formation.length; i += 1) {
+      if (!formation[i].isParallelTo(front)) {
+        return this.isParallelTo(front);
       }
-      return false;
     }
-    const partner = this.nextBehindOtherSublane(allies);
-    return Boolean(partner && !this.isReformSquare(partner));
+    return false;
   }
 
   /** Front-most member of a line, or a lone unit with someone behind. */
@@ -753,10 +750,9 @@ class Troop {
   /** Put this line on reform without cycling through halt. */
   startReform(allies) {
     const group = this.lineGroup(allies);
-    const needsAlign = this.needsLineAlign(allies);
     for (let i = 0; i < group.length; i += 1) {
       group[i].order = "reform";
-      group[i].reformNeedsAlign = needsAlign;
+      group[i].reformNeedsAlign = true;
     }
   }
 
@@ -774,10 +770,9 @@ class Troop {
         ? null
         : "halt";
     const group = this.lineGroup(allies);
-    const needsAlign = next === "reform" && this.needsLineAlign(allies);
     for (let i = 0; i < group.length; i += 1) {
       group[i].order = next;
-      group[i].reformNeedsAlign = needsAlign;
+      group[i].reformNeedsAlign = next === "reform";
     }
   }
 
@@ -811,34 +806,6 @@ class Troop {
       group[i].order = "fallback";
       group[i].reformNeedsAlign = false;
       group[i].wantedSublane = null;
-    }
-  }
-
-  /**
-   * Once a reforming line is square, stop the catch-up speeds but keep
-   * the reform order. The next click is what advances. Halt only ends
-   * on another click.
-   */
-  clearOrderIfDone(allies) {
-    if (this.order !== "reform" || !this.reformNeedsAlign) {
-      return;
-    }
-    const line = this.lineGroup(allies);
-    if (line.length >= 2) {
-      const rear = this.sortRearToFront(line)[0];
-      for (let i = 0; i < line.length; i += 1) {
-        if (!line[i].isReformSquare(rear)) {
-          return;
-        }
-      }
-      for (let i = 0; i < line.length; i += 1) {
-        line[i].reformNeedsAlign = false;
-      }
-      return;
-    }
-    const partner = this.nextBehindOtherSublane(allies);
-    if (partner && this.isReformSquare(partner)) {
-      this.reformNeedsAlign = false;
     }
   }
 
@@ -903,15 +870,13 @@ class Troop {
   }
 
   /**
-   * Reform speeds. A staggered line compounds (last full, each ahead at
-   * half the next behind) until a rank is square. A perfect rank holds.
-   * A lone troop uses half the next rear ally. Bottom-lane rings also
-   * apply ringSpeedScale.
+   * Reform walks at half speed. The forward edge of a staggered reform
+   * stands still until the rear is in line. Bottom rings also apply
+   * ringSpeedScale.
    */
   marchSpeed(allies) {
     const scale = this.ringSpeedScale() * this.shotSlowScale() * this.dragoonSpeedScale(allies);
     const base = CONFIG.troopSpeed * this.side.speedMultiplier * scale;
-    this.clearOrderIfDone(allies);
     if (this.order === "halt") {
       return 0;
     }
@@ -921,37 +886,13 @@ class Troop {
     if (this.order === "charge") {
       return base * this.chargeSpeedScale();
     }
-    if (this.order !== "reform") {
-      return base;
-    }
-    if (!this.reformMayAdvance(allies)) {
-      return 0;
-    }
-    const line = this.lineGroup(allies);
-    if (line.length >= 2 && this.reformNeedsAlign) {
-      const ordered = this.sortRearToFront(line);
-      let speed = CONFIG.troopSpeed * ordered[0].side.speedMultiplier * scale;
-      for (let i = 0; i < ordered.length; i += 1) {
-        if (ordered[i] === this) {
-          return speed;
-        }
-        speed *= CONFIG.reformSpeedFactor;
+    if (this.order === "reform") {
+      if (this.reformHold) {
+        return 0;
       }
-      return speed;
-    }
-    if (line.length >= 2) {
       return base * CONFIG.reformSpeedFactor;
     }
-    const trailer = this.nextBehindLine(line, allies);
-    if (trailer) {
-      return CONFIG.troopSpeed * trailer.side.speedMultiplier * CONFIG.reformSpeedFactor * scale;
-    }
-    if (this.nextAheadOtherSublane(allies)) {
-      return base;
-    }
-    const partner = this.nextBehindOtherSublane(allies);
-    const ref = partner ? partner.side.speedMultiplier : this.side.speedMultiplier;
-    return CONFIG.troopSpeed * ref * CONFIG.reformSpeedFactor * scale;
+    return base;
   }
 
   /** Melee reach, or the longer cannon / skirmisher reach. */
@@ -1552,7 +1493,7 @@ class Troop {
       this.shotSlow -= dt;
     }
 
-    this.clearOrderIfDone(allies);
+    this.takeReformFromBehind(allies);
     this.tryJoinAhead(allies);
 
     // A sidestep must finish on the new row before the unit is allowed to halt and fight.
@@ -1604,70 +1545,66 @@ class Troop {
       }
     }
 
-    const catchAhead = Boolean(this.reformTargetAhead(allies));
-    const inLine = this.lineGroup(allies).length >= 2;
-    const forming = this.order === "reform" && this.reformNeedsAlign;
-    const closingLine = forming && inLine;
+    if (this.order === "reform") {
+      if (target && this.mayShoot(allies, enemies, enemySide)) {
+        if (this.cooldown <= 0) {
+          this.fire(target, allies, projectiles, "shoot");
+        }
+      }
+      if (laneMove === "waiting" || this.reformHold) {
+        return;
+      }
+      const reformSpeed = this.marchSpeed(allies);
+      const reformProgress = Math.min(1, this.progress + (reformSpeed * dt) / this.pathLength);
+      const reformNext = Path.pointAt(this.points, reformProgress);
+      if (this.overlapsEnemyAt(reformNext.x, reformNext.y, enemies)) {
+        return;
+      }
+      this.progress = reformProgress;
+      this.syncPosition();
+      this.tryJoinAhead(allies);
+      return;
+    }
 
     if (!charging && target && this.mayShoot(allies, enemies, enemySide)) {
       if (this.cooldown <= 0) {
         this.fire(target, allies, projectiles, "shoot");
       }
-      // A perfect rank stops after the shot. Troops still behind that
-      // rank keep walking, and so does a line that has not squared yet.
-      if (!closingLine && !this.behindPerfectReform(allies)) {
-        return;
-      }
+      return;
     }
 
     if (laneMove === "waiting") {
       return;
     }
 
-    if (!this.reformMayAdvance(allies)) {
+    const sideEnemy = this.nearestParallel(enemies);
+    if (sideEnemy) {
+      if (sideEnemy.sublane !== this.sublane
+          && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
+        this.enterSublane(sideEnemy.sublane, enemies);
+      }
+      this.strafe(dt, enemies, allies);
       return;
     }
 
-    if (forming && !catchAhead) {
-      if (this.atFrontOfLine(allies) && !this.behindPerfectReform(allies)) {
-        return;
+    let blocked = false;
+    for (let i = 0; i < allies.length; i += 1) {
+      if (this.isBlockedBy(allies[i])) {
+        blocked = true;
+        break;
       }
-    } else if (!catchAhead) {
-      const sideEnemy = this.nearestParallel(enemies);
-      if (sideEnemy) {
-        if (sideEnemy.sublane !== this.sublane
-            && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
-          this.enterSublane(sideEnemy.sublane, enemies);
-        }
+    }
+    if (blocked) {
+      const open = this.openSublane(allies);
+      if (open !== null) {
+        this.enterSublane(open, enemies);
         this.strafe(dt, enemies, allies);
-        return;
       }
+      return;
+    }
 
-      let blocked = false;
-      for (let i = 0; i < allies.length; i += 1) {
-        if (this.isBlockedBy(allies[i])) {
-          blocked = true;
-          break;
-        }
-      }
-      if (blocked) {
-        const open = this.openSublane(allies);
-        if (open !== null) {
-          this.enterSublane(open, enemies);
-          this.strafe(dt, enemies, allies);
-        }
-        return;
-      }
-
-      if (this.lineIsHolding(allies, enemies, enemySide) || this.atFrontOfLine(allies)) {
-        return;
-      }
-    } else {
-      for (let i = 0; i < allies.length; i += 1) {
-        if (this.isBlockedBy(allies[i])) {
-          return;
-        }
-      }
+    if (this.lineIsHolding(allies, enemies, enemySide)) {
+      return;
     }
 
     const speed = this.marchSpeed(allies);
@@ -2208,10 +2145,15 @@ export class GameSim {
   updateSide(side, opponents, enemySide, dt) {
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
+      troop.reformHold = troop.hp > 0 && troop.reformShouldStop(side.troops);
+    }
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
       if (troop.hp <= 0) {
         continue;
       }
       troop.update(dt, side.troops, opponents, enemySide, this.projectiles);
+      troop.reformHold = false;
       if (troop.lane === "bottom") {
         for (let c = 0; c < this.checkpoints.length; c += 1) {
           if (this.checkpoints[c].tryCapture(troop)) {

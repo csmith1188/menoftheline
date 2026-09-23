@@ -1,0 +1,3831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Men Of The Line</title>
+  <style>
+/* Prototype chrome around the canvas map. Lanes, HUD, and buys are drawn in game.js. */
+
+:root {
+  --ink: #121821;
+  --panel: #1d2836;
+  --line: #314257;
+  --text: #e7eef6;
+  --gold: #e8c36a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  background:
+    radial-gradient(1200px 500px at 50% -10%, #24344a 0%, transparent 55%),
+    var(--ink);
+  color: var(--text);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+.shell {
+  width: 100%;
+  height: 100%;
+  padding:
+    max(8px, env(safe-area-inset-top))
+    max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#board {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  background: #17202c;
+  border: 1px solid var(--line);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(12, 16, 22, 0.78);
+  border: 1px solid var(--line);
+}
+
+.banner.hidden {
+  display: none;
+}
+
+.banner p {
+  margin: 0;
+  font-size: 1.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#restart {
+  appearance: none;
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  background: #3a3120;
+  font: inherit;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 12px 20px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#restart:hover {
+  background: #4a4232;
+}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="stage">
+      <canvas id="board" width="960" height="620" role="img" aria-label="Lane map"></canvas>
+      <div id="banner" class="banner hidden">
+        <p id="banner-text"></p>
+        <button type="button" id="restart">Play again</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    /**
+ * Men Of The Line — buy-only prototype.
+ * Player (left/blue) vs bot (right/red). Each lane is split into sublanes
+ * (5 on top, 3 concentric half-circles on the bottom). Troops across
+ * sublanes can be parallel (same station on top, same angle below) or
+ * ahead/behind. Shots fall off with range. Chargers seek
+ * melee across sublanes. Charge and flanking (line-window) each double damage.
+ */
+
+/** Tunable prototype numbers. Referenced by economy, combat, and drawing. */
+const CONFIG = {
+  canvasWidth: 960,
+  canvasHeight: 620,
+
+  /** Player keep, left side of the top band. */
+  playerCapital: { x: 72, y: 150 },
+  /** Enemy keep, right side of the top band. */
+  enemyCapital: { x: 888, y: 150 },
+  capitalRadius: 34,
+
+  /** Vertical thickness of the parallel top lane. */
+  topLaneHeight: 112,
+  /** Parallel travel rows in the top lane. */
+  topSublaneCount: 5,
+  /** Distance from lane center to the outermost top sublane. */
+  topSublaneSpread: 40,
+
+  /** Parallel travel rows on the bottom (concentric half-circles). */
+  bottomSublaneCount: 3,
+  /** Radial gap between bottom half-circles. Close enough for adjacent melee. */
+  bottomSublaneSpread: 22,
+  /** How many segments approximate each bottom arc for movement. */
+  bottomArcSegments: 32,
+  /** Stroke width used when drawing one bottom sublane. */
+  bottomSublaneWidth: 18,
+  /** Stroke width used when drawing one top sublane. */
+  topSublaneWidth: 14,
+
+  startGold: 500,
+  troopCost: 100,
+  /** Gold price of a skirmisher (long range, light hits). */
+  skirmisherCost: 50,
+  /** Gold price of a dragoon (weaker shots, extra flanking damage). */
+  dragoonCost: 200,
+  /** Gold price of a cannon (ranged, fires over the line). */
+  cannonCost: 300,
+  /** Gold per second with zero checkpoints. */
+  baseIncome: 10,
+  /** Extra gold per second split by the top-lane center ratio. */
+  centerIncome: 10,
+  /** Land per second split by the bottom-lane center ratio. */
+  centerLand: 10,
+  /** Extra gold per second for each owned checkpoint. */
+  incomePerCheckpoint: 1,
+  /** How many banks sit above each capital. */
+  bankCount: 3,
+  /** Gold to unlock the first bank. */
+  bankBaseCost: 100,
+  /** Extra gold per bank already unlocked on that side. */
+  bankCostStep: 100,
+  /** Gold/sec granted per unlock, times current unlocked count. */
+  bankIncomePer: 1,
+  bankButtonSize: 40,
+  bankButtonGap: 8,
+  buyButtonW: 96,
+  buyButtonH: 22,
+  buyButtonGap: 4,
+  /** Multiplier for on-canvas HUD, banks, and buy buttons. */
+  uiScale: 1.25,
+  /** Minimum on-screen tap size in CSS pixels. */
+  touchTargetPx: 44,
+  /** Match time (seconds) when each bank becomes purchasable. */
+  bankUnlockAt: [120, 240, 360],
+  upgradeBaseCost: 150,
+  upgradeCostStep: 150,
+  /** Highest rank for speed, armor, and damage. */
+  upgradeMax: 5,
+  /** Added to the side speed multiplier per speed purchase. */
+  speedUpgradeAmount: 0.1,
+  /** Extra attack-rate fraction per speed upgrade. */
+  speedAttackFactor: 0.05,
+  /** Extra outgoing damage per damage purchase. */
+  damageUpgradeAmount: 0.1,
+  /** Incoming damage reduction per armor purchase. */
+  armorPerUpgrade: 0.1,
+  /** Armor cannot reduce incoming damage below this remainder. */
+  armorCap: 0.7,
+  /** Progress from each keep to that side's cover line. */
+  quarterMark: 0.25,
+  /** Extra armor while a troop's body overlaps a quarter line. */
+  quarterArmor: 0.2,
+
+  capitalHP: 500,
+  troopHP: 200,
+  troopRangedDamage: 10,
+  troopMeleeDamage: 10,
+  /** Skirmisher starts at 2x troop range and 25% troop damage. */
+  skirmisherHP: 100,
+  skirmisherRangedDamage: 2,
+  skirmisherMeleeDamage: 2,
+  skirmisherRange: 400,
+  skirmisherAttackCooldown: 0.6,
+  skirmisherRadius: 10,
+  dragoonRangedDamage: 5,
+  dragoonMeleeDamage: 20,
+  /** Extra multiplier on a dragoon's flanking hits, on top of the shared flank bonus. */
+  dragoonFlankBonus: 1.5,
+  troopRange: 200,
+  /** Open fire at this fraction of attack range unless a line-mate is already shooting. */
+  openFireFactor: 0.5,
+  troopAttackCooldown: 1,
+  /** Base pixels-per-second along a path or while strafing. */
+  troopSpeed: 20,
+  /** Extra walk speed for a dragoon that is not lined with melee troops. */
+  dragoonOpenSpeed: 2,
+  /** Bot dragoon support / threat radius for fallback, charge, and reform. */
+  dragoonSupportRange: 100,
+  /** Seconds a bot unit must wait before it can change orders again. */
+  botOrderCooldown: 2.5,
+  /** How long a shot slows an advancing or charging troop. */
+  shotSlowDuration: 0.6,
+  /** Walk-speed multiplier while that shot slow is active. */
+  shotSlowFactor: 0.4,
+  troopRadius: 10,
+  /** Pixels of drag before a click becomes a sublane-change order. */
+  laneDragMin: 12,
+  /**
+   * Extra pixels past a body-touch that still count as melee. Chargers halt
+   * at the enemy edge and would never overlap without this slack.
+   */
+  meleeSlack: 6,
+
+  /** How close a friendly ahead must be before it counts as a blocker. */
+  blockGap: 22,
+  /**
+   * Max along-centerline error (px) still treated as perfectly parallel
+   * on the top lane.
+   */
+  parallelEpsilon: 3,
+  /**
+   * How close along the centerline two top-lane rows must be to share
+   * a click order. On the bottom this is the same gap as an angle about
+   * the shared center.
+   */
+  lineWindow: 10,
+  /** Each ahead trooper walks at this fraction of the next one behind. */
+  reformSpeedFactor: 0.5,
+  /** Floor for ranged falloff (1 at point-blank, this at max range). */
+  minDamageFactor: 0.25,
+  /** Charge and flanking each multiply outgoing damage by this. */
+  doubleDamageMultiplier: 1.5,
+  /** Extra outgoing damage per other melee troop sharing this line. */
+  lineDamageBonus: 0.2,
+  /** Random extra or less damage applied before rounding. */
+  damageVariance: 0.1,
+
+  cannonRange: 500,
+  cannonDamage: 100,
+  cannonAttackCooldown: 4,
+  /** Keep gun: same role as a field cannon, with its own numbers. */
+  capitalCannonRange: 200,
+  capitalCannonDamage: 50,
+  capitalCannonAttackCooldown: 0.5,
+  cannonRadius: 10,
+  projectileSpeed: 220,
+  projectileRadius: 4,
+  /** Seconds a damage number stays on screen. */
+  splatLife: 0.7,
+  /** Pixels per second the splat rises. */
+  splatRise: 36,
+
+  checkpointCount: 5,
+  checkpointRadius: 14,
+  captureRadius: 28,
+
+  colors: {
+    bg: "#17202c",
+    topLane: "#244c3f",
+    topSublane: "#3a7a6a",
+    bottomLane: "#3a3128",
+    bottomSublane: "#6a5640",
+    player: "#4aa3ff",
+    enemy: "#e85d4c",
+    playerDark: "#16385f",
+    enemyDark: "#6e241c",
+    gold: "#e8c36a",
+    neutral: "#c4b48a",
+    text: "#e8eef6",
+    projectile: "#f3d27a",
+    reform: "#9ee07a",
+    halt: "#e8b04a",
+    charge: "#e07a4a",
+    fallback: "#6ec8e0",
+    splatShoot: "#ffe27a",
+    splatMelee: "#ff5a4a",
+    splatStroke: "#3a1c10",
+    laneHover: "#9ee8ff",
+    laneCenter: "#e8c36a",
+  },
+};
+
+/** Player lane-buy catalog drawn on the canvas. */
+const BUY_UNITS = [
+  { type: "melee", label: "Troop", costKey: "troopCost", fill: "#2a4158", stroke: "#3d5a7a" },
+  { type: "skirmisher", label: "Skirmish", costKey: "skirmisherCost", fill: "#243a32", stroke: "#3a6a5a" },
+  { type: "dragoon", label: "Dragoon", costKey: "dragoonCost", fill: "#322848", stroke: "#5a4a7a" },
+  { type: "cannon", label: "Cannon", costKey: "cannonCost", fill: "#3a3428", stroke: "#6a5a3a" },
+];
+
+/**
+ * Euclidean distance between two points with x/y.
+ * Used by autoattack targeting, blocking, projectiles, and capture.
+ */
+function distance(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.hypot(dx, dy);
+}
+
+/** Shortest distance from a point to a segment. */
+function pointToSegment(p, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = 0;
+  if (len2 > 0) {
+    t = Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / len2));
+  }
+  return Math.hypot(p.x - (ax + dx * t), p.y - (ay + dy * t));
+}
+
+/**
+ * Ranged-shot pitches by row. Top is C5–E5–G5–A5–C6 south to north;
+ * bottom is C6–E6–G6 on the outer, middle, and inner rings.
+ */
+const SHOT_NOTES = {
+  top: ["C6", "A5", "G5", "E5", "C5"],
+  bottom: ["C6", "E6", "G6"],
+};
+
+const NOTE_FREQ = {
+  C5: 523.25,
+  E5: 659.25,
+  G5: 783.99,
+  A5: 880,
+  C6: 1046.5,
+  E6: 1318.51,
+  G6: 1567.98,
+};
+
+/** Tiny Web Audio bus for the per-sublane shot plucks. */
+const ShotTone = {
+  ctx: null,
+
+  unlock() {
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) {
+      return null;
+    }
+    if (!this.ctx) {
+      this.ctx = new AudioCtor();
+    }
+    if (this.ctx.state === "suspended") {
+      this.ctx.resume();
+    }
+    return this.ctx;
+  },
+
+  play(lane, sublane, type, sideId) {
+    const ctx = this.unlock();
+    if (!ctx) {
+      return;
+    }
+    const names = SHOT_NOTES[lane];
+    const name = names && names[sublane];
+    let freq = name && NOTE_FREQ[name];
+    if (!freq) {
+      return;
+    }
+    if (type === "cannon") {
+      freq /= 4;
+    }
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = sideId === "enemy" ? "square" : "triangle";
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(sideId === "enemy" ? 0.04 : 0.07, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.16);
+  },
+
+  /** Quick high-passed noise tick for a melee hit. */
+  playMelee() {
+    const ctx = this.unlock();
+    if (!ctx) {
+      return;
+    }
+    const now = ctx.currentTime;
+    const life = 0.04;
+    const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * life), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.setValueAtTime(1800, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(now);
+    src.stop(now + life);
+  },
+};
+
+/**
+ * Polyline helpers shared by movement, capture tests, and lane drawing.
+ * progress 0 is the buying side's capital; progress 1 is the enemy capital.
+ * Sublane 0 is the northernmost top row / outermost bottom half-circle.
+ */
+const Path = {
+  /** How many parallel rows a lane has. */
+  sublaneCount(lane) {
+    return lane === "top" ? CONFIG.topSublaneCount : CONFIG.bottomSublaneCount;
+  },
+
+  /** Map a sublane index onto -1..1 so both lanes share the same spread math. */
+  sublaneNorm(sublane, count) {
+    if (count <= 1) {
+      return 0;
+    }
+    return (sublane / (count - 1)) * 2 - 1;
+  },
+
+  /**
+   * World-space waypoints traveling player-left to enemy-right.
+   * Enemy troops walk the same points reversed so sublanes stay aligned.
+   */
+  worldPoints(lane, sublane) {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+
+    if (lane === "top") {
+      const n = Path.sublaneNorm(sublane, CONFIG.topSublaneCount);
+      const y = left.y + n * CONFIG.topSublaneSpread;
+      return [
+        { x: left.x, y },
+        { x: right.x, y },
+      ];
+    }
+
+    const c = Path.bottomCenter();
+    const radius = Path.bottomRadius(sublane);
+    const points = [];
+    const segs = CONFIG.bottomArcSegments;
+    for (let i = 0; i <= segs; i += 1) {
+      const theta = Math.PI * (1 - i / segs);
+      points.push({
+        x: c.x + radius * Math.cos(theta),
+        y: c.y + radius * Math.sin(theta),
+      });
+    }
+    return points;
+  },
+
+  /** Shared center of the three bottom half-circles (midpoint of the keeps). */
+  bottomCenter() {
+    return {
+      x: (CONFIG.playerCapital.x + CONFIG.enemyCapital.x) / 2,
+      y: CONFIG.playerCapital.y,
+    };
+  },
+
+  /** Distance from the shared center to each keep — the middle ring's radius. */
+  bottomMidRadius() {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+    return Math.hypot(right.x - left.x, right.y - left.y) / 2;
+  },
+
+  /** Sublane 0 is the outer ring, 2 is the inner ring. */
+  bottomRadius(sublane) {
+    const n = Path.sublaneNorm(sublane, CONFIG.bottomSublaneCount);
+    return Path.bottomMidRadius() - n * CONFIG.bottomSublaneSpread;
+  },
+
+  /**
+   * Sweep angle from the starting radius (center → player keep) to this
+   * point: 0° at the player keep, 90° due south, 180° at the enemy keep.
+   */
+  bottomStationDeg(x, y) {
+    const c = Path.bottomCenter();
+    const deg = Math.atan2(y - c.y, x - c.x) * (180 / Math.PI);
+    if (deg < 0) {
+      return deg > -90 ? 180 : 0;
+    }
+    return 180 - deg;
+  },
+
+  /** Convert a pixel gap into degrees on a ring of this radius. */
+  arcDegrees(pixels, radius) {
+    if (radius <= 0) {
+      return 0;
+    }
+    return (pixels / radius) * (180 / Math.PI);
+  },
+
+  /**
+   * How close two stations must be. Top uses pixels. Bottom uses the
+   * sweep angle from the keep-to-center radius; line and parallel match
+   * the top-lane pixel windows so units are not counted in line when
+   * they are still far around the arc.
+   */
+  stationSlack(lane, kind, radius) {
+    if (lane !== "bottom") {
+      if (kind === "parallel") {
+        return CONFIG.parallelEpsilon;
+      }
+      if (kind === "line") {
+        return CONFIG.lineWindow;
+      }
+      return CONFIG.blockGap;
+    }
+    const px = kind === "parallel"
+      ? CONFIG.parallelEpsilon
+      : kind === "line"
+        ? CONFIG.lineWindow
+        : CONFIG.blockGap;
+    const r = kind === "block"
+      ? (radius || Path.bottomMidRadius())
+      : Path.bottomMidRadius();
+    return Path.arcDegrees(px, r);
+  },
+
+  /**
+   * Which sublane of this lane sits closest to a world point, compared
+   * at the given progress so a drag picks a row beside the unit.
+   */
+  closestSublane(sideId, lane, progress, point) {
+    const count = Path.sublaneCount(lane);
+    let best = 0;
+    let bestD = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      const pos = Path.pointAt(Path.waypoints(sideId, lane, s), progress);
+      const d = distance(point, pos);
+      if (d < bestD) {
+        bestD = d;
+        best = s;
+      }
+    }
+    return best;
+  },
+
+  /** Side-facing copy of a sublane: player walks forward, enemy walks it back. */
+  waypoints(sideId, lane, sublane) {
+    const points = Path.worldPoints(lane, sublane);
+    if (sideId === "player") {
+      return points;
+    }
+    return points.slice().reverse();
+  },
+
+  /** Sum of segment lengths so speed can be converted into path progress. */
+  length(points) {
+    let total = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      total += distance(points[i - 1], points[i]);
+    }
+    return total;
+  },
+
+  /** The polyline segment that contains progress t, plus how far along it. */
+  segmentAt(points, t) {
+    const total = Path.length(points);
+    if (total <= 0 || points.length < 2) {
+      const p = points[0];
+      return { from: p, to: p, u: 0 };
+    }
+    let remaining = Math.max(0, Math.min(1, t)) * total;
+    for (let i = 1; i < points.length; i += 1) {
+      const from = points[i - 1];
+      const to = points[i];
+      const seg = distance(from, to);
+      if (remaining <= seg || i === points.length - 1) {
+        return { from, to, u: seg === 0 ? 0 : remaining / seg };
+      }
+      remaining -= seg;
+    }
+    const last = points[points.length - 1];
+    return { from: last, to: last, u: 1 };
+  },
+
+  /** Interpolate a world position at progress t in [0, 1]. */
+  pointAt(points, t) {
+    const { from, to, u } = Path.segmentAt(points, t);
+    return {
+      x: from.x + (to.x - from.x) * u,
+      y: from.y + (to.y - from.y) * u,
+    };
+  },
+
+  /** Forward unit tangent at progress t. Top is axis-aligned; bottom follows the arc. */
+  tangentAt(points, t) {
+    const { from, to } = Path.segmentAt(points, t);
+    const len = distance(from, to);
+    if (len === 0) {
+      return { x: 1, y: 0 };
+    }
+    return { x: (to.x - from.x) / len, y: (to.y - from.y) / len };
+  },
+
+  /** Middle-sublane polyline, used as the shared station for every row. */
+  centerline(lane) {
+    return Path.worldPoints(lane, Math.floor(Path.sublaneCount(lane) / 2));
+  },
+
+  /**
+   * Shared lineup coordinate: pixels along the top centerline, or
+   * degrees around the bottom half-circles (0 at player, 180 at enemy).
+   */
+  stationAt(lane, x, y) {
+    if (lane === "bottom") {
+      return Path.bottomStationDeg(x, y);
+    }
+    const points = Path.centerline(lane);
+    let bestDist = Infinity;
+    let bestAlong = 0;
+    let walked = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      const from = points[i - 1];
+      const to = points[i];
+      const seg = distance(from, to);
+      let u = 0;
+      if (seg > 0) {
+        u = ((x - from.x) * (to.x - from.x) + (y - from.y) * (to.y - from.y)) / (seg * seg);
+        u = Math.max(0, Math.min(1, u));
+      }
+      const px = from.x + (to.x - from.x) * u;
+      const py = from.y + (to.y - from.y) * u;
+      const d = Math.hypot(x - px, y - py);
+      if (d < bestDist) {
+        bestDist = d;
+        bestAlong = walked + u * seg;
+      }
+      walked += seg;
+    }
+    return bestAlong;
+  },
+};
+
+/**
+ * Shot fired by a troop or cannon. Travels over intervening units and
+ * only collides with its chosen target (or the target keep).
+ */
+class Projectile {
+  constructor(x, y, target, damage, allies, kind, sourceType) {
+    this.x = x;
+    this.y = y;
+    this.target = target;
+    this.damage = damage;
+    this.allies = allies;
+    this.kind = kind || "shoot";
+    this.sourceType = sourceType || "melee";
+    this.alive = true;
+    this.sideId = allies.length && allies[0].side ? allies[0].side.id : "player";
+  }
+
+  /** World point the shell is flying toward. */
+  dest() {
+    if (this.target.capital) {
+      return this.target.capital;
+    }
+    return this.target;
+  }
+
+  /** Advance the shell; apply damage on impact. */
+  update(dt) {
+    if (this.target.hp !== undefined && this.target.hp <= 0) {
+      this.alive = false;
+      return;
+    }
+    const dest = this.dest();
+    const d = distance(this, dest);
+    const step = CONFIG.projectileSpeed * dt;
+    if (d <= step + CONFIG.projectileRadius) {
+      if (this.target.capitalHP !== undefined) {
+        const hit = this.target.mitigate(this.damage);
+        this.target.capitalHP -= hit;
+        const keep = this.target.capital;
+        Game.spawnSplat(keep.x, keep.y, hit, this.kind);
+      } else if (this.kind === "melee" || !this.target.isInMelee(this.allies)) {
+        this.target.takeDamage(this.damage, this.kind);
+        this.splashCannonLine();
+      }
+      this.alive = false;
+      return;
+    }
+    this.x += ((dest.x - this.x) / d) * step;
+    this.y += ((dest.y - this.y) / d) * step;
+  }
+
+  /**
+   * Cannon shells also hit units one row over if they share the
+   * target's line. Those neighbors take half the shell's damage.
+   */
+  splashCannonLine() {
+    if (this.sourceType !== "cannon" || !this.target.side) {
+      return;
+    }
+    const splash = Math.round(this.damage / 2);
+    if (splash <= 0) {
+      return;
+    }
+    const hit = this.target;
+    const foes = hit.side.troops;
+    for (let i = 0; i < foes.length; i += 1) {
+      const other = foes[i];
+      if (other === hit || other.hp <= 0 || other.lane !== hit.lane) {
+        continue;
+      }
+      if (!hit.adjacentRow(other) || !hit.withinLine(other)) {
+        continue;
+      }
+      if (other.isInMelee(this.allies)) {
+        continue;
+      }
+      other.takeDamage(splash, this.kind);
+    }
+  }
+
+  draw(ctx) {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, CONFIG.projectileRadius, 0, Math.PI * 2);
+    ctx.fillStyle = CONFIG.colors.projectile;
+    ctx.fill();
+  }
+}
+
+/**
+ * Floating damage number that rises and fades over a wounded troop or keep.
+ * Color marks whether the hit was a shot or a melee swing.
+ */
+class HitSplat {
+  constructor(x, y, amount, kind) {
+    this.x = x + (Math.random() - 0.5) * 14;
+    this.y = y - 12;
+    this.amount = amount;
+    this.kind = kind || "shoot";
+    this.age = 0;
+    this.alive = true;
+  }
+
+  /** Yellow for shots, red for melee. */
+  fillColor() {
+    return this.kind === "melee" ? CONFIG.colors.splatMelee : CONFIG.colors.splatShoot;
+  }
+
+  /** Rise and expire. */
+  update(dt) {
+    this.age += dt;
+    this.y -= CONFIG.splatRise * dt;
+    if (this.age >= CONFIG.splatLife) {
+      this.alive = false;
+    }
+  }
+
+  draw(ctx) {
+    const fade = Math.max(0, 1 - this.age / CONFIG.splatLife);
+    const shown = Math.round(this.amount * 10) / 10;
+    const text = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.font = "bold 14px Trebuchet MS, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = CONFIG.colors.splatStroke;
+    ctx.strokeText(text, this.x, this.y);
+    ctx.fillStyle = this.fillColor();
+    ctx.fillText(text, this.x, this.y);
+    ctx.restore();
+  }
+}
+
+/**
+ * One purchased unit. Walks a sublane, sidesteps blockers and side enemies,
+ * and fires visible shots (skirmishers reach farther with light hits;
+ * dragoons flank harder; cannons reach farther).
+ */
+class Troop {
+  constructor(id, side, lane, sublane, type) {
+    this.id = id;
+    this.side = side;
+    this.lane = lane;
+    this.sublane = sublane;
+    this.type = type;
+    this.hp = this.maxHP();
+    this.progress = 0;
+    this.cooldown = 0;
+    this.flash = 0;
+    this.strafing = false;
+    this.order = null;
+    this.reformNeedsAlign = false;
+    this.shotSlow = 0;
+    this.wantedSublane = null;
+    this.orderLock = 0;
+    this.applyPath();
+    const spawn = Path.pointAt(this.points, 0);
+    this.x = spawn.x;
+    this.y = spawn.y;
+  }
+
+  /** Rebuild the polyline after a sublane change so progress stays on-track. */
+  applyPath() {
+    this.points = Path.waypoints(this.side.id, this.lane, this.sublane);
+    this.pathLength = Path.length(this.points);
+  }
+
+  /** Shared 0..1 coordinate from the player capital so opposite sides line up. */
+  laneT() {
+    return this.side.id === "player" ? this.progress : 1 - this.progress;
+  }
+
+  /** Shared lineup coordinate so every sublane of this lane lines up. */
+  station() {
+    return Path.stationAt(this.lane, this.x, this.y);
+  }
+
+  /** Parallel / line / block tolerance in this lane's station units. */
+  stationSlack(kind) {
+    const radius = this.lane === "bottom" ? Path.bottomRadius(this.sublane) : 0;
+    return Path.stationSlack(this.lane, kind, radius);
+  }
+
+  /**
+   * How far other sits along this troop's facing.
+   * Negative is behind, zero is parallel, positive is ahead.
+   */
+  alongSigned(other) {
+    const delta = other.station() - this.station();
+    return this.side.id === "player" ? delta : -delta;
+  }
+
+  /** True when both troops share the same station (pixels or degrees). */
+  isParallelTo(other) {
+    return Math.abs(this.station() - other.station()) <= this.stationSlack("parallel");
+  }
+
+  /** True when two stations overlap enough to share a line. */
+  withinLine(other) {
+    return Math.abs(this.station() - other.station()) <= this.stationSlack("line");
+  }
+
+  /** Each type only lines with its own kind. */
+  sameLineType(other) {
+    return this.type === other.type;
+  }
+
+  /** True when the other unit sits in the next row over. */
+  adjacentRow(other) {
+    return Math.abs(this.sublane - other.sublane) === 1;
+  }
+
+  /**
+   * True when a neighbor row is close enough along the centerline to
+   * count as the same line. A gap of one or more empty sublanes splits
+   * two groups into separate lines.
+   */
+  inLineWith(other) {
+    if (other.hp <= 0 || other.lane !== this.lane || !this.adjacentRow(other)) {
+      return false;
+    }
+    if (!this.sameLineType(other)) {
+      return false;
+    }
+    return this.withinLine(other);
+  }
+
+  /**
+   * This troop plus allies chained through adjacent inLineWith. One
+   * troop per sublane, at most as many as this lane has rows.
+   */
+  lineGroup(allies) {
+    const cap = Path.sublaneCount(this.lane);
+    const group = [this];
+    const seen = {};
+    const usedRow = {};
+    seen[this.id] = true;
+    usedRow[this.sublane] = true;
+    let added = true;
+    while (added && group.length < cap) {
+      added = false;
+      let best = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < group.length; i += 1) {
+        const member = group[i];
+        for (let j = 0; j < allies.length; j += 1) {
+          const ally = allies[j];
+          if (seen[ally.id] || ally.hp <= 0 || usedRow[ally.sublane]) {
+            continue;
+          }
+          if (!member.inLineWith(ally)) {
+            continue;
+          }
+          const dist = Math.abs(ally.station() - this.station());
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = ally;
+          }
+        }
+      }
+      if (best) {
+        seen[best.id] = true;
+        usedRow[best.sublane] = true;
+        group.push(best);
+        added = true;
+      }
+    }
+    return group;
+  }
+
+  /** Line members from rear to front, relative to this side's facing. */
+  sortRearToFront(line) {
+    const playerFacing = this.side.id === "player";
+    return line.slice().sort((a, b) => (
+      playerFacing ? a.station() - b.station() : b.station() - a.station()
+    ));
+  }
+
+  /**
+   * Closest ally behind this troop in an adjacent sublane. Used when a
+   * lone unit reforms to get parallel with someone further back.
+   */
+  nextBehindOtherSublane(allies) {
+    let best = null;
+    let bestGap = Infinity;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0) {
+        continue;
+      }
+      if (ally.lane !== this.lane || !this.adjacentRow(ally)) {
+        continue;
+      }
+      if (!this.sameLineType(ally)) {
+        continue;
+      }
+      const along = this.alongSigned(ally);
+      if (along >= 0) {
+        continue;
+      }
+      const gap = -along;
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = ally;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * True when a same-type ally (or their line) sits ahead and this
+   * troop can walk up to join: same row, next row, or a line that
+   * already touches this row.
+   */
+  canJoinLineAhead(allies) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (!this.sameLineType(ally)) {
+        continue;
+      }
+      if (this.alongSigned(ally) <= 0) {
+        continue;
+      }
+      if (ally.sublane === this.sublane || this.adjacentRow(ally)) {
+        return true;
+      }
+      const line = ally.lineGroup(allies);
+      for (let k = 0; k < line.length; k += 1) {
+        if (line[k].sublane === this.sublane || this.adjacentRow(line[k])) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Ally ahead on an adjacent row who is not yet in this line. A
+   * reforming shooter walks up to them to claim the line-damage bonus.
+   */
+  reformTargetAhead(allies) {
+    if (this.order !== "reform") {
+      return null;
+    }
+    const ahead = this.nextAheadOtherSublane(allies);
+    if (!ahead || this.withinLine(ahead)) {
+      return null;
+    }
+    return ahead;
+  }
+
+  /** Closest ally ahead in an adjacent sublane of the same lane. */
+  nextAheadOtherSublane(allies) {
+    let best = null;
+    let bestGap = Infinity;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0) {
+        continue;
+      }
+      if (ally.lane !== this.lane || !this.adjacentRow(ally)) {
+        continue;
+      }
+      if (!this.sameLineType(ally)) {
+        continue;
+      }
+      const along = this.alongSigned(ally);
+      if (along <= 0) {
+        continue;
+      }
+      if (along < bestGap) {
+        bestGap = along;
+        best = ally;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * First ally behind the whole line (any sublane), not a line-mate.
+   * The line slows together so this troop can catch up.
+   */
+  nextBehindLine(line, allies) {
+    const rear = this.sortRearToFront(line)[0];
+    const inLine = {};
+    for (let i = 0; i < line.length; i += 1) {
+      inLine[line[i].id] = true;
+    }
+    let best = null;
+    let bestGap = Infinity;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (inLine[ally.id] || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (!this.sameLineType(ally)) {
+        continue;
+      }
+      let nextToLine = false;
+      for (let k = 0; k < line.length; k += 1) {
+        if (line[k].adjacentRow(ally)) {
+          nextToLine = true;
+          break;
+        }
+      }
+      if (!nextToLine) {
+        continue;
+      }
+      const along = rear.alongSigned(ally);
+      if (along >= 0) {
+        continue;
+      }
+      const gap = -along;
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = ally;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * An advancing troop that becomes perfectly parallel with another
+   * absorbs that troop or line's order. Chargers keep going to flank.
+   */
+  tryJoinAhead(allies) {
+    if (this.order === "charge" || this.order === "fallback") {
+      return;
+    }
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (!this.adjacentRow(ally)) {
+        continue;
+      }
+      if (!this.sameLineType(ally)) {
+        continue;
+      }
+      if (!ally.order) {
+        continue;
+      }
+      if (this.order === ally.order) {
+        continue;
+      }
+      if (!this.isParallelTo(ally)) {
+        continue;
+      }
+      if (this.alongSigned(ally) < -this.stationSlack("parallel")) {
+        continue;
+      }
+      const theirs = ally.lineGroup(allies);
+      let alreadyIn = false;
+      let rowTaken = false;
+      for (let t = 0; t < theirs.length; t += 1) {
+        if (theirs[t] === this) {
+          alreadyIn = true;
+        } else if (theirs[t].sublane === this.sublane) {
+          rowTaken = true;
+        }
+      }
+      if (rowTaken || (!alreadyIn && theirs.length >= Path.sublaneCount(this.lane))) {
+        continue;
+      }
+      const group = this.lineGroup(allies);
+      for (let g = 0; g < group.length; g += 1) {
+        group[g].order = ally.order;
+        group[g].reformNeedsAlign = ally.reformNeedsAlign;
+      }
+      return;
+    }
+  }
+
+  /**
+   * Enemy this troop is touching, or standing against at the body edge.
+   * Used for charge contact and order-lock; walking into a body is still blocked.
+   */
+  collidingEnemy(enemies) {
+    const reach = this.bodyRadius() + CONFIG.meleeSlack;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i];
+      if (enemy.hp <= 0 || enemy.lane !== this.lane) {
+        continue;
+      }
+      if (distance(this, enemy) <= reach + enemy.bodyRadius()) {
+        return enemy;
+      }
+    }
+    return null;
+  }
+
+  bodyRadius() {
+    if (this.type === "cannon") {
+      return CONFIG.cannonRadius;
+    }
+    if (this.type === "skirmisher") {
+      return CONFIG.skirmisherRadius;
+    }
+    return CONFIG.troopRadius;
+  }
+
+  maxHP() {
+    return this.type === "skirmisher" ? CONFIG.skirmisherHP : CONFIG.troopHP;
+  }
+
+  /**
+   * True when this melee troop is locked in body contact with an enemy
+   * troop. Cannons are never in melee; overlapping a cannon is not melee.
+   */
+  isInMelee(foes) {
+    if (this.type === "cannon") {
+      return false;
+    }
+    const foe = this.collidingEnemy(foes);
+    return Boolean(foe && foe.type !== "cannon");
+  }
+
+  /** True if any member of this line is in melee. Orders are locked then. */
+  lineInMelee(allies, enemies) {
+    if (this.type === "cannon") {
+      return false;
+    }
+    const group = this.lineGroup(allies);
+    for (let i = 0; i < group.length; i += 1) {
+      if (group[i].type !== "cannon" && group[i].collidingEnemy(enemies)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Flanking: same lane, another sublane, and inside the line window.
+   */
+  isFlanking(target) {
+    if (!target.lane || target.lane !== this.lane || target.sublane === this.sublane) {
+      return false;
+    }
+    return Math.abs(this.station() - target.station()) <= this.stationSlack("line");
+  }
+
+  /** True if a world point would sit inside an enemy body. */
+  overlapsEnemyAt(x, y, enemies) {
+    const here = { x, y };
+    const reach = this.bodyRadius();
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i];
+      if (enemy.hp <= 0 || enemy.lane !== this.lane) {
+        continue;
+      }
+      if (distance(here, enemy) < reach + enemy.bodyRadius()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * A formed (perfectly parallel) line holds if anyone in it has opened
+   * fire. Troops still closing up are not held — they walk into square.
+   */
+  lineIsHolding(allies, enemies, enemySide) {
+    if (this.order === "charge" || this.order === "fallback") {
+      return false;
+    }
+    const line = this.lineGroup(allies);
+    for (let i = 0; i < line.length; i += 1) {
+      const mate = line[i];
+      if (mate === this || !this.isParallelTo(mate)) {
+        continue;
+      }
+      if (mate.isOpeningFire(enemies, allies, enemySide)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Reforming troops ahead of a still-forming line wait. The rearmost
+   * never waits. An already-square line does not wait — it walks slowly
+   * together.
+   */
+  atFrontOfLine(allies) {
+    if (this.order !== "reform" || !this.reformNeedsAlign) {
+      return false;
+    }
+    const line = this.lineGroup(allies);
+    if (line.length < 2) {
+      return false;
+    }
+    const rear = this.sortRearToFront(line)[0];
+    if (rear === this) {
+      return false;
+    }
+    return this.isParallelTo(rear);
+  }
+
+  /**
+   * True when this unit's line is staggered, or a lone leader has an
+   * adjacent ally behind who is not yet parallel.
+   */
+  needsLineAlign(allies) {
+    const group = this.lineGroup(allies);
+    if (group.length >= 2) {
+      const rear = this.sortRearToFront(group)[0];
+      for (let i = 0; i < group.length; i += 1) {
+        if (!group[i].isParallelTo(rear)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    const partner = this.nextBehindOtherSublane(allies);
+    return Boolean(partner && !this.isParallelTo(partner));
+  }
+
+  /** Front-most member of a line, or a lone unit with someone behind. */
+  isLineLeader(allies) {
+    const line = this.lineGroup(allies);
+    if (line.length >= 2) {
+      const ordered = this.sortRearToFront(line);
+      return ordered[ordered.length - 1] === this;
+    }
+    return Boolean(this.nextBehindOtherSublane(allies));
+  }
+
+  /** Put this line on reform without cycling through halt. */
+  startReform(allies) {
+    const group = this.lineGroup(allies);
+    const needsAlign = this.needsLineAlign(allies);
+    for (let i = 0; i < group.length; i += 1) {
+      group[i].order = "reform";
+      group[i].reformNeedsAlign = needsAlign;
+    }
+  }
+
+  /**
+   * Left-click: reform, or halt if already reforming, or resume a normal
+   * advance if halted. Locked while the line is in melee.
+   */
+  issueOrder(allies, enemies) {
+    if (this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    const next = this.order === "reform"
+      ? "halt"
+      : this.order === "halt"
+        ? null
+        : "reform";
+    const group = this.lineGroup(allies);
+    const needsAlign = next === "reform" && this.needsLineAlign(allies);
+    for (let i = 0; i < group.length; i += 1) {
+      group[i].order = next;
+      group[i].reformNeedsAlign = needsAlign;
+    }
+  }
+
+  /**
+   * Drag forward: charge (seek melee, no shooting until contact).
+   * Cannons push forward without firing. Drag again to cancel.
+   * Locked while in melee.
+   */
+  issueCharge(allies, enemies) {
+    if (this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    const next = this.order === "charge" ? null : "charge";
+    const group = this.lineGroup(allies);
+    for (let i = 0; i < group.length; i += 1) {
+      group[i].order = next;
+      group[i].reformNeedsAlign = false;
+      group[i].wantedSublane = null;
+    }
+  }
+
+  /**
+   * Drag back: walk backward at reform speed. Allowed in melee so a
+   * line can disengage. Drag again to cancel.
+   */
+  issueFallback(allies) {
+    const next = this.order === "fallback" ? null : "fallback";
+    const group = this.lineGroup(allies);
+    for (let i = 0; i < group.length; i += 1) {
+      group[i].order = next;
+      group[i].reformNeedsAlign = false;
+      group[i].wantedSublane = null;
+    }
+  }
+
+  /**
+   * End reform only after a line that was *not* already square becomes
+   * perfectly parallel. An already-lined group keeps the order so halt
+   * still works. Halt itself only ends on another click.
+   */
+  clearOrderIfDone(allies) {
+    if (this.order !== "reform" || !this.reformNeedsAlign) {
+      return;
+    }
+    const line = this.lineGroup(allies);
+    if (line.length >= 2) {
+      const rear = this.sortRearToFront(line)[0];
+      for (let i = 0; i < line.length; i += 1) {
+        if (!line[i].isParallelTo(rear)) {
+          return;
+        }
+      }
+      for (let i = 0; i < line.length; i += 1) {
+        line[i].order = null;
+        line[i].reformNeedsAlign = false;
+      }
+      return;
+    }
+    const partner = this.nextBehindOtherSublane(allies);
+    if (partner && this.isParallelTo(partner)) {
+      this.order = null;
+    }
+  }
+
+  /**
+   * Inner and middle bottom rings are shorter. Scale walk speed so they
+   * keep the same angle as a troop on the outer half-circle.
+   */
+  ringSpeedScale() {
+    if (this.lane !== "bottom") {
+      return 1;
+    }
+    const outer = Path.bottomRadius(0);
+    if (outer <= 0) {
+      return 1;
+    }
+    return Path.bottomRadius(this.sublane) / outer;
+  }
+
+  /**
+   * Advancing and charging troops walk at half speed after a shot.
+   * Halt and reform are unchanged.
+   */
+  shotSlowScale() {
+    if (this.shotSlow <= 0) {
+      return 1;
+    }
+    if (this.order !== null && this.order !== "charge") {
+      return 1;
+    }
+    return CONFIG.shotSlowFactor;
+  }
+
+  /** Dragoons always walk faster than melee troops. */
+  dragoonSpeedScale() {
+    return this.type === "dragoon" ? CONFIG.dragoonOpenSpeed : 1;
+  }
+
+  /**
+   * Reform speeds. If someone is behind the line, the whole line walks at
+   * half that troop's speed so they stay together while it catches up.
+   * With nobody behind, a staggered line compounds (last full, each ahead
+   * at half the next behind). An already-square line walks at half speed
+   * together. A lone troop uses half the next rear ally.
+   * Bottom-lane rings also apply ringSpeedScale.
+   */
+  marchSpeed(allies) {
+    const scale = this.ringSpeedScale() * this.shotSlowScale() * this.dragoonSpeedScale(allies);
+    const base = CONFIG.troopSpeed * this.side.speedMultiplier * scale;
+    this.clearOrderIfDone(allies);
+    if (this.order === "halt") {
+      return 0;
+    }
+    if (this.order === "fallback") {
+      return base * CONFIG.reformSpeedFactor;
+    }
+    if (this.order !== "reform") {
+      return base;
+    }
+    const line = this.lineGroup(allies);
+    const trailer = this.nextBehindLine(line, allies);
+    if (trailer) {
+      return CONFIG.troopSpeed * trailer.side.speedMultiplier * CONFIG.reformSpeedFactor * scale;
+    }
+    if (line.length >= 2 && this.reformNeedsAlign) {
+      const ordered = this.sortRearToFront(line);
+      let speed = CONFIG.troopSpeed * ordered[0].side.speedMultiplier * scale;
+      for (let i = 0; i < ordered.length; i += 1) {
+        if (ordered[i] === this) {
+          return speed;
+        }
+        speed *= CONFIG.reformSpeedFactor;
+      }
+      return speed;
+    }
+    if (line.length >= 2) {
+      return base * CONFIG.reformSpeedFactor;
+    }
+    if (this.nextAheadOtherSublane(allies)) {
+      return base;
+    }
+    const partner = this.nextBehindOtherSublane(allies);
+    const ref = partner ? partner.side.speedMultiplier : this.side.speedMultiplier;
+    return CONFIG.troopSpeed * ref * CONFIG.reformSpeedFactor * scale;
+  }
+
+  /** Melee reach, or the longer cannon / skirmisher reach. */
+  attackRange() {
+    if (this.type === "cannon") {
+      return CONFIG.cannonRange;
+    }
+    if (this.type === "skirmisher") {
+      return CONFIG.skirmisherRange;
+    }
+    return CONFIG.troopRange;
+  }
+
+  /** Distance at which this troop may open fire on its own. */
+  openFireRange() {
+    return this.attackRange() * CONFIG.openFireFactor;
+  }
+
+  /**
+   * True when this troop has already committed to shooting: half-range,
+   * melee contact, or standing on the enemy keep. Chargers only count
+   * once they are in contact.
+   */
+  isOpeningFire(enemies, allies, enemySide) {
+    if (this.type !== "cannon" && this.collidingEnemy(enemies)) {
+      return true;
+    }
+    if (this.order === "charge") {
+      return false;
+    }
+    return Boolean(this.nearestTarget(enemies, this.openFireRange(), allies, enemySide));
+  }
+
+  /**
+   * True when this troop may shoot: it opened on its own, or it is in
+   * line with someone who did and still has a full-range target.
+   */
+  mayShoot(allies, enemies, enemySide) {
+    if (this.isOpeningFire(enemies, allies, enemySide)) {
+      return true;
+    }
+    if (!this.nearestTarget(enemies, undefined, allies, enemySide)) {
+      return false;
+    }
+    const line = this.lineGroup(allies);
+    for (let i = 0; i < line.length; i += 1) {
+      if (line[i] !== this && line[i].isOpeningFire(enemies, allies, enemySide)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** How often this unit may strike, including speed-upgrade scaling. */
+  strikeDelay() {
+    const base = this.type === "cannon"
+      ? CONFIG.cannonAttackCooldown
+      : this.type === "skirmisher"
+        ? CONFIG.skirmisherAttackCooldown
+        : CONFIG.troopAttackCooldown;
+    return base / (1 + CONFIG.speedAttackFactor * this.side.upgrades.speed);
+  }
+
+  /** Snap onto the current sublane path. Used after a finished strafe. */
+  syncPosition() {
+    const pos = Path.pointAt(this.points, this.progress);
+    this.x = pos.x;
+    this.y = pos.y;
+  }
+
+  /**
+   * Slide only across the path (never diagonally, never along the lane)
+   * onto the current sublane. Returns true while still aligning.
+   */
+  strafe(dt, enemies, allies) {
+    const dest = Path.pointAt(this.points, this.progress);
+    const tan = Path.tangentAt(this.points, this.progress);
+    const nx = -tan.y;
+    const ny = tan.x;
+    const across = (dest.x - this.x) * nx + (dest.y - this.y) * ny;
+    const step = CONFIG.troopSpeed * this.side.speedMultiplier
+      * this.shotSlowScale() * this.dragoonSpeedScale(allies || []) * dt;
+    const dir = across > 0 ? 1 : -1;
+    const move = Math.min(Math.abs(across), step) * dir;
+    const nxPos = this.x + nx * move;
+    const nyPos = this.y + ny * move;
+    if (this.overlapsEnemyAt(nxPos, nyPos, enemies)) {
+      this.strafing = false;
+      return false;
+    }
+    this.x = nxPos;
+    this.y = nyPos;
+    if (Math.abs(across) <= step) {
+      this.strafing = false;
+      return false;
+    }
+    return true;
+  }
+
+  /** Switch rows and start a perpendicular slide into the new path. */
+  enterSublane(sublane, enemies) {
+    if (sublane === this.sublane && !this.strafing) {
+      return;
+    }
+    const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, sublane), this.progress);
+    if (this.overlapsEnemyAt(dest.x, dest.y, enemies)) {
+      return;
+    }
+    this.sublane = sublane;
+    this.applyPath();
+    this.strafing = true;
+  }
+
+  /** True when this row is free of friends and the landing point is empty. */
+  canEnterSublane(sublane, allies, enemies) {
+    const count = Path.sublaneCount(this.lane);
+    if (sublane === this.sublane || sublane < 0 || sublane >= count) {
+      return false;
+    }
+    if (this.sublaneOccupied(sublane, allies)) {
+      return false;
+    }
+    const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, sublane), this.progress);
+    return !this.overlapsEnemyAt(dest.x, dest.y, enemies);
+  }
+
+  /**
+   * Step one sublane toward goal when that next row is free.
+   * Returns true if the slide started.
+   */
+  stepTowardSublane(goal, allies, enemies) {
+    const dir = Math.sign(goal - this.sublane);
+    if (dir === 0) {
+      return false;
+    }
+    const next = this.sublane + dir;
+    if (!this.canEnterSublane(next, allies, enemies)) {
+      return false;
+    }
+    this.enterSublane(next, enemies);
+    return true;
+  }
+
+  /** Remember a row to slide into; waits if that stretch is blocked. */
+  issueLaneChange(sublane, allies, enemies) {
+    if (allies && enemies && this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    const count = Path.sublaneCount(this.lane);
+    if (sublane < 0 || sublane >= count || sublane === this.sublane) {
+      this.wantedSublane = null;
+      return;
+    }
+    this.wantedSublane = sublane;
+  }
+
+  /**
+   * Step toward wantedSublane. Returns "stepping", "waiting" if blocked,
+   * or "none" when there is no pending row change.
+   */
+  followLaneOrder(dt, allies, enemies) {
+    if (this.wantedSublane === null) {
+      return "none";
+    }
+    if (this.lineInMelee(allies, enemies)) {
+      this.wantedSublane = null;
+      return "none";
+    }
+    if (this.wantedSublane === this.sublane) {
+      if (!this.strafing) {
+        this.wantedSublane = null;
+      }
+      return "none";
+    }
+    if (this.stepTowardSublane(this.wantedSublane, allies, enemies)) {
+      this.strafe(dt, enemies, allies);
+      return "stepping";
+    }
+    return "waiting";
+  }
+
+  /**
+   * Walk forward (dir +1) or backward (dir -1) along the current sublane.
+   * Stops short of enemy bodies and friendly blockers. True if it moved.
+   */
+  marchAlong(dt, allies, enemies, dir) {
+    const sign = dir < 0 ? -1 : 1;
+    for (let i = 0; i < allies.length; i += 1) {
+      if (this.isBlockedToward(allies[i], sign)) {
+        return false;
+      }
+    }
+    const speed = this.marchSpeed(allies);
+    const delta = (speed * dt) / this.pathLength;
+    const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    const next = Path.pointAt(this.points, nextProgress);
+    if (this.overlapsEnemyAt(next.x, next.y, enemies)) {
+      return false;
+    }
+    if (nextProgress === this.progress) {
+      return false;
+    }
+    this.progress = nextProgress;
+    this.syncPosition();
+    return true;
+  }
+
+  /**
+   * Step toward a preferred row, or the nearest free neighbor, when a
+   * charger cannot keep walking forward.
+   */
+  tryChargeSidestep(dt, allies, enemies, prefer) {
+    if (prefer !== undefined && this.stepTowardSublane(prefer, allies, enemies)) {
+      this.strafe(dt, enemies, allies);
+      return true;
+    }
+    const count = Path.sublaneCount(this.lane);
+    let best = null;
+    let bestDist = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      if (!this.canEnterSublane(s, allies, enemies)) {
+        continue;
+      }
+      const d = Math.abs(s - this.sublane);
+      if (d < bestDist) {
+        bestDist = d;
+        best = s;
+      }
+    }
+    if (best === null) {
+      return false;
+    }
+    this.stepTowardSublane(best, allies, enemies);
+    this.strafe(dt, enemies, allies);
+    return true;
+  }
+
+  /**
+   * Enemy a charger should close on. Same-row first, then anyone in line,
+   * then someone behind, then the nearest foe ahead.
+   */
+  chargePrey(enemies) {
+    let best = null;
+    let bestScore = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i];
+      if (enemy.hp <= 0 || enemy.lane !== this.lane) {
+        continue;
+      }
+      const along = this.alongSigned(enemy);
+      const rowGap = Math.abs(enemy.sublane - this.sublane);
+      const stationGap = Math.abs(this.station() - enemy.station());
+      let rank = 3;
+      if (rowGap === 0) {
+        rank = 0;
+      } else if (this.withinLine(enemy)) {
+        rank = 1;
+      } else if (along < 0) {
+        rank = 2;
+      }
+      const score = rank * 100000 + rowGap * 1000 + stationGap;
+      if (score < bestScore) {
+        bestScore = score;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * In-line enemy more than one sublane away. Chargers keep stepping
+   * toward this unit until they are adjacent or in its row.
+   */
+  chargeLinedFar(enemies) {
+    let best = null;
+    let bestScore = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i];
+      if (enemy.hp <= 0 || enemy.lane !== this.lane) {
+        continue;
+      }
+      if (!this.withinLine(enemy)) {
+        continue;
+      }
+      const rowGap = Math.abs(enemy.sublane - this.sublane);
+      if (rowGap <= 1) {
+        continue;
+      }
+      const score = Math.abs(this.station() - enemy.station()) * 1000 + rowGap;
+      if (score < bestScore) {
+        bestScore = score;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Chargers close for melee. They step across when in line with the
+   * target. If that row is blocked they keep walking ahead until they
+   * can cut in. Once past the enemy (no longer overlapping) they enter
+   * its sublane, then reverse in that row to make contact.
+   */
+  seekChargeMelee(dt, allies, enemies) {
+    const prey = this.chargeLinedFar(enemies) || this.chargePrey(enemies);
+    if (!prey) {
+      return false;
+    }
+    const along = this.alongSigned(prey);
+    const slack = this.stationSlack("parallel");
+    if (prey.sublane === this.sublane) {
+      if (along < -slack) {
+        this.marchAlong(dt, allies, enemies, -1);
+      } else if (along > slack && !this.marchAlong(dt, allies, enemies, 1)) {
+        this.tryChargeSidestep(dt, allies, enemies);
+      }
+      return true;
+    }
+    const past = along < -slack;
+    if ((this.withinLine(prey) || past)
+        && this.stepTowardSublane(prey.sublane, allies, enemies)) {
+      this.strafe(dt, enemies, allies);
+      return true;
+    }
+    if (!this.marchAlong(dt, allies, enemies, 1)) {
+      this.tryChargeSidestep(dt, allies, enemies, prey.sublane);
+    }
+    return true;
+  }
+
+  /**
+   * Friendly cannons are not solid to troops. Skirmishers pass through
+   * all teammates. Troops still block troops, and cannons still block
+   * other cannons.
+   */
+  blocksAlly(ally) {
+    if (this.type === "skirmisher" || ally.type === "skirmisher") {
+      return false;
+    }
+    if (ally.type === "cannon" && this.type !== "cannon") {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when a friendly in this sublane is close in the travel direction.
+   * dir is +1 ahead or -1 behind. Troops cannot pass through each other.
+   */
+  isBlockedToward(ally, dir) {
+    if (ally === this || ally.hp <= 0) {
+      return false;
+    }
+    if (ally.lane !== this.lane || ally.sublane !== this.sublane) {
+      return false;
+    }
+    if (!this.blocksAlly(ally)) {
+      return false;
+    }
+    const along = this.alongSigned(ally);
+    const gap = this.stationSlack("block");
+    if (dir > 0) {
+      return along > 0 && along < gap;
+    }
+    return along < 0 && -along < gap;
+  }
+
+  /** Friendly close ahead in this sublane. */
+  isBlockedBy(ally) {
+    return this.isBlockedToward(ally, 1);
+  }
+
+  /**
+   * True if a friendly already occupies this row near our station, or is
+   * currently sliding into that same stretch of the sublane.
+   */
+  sublaneOccupied(sublane, allies) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (ally.sublane !== sublane) {
+        continue;
+      }
+      if (!this.blocksAlly(ally)) {
+        continue;
+      }
+      if (Math.abs(ally.station() - this.station()) < this.stationSlack("block")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Nearest open row, or null when every sublane is stacked. */
+  openSublane(allies) {
+    const count = Path.sublaneCount(this.lane);
+    let best = null;
+    let bestDist = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      if (s === this.sublane || this.sublaneOccupied(s, allies)) {
+        continue;
+      }
+      const d = Math.abs(s - this.sublane);
+      if (d < bestDist) {
+        bestDist = d;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Closest living enemy inside a world-space circle. Lane and sublane
+   * do not matter, but units locked in melee cannot be shot. The enemy
+   * keep is a valid target when no unit is closer.
+   */
+  nearestTarget(enemies, maxRange, allies, enemySide) {
+    let best = null;
+    let bestD = Infinity;
+    const range = maxRange === undefined ? this.attackRange() : maxRange;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (other.hp <= 0) {
+        continue;
+      }
+      if (allies && other.isInMelee(allies)) {
+        continue;
+      }
+      const d = distance(this, other);
+      if (d <= range && d < bestD) {
+        bestD = d;
+        best = other;
+      }
+    }
+    if (!best && enemySide && enemySide.capitalHP > 0) {
+      const d = distance(this, enemySide.capital);
+      if (d <= range) {
+        return enemySide;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Enemy in another sublane who is perfectly parallel. Ahead or behind
+   * in their own row can be passed.
+   */
+  nearestParallel(enemies) {
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (other.hp <= 0 || other.lane !== this.lane) {
+        continue;
+      }
+      if (other.sublane === this.sublane) {
+        continue;
+      }
+      if (!this.isParallelTo(other)) {
+        continue;
+      }
+      const d = distance(this, other);
+      if (d < bestD) {
+        bestD = d;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  /** Apply incoming damage and spawn a hit splat over this troop. */
+  takeDamage(amount, kind) {
+    const hit = this.side.mitigate(amount, this.onQuarterLine());
+    this.hp -= hit;
+    this.flash = 0.12;
+    Game.spawnSplat(this.x, this.y, hit, kind);
+    if (kind !== "melee" && (this.order === null || this.order === "charge")) {
+      this.shotSlow = CONFIG.shotSlowDuration;
+    }
+  }
+
+  /** True when this body overlaps a quarter-mark cover line. */
+  onQuarterLine() {
+    return Game.touchesQuarterLine(this);
+  }
+
+  /**
+   * Melee troops deal more while formed: +20% per other troop in line.
+   */
+  lineDamageScale(allies) {
+    if (this.type !== "melee") {
+      return 1;
+    }
+    const mates = this.lineGroup(allies || []).length - 1;
+    return 1 + Math.max(0, mates) * CONFIG.lineDamageBonus;
+  }
+
+  /**
+   * Outgoing damage: ranged uses falloff; melee uses its own base.
+   * Charge, flanking, and formed-line bonuses still multiply after that.
+   */
+  attackDamage(target, kind, allies) {
+    const strike = kind || "shoot";
+    let damage = this.baseAttackDamage(strike);
+    if (strike !== "melee") {
+      const dest = target.capital ? target.capital : target;
+      const range = this.attackRange();
+      const d = distance(this, dest);
+      const falloff = Math.max(CONFIG.minDamageFactor, 1 - d / Math.max(range, 1));
+      damage *= falloff;
+    }
+    if (this.order === "charge") {
+      damage *= CONFIG.doubleDamageMultiplier;
+    }
+    if (target.lane && this.isFlanking(target)) {
+      damage *= CONFIG.doubleDamageMultiplier;
+      if (this.type === "dragoon") {
+        damage *= CONFIG.dragoonFlankBonus;
+      }
+    }
+    damage *= this.lineDamageScale(allies);
+    damage *= this.side.damageScale();
+    const roll = 1 + (Math.random() * 2 - 1) * CONFIG.damageVariance;
+    damage *= roll;
+    return Math.round(damage);
+  }
+
+  /** Ranged or melee base by unit type. Cannons only have a ranged shell. */
+  baseAttackDamage(kind) {
+    if (this.type === "cannon") {
+      return CONFIG.cannonDamage;
+    }
+    if (this.type === "dragoon") {
+      return kind === "melee" ? CONFIG.dragoonMeleeDamage : CONFIG.dragoonRangedDamage;
+    }
+    if (this.type === "skirmisher") {
+      return kind === "melee" ? CONFIG.skirmisherMeleeDamage : CONFIG.skirmisherRangedDamage;
+    }
+    return kind === "melee" ? CONFIG.troopMeleeDamage : CONFIG.troopRangedDamage;
+  }
+
+  /** Fire a shell that ignores bodies between this unit and its target. */
+  fire(target, allies, projectiles, kind) {
+    const strike = kind || "shoot";
+    if (strike === "melee") {
+      ShotTone.playMelee();
+    } else {
+      ShotTone.play(this.lane, this.sublane, this.type, this.side.id);
+    }
+    projectiles.push(new Projectile(
+      this.x,
+      this.y,
+      target,
+      this.attackDamage(target, strike, allies),
+      allies,
+      strike,
+      this.type,
+    ));
+    this.cooldown = this.strikeDelay();
+    this.flash = 0.12;
+  }
+
+  /**
+   * One unit decision: finish a lane change first, then shoot or swing,
+   * then start a slide toward a side enemy or around a blocker, or march.
+   */
+  update(dt, allies, enemies, enemySide, projectiles) {
+    if (this.cooldown > 0) {
+      this.cooldown -= dt;
+    }
+    if (this.flash > 0) {
+      this.flash -= dt;
+    }
+    if (this.shotSlow > 0) {
+      this.shotSlow -= dt;
+    }
+    if (this.orderLock > 0) {
+      this.orderLock -= dt;
+    }
+
+    this.clearOrderIfDone(allies);
+    this.tryJoinAhead(allies);
+
+    // A sidestep must finish on the new row before the unit is allowed to halt and fight.
+    if (this.strafing && this.strafe(dt, enemies, allies)) {
+      return;
+    }
+
+    const laneMove = this.followLaneOrder(dt, allies, enemies);
+    if (laneMove === "stepping") {
+      return;
+    }
+
+    const contact = this.collidingEnemy(enemies);
+    const target = this.nearestTarget(enemies, undefined, allies, enemySide);
+    const atKeep = this.progress >= 1;
+    const charging = this.order === "charge";
+    const fallingBack = this.order === "fallback";
+
+    if (fallingBack) {
+      if (contact && this.type !== "cannon") {
+        if (this.cooldown <= 0) {
+          this.fire(contact, allies, projectiles, "melee");
+        }
+      } else if (target && this.mayShoot(allies, enemies, enemySide)) {
+        if (this.cooldown <= 0) {
+          this.fire(target, allies, projectiles, "shoot");
+        }
+      }
+      this.marchAlong(dt, allies, enemies, -1);
+      return;
+    }
+
+    if (contact && this.type !== "cannon") {
+      if (this.cooldown <= 0) {
+        this.fire(contact, allies, projectiles, "melee");
+      }
+      return;
+    }
+
+    if (charging && this.type !== "cannon" && laneMove !== "waiting") {
+      if (this.seekChargeMelee(dt, allies, enemies)) {
+        return;
+      }
+      if (atKeep) {
+        if (this.cooldown <= 0) {
+          this.fire(enemySide, allies, projectiles, "melee");
+        }
+        return;
+      }
+    }
+
+    const catchAhead = Boolean(this.reformTargetAhead(allies));
+
+    if (!charging && target && this.mayShoot(allies, enemies, enemySide)) {
+      if (this.cooldown <= 0) {
+        this.fire(target, allies, projectiles, "shoot");
+      }
+      if (!catchAhead) {
+        return;
+      }
+    }
+
+    if (laneMove === "waiting") {
+      return;
+    }
+
+    if (!catchAhead) {
+      const sideEnemy = this.nearestParallel(enemies);
+      if (sideEnemy) {
+        if (sideEnemy.sublane !== this.sublane
+            && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
+          this.enterSublane(sideEnemy.sublane, enemies);
+        }
+        this.strafe(dt, enemies, allies);
+        return;
+      }
+
+      let blocked = false;
+      for (let i = 0; i < allies.length; i += 1) {
+        if (this.isBlockedBy(allies[i])) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) {
+        const open = this.openSublane(allies);
+        if (open !== null) {
+          this.enterSublane(open, enemies);
+          this.strafe(dt, enemies, allies);
+        }
+        return;
+      }
+
+      if (this.lineIsHolding(allies, enemies, enemySide) || this.atFrontOfLine(allies)) {
+        return;
+      }
+    } else {
+      for (let i = 0; i < allies.length; i += 1) {
+        if (this.isBlockedBy(allies[i])) {
+          return;
+        }
+      }
+    }
+
+    const speed = this.marchSpeed(allies);
+    const nextProgress = Math.min(1, this.progress + (speed * dt) / this.pathLength);
+    const next = Path.pointAt(this.points, nextProgress);
+    if (this.overlapsEnemyAt(next.x, next.y, enemies)) {
+      return;
+    }
+    this.progress = nextProgress;
+    this.syncPosition();
+    this.tryJoinAhead(allies);
+  }
+
+  /** Draw a circle, triangle (skirmisher), diamond, or square, plus an HP bar. */
+  draw(ctx) {
+    const color = this.side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
+    const fill = this.flash > 0 ? "#fff4d2" : color;
+    ctx.fillStyle = fill;
+    const ordered = this.order === "reform" || this.order === "halt"
+      || this.order === "charge" || this.order === "fallback";
+    ctx.strokeStyle = this.order === "halt"
+      ? CONFIG.colors.halt
+      : this.order === "reform"
+        ? CONFIG.colors.reform
+        : this.order === "charge"
+          ? CONFIG.colors.charge
+          : this.order === "fallback"
+            ? CONFIG.colors.fallback
+            : "#0d1218";
+    ctx.lineWidth = ordered ? 3 : 2;
+
+    if (this.type === "cannon") {
+      const r = CONFIG.cannonRadius;
+      ctx.fillRect(this.x - r, this.y - r, r * 2, r * 2);
+      ctx.strokeRect(this.x - r, this.y - r, r * 2, r * 2);
+    } else if (this.type === "skirmisher") {
+      const r = CONFIG.skirmisherRadius;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y - r);
+      ctx.lineTo(this.x + r, this.y + r);
+      ctx.lineTo(this.x - r, this.y + r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (this.type === "dragoon") {
+      const r = CONFIG.troopRadius;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y - r);
+      ctx.lineTo(this.x + r, this.y);
+      ctx.lineTo(this.x, this.y + r);
+      ctx.lineTo(this.x - r, this.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, CONFIG.troopRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    const barW = this.bodyRadius() * 2;
+    const barH = 3;
+    const ratio = Math.max(0, this.hp) / this.maxHP();
+    ctx.fillStyle = "#1a1510";
+    ctx.fillRect(this.x - barW / 2, this.y - barH / 2, barW, barH);
+    ctx.fillStyle = CONFIG.colors.gold;
+    ctx.fillRect(this.x - barW / 2, this.y - barH / 2, barW * ratio, barH);
+  }
+}
+
+/**
+ * A bottom-lane point that grants income to whichever side last walked through it.
+ */
+class Checkpoint {
+  constructor(index, x, y) {
+    this.index = index;
+    this.x = x;
+    this.y = y;
+    this.owner = null;
+  }
+
+  /**
+   * Closest and farthest towns are speed, the next pair are armor,
+   * and the middle town is damage.
+   */
+  upgradeKind() {
+    const last = CONFIG.checkpointCount - 1;
+    const dist = Math.min(this.index, last - this.index);
+    if (dist === 0) {
+      return "speed";
+    }
+    if (dist === 1) {
+      return "armor";
+    }
+    return "damage";
+  }
+
+  /** Drawn town size follows the UI scale. */
+  radius() {
+    return CONFIG.checkpointRadius * CONFIG.uiScale;
+  }
+
+  /** Last troop inside the capture radius claims the point. */
+  tryCapture(troop) {
+    if (troop.lane !== "bottom" || troop.hp <= 0) {
+      return false;
+    }
+    if (distance(this, troop) > CONFIG.captureRadius) {
+      return false;
+    }
+    if (this.owner === troop.side.id) {
+      return false;
+    }
+    this.owner = troop.side.id;
+    return true;
+  }
+
+  /** Draw the point in owner color, or tan while still neutral. */
+  draw(ctx) {
+    const color = this.owner === "player"
+      ? CONFIG.colors.player
+      : this.owner === "enemy"
+        ? CONFIG.colors.enemy
+        : CONFIG.colors.neutral;
+
+    const r = this.radius();
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 3 * CONFIG.uiScale;
+    ctx.strokeStyle = "#0d1218";
+    ctx.stroke();
+
+    if (this.owner === "player" && Game.player
+        && Game.player.canBuyUpgrade(this.upgradeKind())) {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r + 5 * CONFIG.uiScale, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2 * CONFIG.uiScale;
+      ctx.stroke();
+    }
+
+    const kind = this.upgradeKind();
+    const label = kind === "speed" ? "⚡" : kind === "armor" ? "🛡️" : "⚔️";
+    ctx.fillStyle = "#0d1218";
+    ctx.font = Game.uiFont(10);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, this.x, this.y);
+    if (this.owner === "player" && Game.player) {
+      ctx.fillStyle = CONFIG.colors.gold;
+      ctx.font = Game.uiFont(9);
+      const maxed = Game.player.upgrades[kind] >= CONFIG.upgradeMax;
+      ctx.fillText(
+        maxed ? "MAX" : `${Game.player.upgradeCost(kind)}🌿`,
+        this.x,
+        this.y + r + 10 * CONFIG.uiScale,
+      );
+    }
+  }
+}
+
+/**
+ * One combatant: gold, income, speed upgrades, keep health, and living troops.
+ */
+class Side {
+  constructor(id, capital) {
+    this.id = id;
+    this.capital = capital;
+    this.gold = CONFIG.startGold;
+    this.income = CONFIG.baseIncome;
+    this.land = 0;
+    this.landIncome = 0;
+    this.capitalHP = CONFIG.capitalHP;
+    this.speedMultiplier = 1;
+    this.upgrades = { speed: 0, armor: 0, damage: 0 };
+    this.banks = 0;
+    this.troops = [];
+    this.shotCooldown = 0;
+  }
+
+  /** Land price of the next rank of this upgrade. */
+  upgradeCost(kind) {
+    return CONFIG.upgradeBaseCost + CONFIG.upgradeCostStep * this.upgrades[kind];
+  }
+
+  /** True when this upgrade is below the tier cap and can be paid for. */
+  canBuyUpgrade(kind) {
+    if (this.upgrades[kind] === undefined || this.upgrades[kind] >= CONFIG.upgradeMax) {
+      return false;
+    }
+    return this.land >= this.upgradeCost(kind);
+  }
+
+  /** Incoming damage multiplier after armor ranks. */
+  armorReduction() {
+    return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
+  }
+
+  /** Apply armor (plus cover if standing on a quarter line), then round. */
+  mitigate(amount, cover) {
+    let reduction = this.armorReduction();
+    if (cover) {
+      reduction = Math.min(CONFIG.armorCap, reduction + CONFIG.quarterArmor);
+    }
+    return Math.round(amount * (1 - reduction));
+  }
+
+  /** Outgoing damage multiplier from damage ranks. */
+  damageScale() {
+    return 1 + CONFIG.damageUpgradeAmount * this.upgrades.damage;
+  }
+
+  /** Gold price of a melee troop, skirmisher, dragoon, or cannon. */
+  unitCost(type) {
+    if (type === "cannon") {
+      return CONFIG.cannonCost;
+    }
+    if (type === "dragoon") {
+      return CONFIG.dragoonCost;
+    }
+    if (type === "skirmisher") {
+      return CONFIG.skirmisherCost;
+    }
+    return CONFIG.troopCost;
+  }
+
+  /** Living troops assigned to one lane. Used by the bot and spawn picking. */
+  countInLane(lane) {
+    let n = 0;
+    for (let i = 0; i < this.troops.length; i += 1) {
+      if (this.troops[i].lane === lane && this.troops[i].hp > 0) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  /** Living units of one type in a lane. */
+  countTypeInLane(lane, type) {
+    let n = 0;
+    for (let i = 0; i < this.troops.length; i += 1) {
+      const troop = this.troops[i];
+      if (troop.lane === lane && troop.hp > 0 && troop.type === type) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  /** Prefer an emptier row so new units do not spawn stacked. */
+  pickSublane(lane) {
+    const count = Path.sublaneCount(lane);
+    let best = 0;
+    let bestN = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      let n = 0;
+      for (let i = 0; i < this.troops.length; i += 1) {
+        const troop = this.troops[i];
+        if (troop.lane === lane && troop.sublane === s && troop.hp > 0) {
+          n += 1;
+        }
+      }
+      if (n < bestN) {
+        bestN = n;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Recalculate gold/sec from checkpoints plus this side's share of
+   * the top-lane center pool.
+   */
+  refreshIncome(checkpoints, share) {
+    let owned = 0;
+    for (let i = 0; i < checkpoints.length; i += 1) {
+      if (checkpoints[i].owner === this.id) {
+        owned += 1;
+      }
+    }
+    const portion = share === undefined ? 0.5 : share;
+    this.income = Math.round(
+      CONFIG.baseIncome
+        + owned * CONFIG.incomePerCheckpoint
+        + CONFIG.centerIncome * portion
+        + this.bankIncome(),
+    );
+  }
+
+  /**
+   * Each unlock adds +1gp/s times the number of unlocked banks.
+   * One bank is +1, two is +1+2, three is +1+2+3.
+   */
+  bankIncome() {
+    const n = this.banks;
+    return CONFIG.bankIncomePer * (n * (n + 1)) / 2;
+  }
+
+  /** Gold to unlock the next bank. */
+  bankCost() {
+    return CONFIG.bankBaseCost + CONFIG.bankCostStep * this.banks;
+  }
+
+  /** World box of one bank button above this capital, kept inside the keep. */
+  bankButtonRect(index) {
+    const ui = Game.uiMetrics();
+    const size = ui.bank;
+    const gap = ui.bankGap;
+    const count = CONFIG.bankCount;
+    const total = count * size + (count - 1) * gap;
+    const edge = CONFIG.capitalRadius;
+    const x = this.id === "player"
+      ? this.capital.x - edge + index * (size + gap)
+      : this.capital.x + edge - total + index * (size + gap);
+    const y = 8;
+    return { x, y, w: size, h: size };
+  }
+
+  /** True when match time has reached this bank's unlock minute. */
+  bankUnlockedByTime(index) {
+    const at = CONFIG.bankUnlockAt[index];
+    return at !== undefined && Game.elapsed >= at;
+  }
+
+  /** Spend gold to open the next bank, once its clock time has passed. */
+  tryUnlockBank() {
+    if (this.banks >= CONFIG.bankCount) {
+      return false;
+    }
+    if (!this.bankUnlockedByTime(this.banks)) {
+      return false;
+    }
+    const cost = this.bankCost();
+    if (this.gold < cost) {
+      return false;
+    }
+    this.gold -= cost;
+    this.banks += 1;
+    return true;
+  }
+
+  /** Land/sec is only the bottom-lane share of the 0–10 pool. */
+  refreshLand(share) {
+    const portion = share === undefined ? 0.5 : share;
+    this.landIncome = Math.round(CONFIG.centerLand * portion);
+  }
+
+  /**
+   * Spend gold to spawn a melee troop, skirmisher, dragoon, or cannon.
+   * lane is "top" or "bottom". Returns the unit, or null if unaffordable.
+   */
+  tryBuy(lane, nextId, type) {
+    const cost = this.unitCost(type);
+    if (this.gold < cost) {
+      return null;
+    }
+    this.gold -= cost;
+    const troop = new Troop(nextId, this, lane, this.pickSublane(lane), type);
+    this.troops.push(troop);
+    return troop;
+  }
+
+  /** Spend land on speed, armor, or damage. Caps at five ranks. */
+  tryBuyUpgrade(kind) {
+    if (!this.canBuyUpgrade(kind)) {
+      return false;
+    }
+    const cost = this.upgradeCost(kind);
+    this.land -= cost;
+    this.upgrades[kind] += 1;
+    this.speedMultiplier = 1 + CONFIG.speedUpgradeAmount * this.upgrades.speed;
+    return true;
+  }
+
+  /**
+   * Closest enemy troop in cannon range. Units locked in melee are skipped.
+   */
+  capitalTarget(enemies, allies) {
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (other.hp <= 0) {
+        continue;
+      }
+      if (other.isInMelee(allies)) {
+        continue;
+      }
+      const d = distance(this.capital, other);
+      if (d <= CONFIG.capitalCannonRange && d < bestD) {
+        bestD = d;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  /** Cannon-style shell at double cannon damage, with falloff and variance. */
+  fireCapital(target, allies, projectiles) {
+    const dest = target.capital ? target.capital : target;
+    const d = distance(this.capital, dest);
+    let damage = CONFIG.capitalCannonDamage;
+    const falloff = Math.max(
+      CONFIG.minDamageFactor,
+      1 - d / Math.max(CONFIG.capitalCannonRange, 1),
+    );
+    damage *= falloff;
+    damage *= this.damageScale();
+    damage *= 1 + (Math.random() * 2 - 1) * CONFIG.damageVariance;
+    projectiles.push(new Projectile(
+      this.capital.x,
+      this.capital.y,
+      target,
+      Math.round(damage),
+      allies,
+      "shoot",
+      "cannon",
+    ));
+    ShotTone.play("top", 2, "cannon", this.id);
+    this.shotCooldown = CONFIG.capitalCannonAttackCooldown
+      / (1 + CONFIG.speedAttackFactor * this.upgrades.speed);
+  }
+
+  /** Tick the keep gun: fire at the nearest in-range foe when ready. */
+  updateGuns(dt, enemies, allies, projectiles) {
+    if (this.shotCooldown > 0) {
+      this.shotCooldown -= dt;
+    }
+    if (this.capitalHP <= 0 || this.shotCooldown > 0) {
+      return;
+    }
+    const target = this.capitalTarget(enemies, allies);
+    if (!target) {
+      return;
+    }
+    this.fireCapital(target, allies, projectiles);
+  }
+
+  /** Draw the capital city and the remaining keep HP beneath it. */
+  drawCapital(ctx) {
+    const color = this.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
+    const dark = this.id === "player" ? CONFIG.colors.playerDark : CONFIG.colors.enemyDark;
+    const { x, y } = this.capital;
+
+    ctx.beginPath();
+    ctx.arc(x, y, CONFIG.capitalRadius, 0, Math.PI * 2);
+    ctx.fillStyle = dark;
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    ctx.fillStyle = CONFIG.colors.text;
+    ctx.font = Game.uiFont(13);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(Math.max(0, this.capitalHP)), x, y + CONFIG.capitalRadius + 14);
+  }
+
+  /** Remaining time until this bank's unlock, as m:ss. */
+  bankCooldownLabel(index) {
+    const at = CONFIG.bankUnlockAt[index] || 0;
+    const left = Math.max(0, at - Game.elapsed);
+    const m = Math.floor(left / 60);
+    const s = Math.floor(left % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  }
+
+  /** Three unlockable banks above the keep. */
+  drawBanks(ctx) {
+    const nextCost = this.bankCost();
+    for (let i = 0; i < CONFIG.bankCount; i += 1) {
+      const box = this.bankButtonRect(i);
+      const open = i < this.banks;
+      const next = i === this.banks;
+      const timed = this.bankUnlockedByTime(i);
+      const ready = next && timed && this.gold >= nextCost;
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      ctx.fillStyle = open ? CONFIG.colors.gold : "#2a3340";
+      ctx.strokeStyle = ready ? "#ffffff" : "#0d1218";
+      ctx.lineWidth = 2;
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      if (!open && !timed) {
+        const at = CONFIG.bankUnlockAt[i] || 1;
+        const start = i > 0 ? CONFIG.bankUnlockAt[i - 1] : 0;
+        const span = Math.max(1, at - start);
+        const done = Math.max(0, Math.min(1, (Game.elapsed - start) / span));
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(box.x, box.y, box.w, box.h);
+        ctx.clip();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, box.w, -Math.PI / 2 + done * Math.PI * 2, -Math.PI / 2 + Math.PI * 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.font = Game.uiFont(18);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🏛️", cx, cy);
+    }
+  }
+}
+
+/**
+ * Owns the loop: income, bot buys, movement/combat, capture, rendering, input.
+ */
+const Game = {
+  canvas: null,
+  ctx: null,
+  ui: {},
+  player: null,
+  enemy: null,
+  checkpoints: [],
+  projectiles: [],
+  splats: [],
+  drag: null,
+  nextTroopId: 1,
+  winner: null,
+  elapsed: 0,
+  lastTime: 0,
+  cssScale: 1,
+  hover: null,
+
+  /** Build sides, place the five bottom checkpoints, and bind controls. */
+  init() {
+    this.canvas = document.getElementById("board");
+    this.ctx = this.canvas.getContext("2d");
+    this.hover = null;
+    this.ui = {
+      banner: document.getElementById("banner"),
+      bannerText: document.getElementById("banner-text"),
+      restart: document.getElementById("restart"),
+    };
+    this.fitCanvas();
+    this.reset();
+    this.bindUI();
+    this.lastTime = performance.now();
+    requestAnimationFrame((t) => this.loop(t));
+  },
+
+  /** Letterbox the board into the stage and keep a sharp backing store. */
+  fitCanvas() {
+    const stage = this.canvas.parentElement;
+    const availW = Math.max(1, stage.clientWidth);
+    const availH = Math.max(1, stage.clientHeight);
+    const aspect = CONFIG.canvasWidth / CONFIG.canvasHeight;
+    let cssW = availW;
+    let cssH = cssW / aspect;
+    if (cssH > availH) {
+      cssH = availH;
+      cssW = cssH * aspect;
+    }
+    this.canvas.style.width = `${cssW}px`;
+    this.canvas.style.height = `${cssH}px`;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    this.canvas.width = Math.round(CONFIG.canvasWidth * dpr);
+    this.canvas.height = Math.round(CONFIG.canvasHeight * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.cssScale = cssW / CONFIG.canvasWidth;
+  },
+
+  isTouchUi() {
+    return window.matchMedia("(pointer: coarse)").matches
+      || (navigator.maxTouchPoints || 0) > 0;
+  },
+
+  uiFont(px, weight) {
+    const size = Math.round(px * CONFIG.uiScale);
+    return `${weight || "bold"} ${size}px Trebuchet MS, sans-serif`;
+  },
+
+  /** Drawn control sizes plus extra hit padding so taps reach 44 CSS px. */
+  uiMetrics() {
+    const scale = this.cssScale || 1;
+    const grow = CONFIG.uiScale;
+    const tap = CONFIG.touchTargetPx / scale;
+    const coarse = this.isTouchUi();
+    const buyH = (coarse
+      ? Math.min(34, Math.max(CONFIG.buyButtonH, tap * 0.55))
+      : CONFIG.buyButtonH) * grow;
+    const buyW = (coarse ? Math.max(CONFIG.buyButtonW, 108) : CONFIG.buyButtonW) * grow;
+    const bank = (coarse
+      ? Math.min(46, Math.max(CONFIG.bankButtonSize, tap * 0.65))
+      : CONFIG.bankButtonSize) * grow;
+    return {
+      buyW,
+      buyH,
+      buyGap: (coarse ? 8 : CONFIG.buyButtonGap) * grow,
+      bank,
+      bankGap: (coarse ? 8 : CONFIG.bankButtonGap) * grow,
+      hitPad: Math.max(6, (CONFIG.touchTargetPx / scale - Math.min(buyH, bank)) / 2),
+      unitReach: Math.max(10, 24 / scale),
+      townReach: Math.max(12, 24 / scale),
+      dragMin: Math.max(CONFIG.laneDragMin, 20 / scale),
+    };
+  },
+
+  pointInBox(point, box, pad) {
+    const extra = pad || 0;
+    return point.x >= box.x - extra && point.x <= box.x + box.w + extra
+      && point.y >= box.y - extra && point.y <= box.y + box.h + extra;
+  },
+
+  /** Restore a fresh match. Kept as a method so rematches and later modes can reuse it. */
+  reset() {
+    this.player = new Side("player", CONFIG.playerCapital);
+    this.enemy = new Side("enemy", CONFIG.enemyCapital);
+    this.checkpoints = [];
+    this.projectiles = [];
+    this.splats = [];
+    this.drag = null;
+    this.nextTroopId = 1;
+    this.winner = null;
+    this.elapsed = 0;
+
+    const center = Path.bottomCenter();
+    const midR = Path.bottomRadius(Math.floor(CONFIG.bottomSublaneCount / 2));
+    const count = CONFIG.checkpointCount;
+    for (let i = 0; i < count; i += 1) {
+      const t = (i + 1) / (count + 1);
+      const theta = Math.PI * (1 - t);
+      this.checkpoints.push(new Checkpoint(
+        i,
+        center.x + midR * Math.cos(theta),
+        center.y + midR * Math.sin(theta),
+      ));
+    }
+    this.refreshIncomes();
+    this.ui.banner.classList.add("hidden");
+  },
+
+  /** Shared player-buy path for melee, skirmisher, dragoon, and cannon. */
+  buy(lane, type) {
+    ShotTone.unlock();
+    if (this.winner) {
+      return;
+    }
+    if (this.player.tryBuy(lane, this.nextTroopId, type)) {
+      this.nextTroopId += 1;
+    }
+  },
+
+  /** Restart is the only remaining HTML control. */
+  bindUI() {
+    this.ui.restart.addEventListener("click", () => {
+      this.reset();
+    });
+    const opts = { passive: false };
+    this.canvas.addEventListener("pointerdown", (event) => {
+      ShotTone.unlock();
+      this.onPointerDown(event);
+    }, opts);
+    this.canvas.addEventListener("pointermove", (event) => {
+      this.onPointerMove(event);
+    }, opts);
+    this.canvas.addEventListener("pointerup", (event) => {
+      this.onPointerUp(event);
+    }, opts);
+    this.canvas.addEventListener("pointercancel", () => {
+      this.drag = null;
+    });
+    this.canvas.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
+    const refit = () => this.fitCanvas();
+    window.addEventListener("resize", refit);
+    window.addEventListener("orientationchange", refit);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", refit);
+    }
+  },
+
+  /** Map a pointer onto logical canvas pixels (CSS size and DPR independent). */
+  canvasPoint(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * (CONFIG.canvasWidth / rect.width),
+      y: (event.clientY - rect.top) * (CONFIG.canvasHeight / rect.height),
+    };
+  },
+
+  /** Closest friendly troop under the cursor, or null. */
+  hitTroop(event) {
+    const point = this.canvasPoint(event);
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < this.player.troops.length; i += 1) {
+      const troop = this.player.troops[i];
+      const reach = troop.bodyRadius() + this.uiMetrics().unitReach;
+      const d = distance(point, troop);
+      if (d <= reach && d < bestD) {
+        bestD = d;
+        best = troop;
+      }
+    }
+    return best;
+  },
+
+  /**
+   * Left-press on a friendly starts a possible drag-to-row. A short
+   * press still issues reform / halt / advance.
+   */
+  onPointerDown(event) {
+    if (this.winner || !event.isPrimary) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const point = this.canvasPoint(event);
+    const buy = this.hitBuyAt(point);
+    if (buy) {
+      this.buy(buy.lane, buy.type);
+      return;
+    }
+    if (this.hitBankAt(point, this.player)) {
+      this.player.tryUnlockBank();
+      return;
+    }
+    const troop = this.hitTroop(event);
+    if (!troop) {
+      return;
+    }
+    this.drag = { troop, x: point.x, y: point.y, hx: point.x, hy: point.y };
+    this.canvas.setPointerCapture(event.pointerId);
+  },
+
+  /** While dragging, keep the hover point so the target row can light up. */
+  onPointerMove(event) {
+    if (!event.isPrimary) {
+      return;
+    }
+    event.preventDefault();
+    const point = this.canvasPoint(event);
+    this.hover = point;
+    if (this.drag) {
+      this.drag.hx = point.x;
+      this.drag.hy = point.y;
+    }
+    const overUI = this.hitBuyAt(point) || this.hitBankAt(point, this.player);
+    this.canvas.style.cursor = overUI ? "pointer" : "default";
+  },
+
+  /** True when the cursor is on this side's next bank button. */
+  hitBank(event, side) {
+    return this.hitBankAt(this.canvasPoint(event), side);
+  },
+
+  hitBankAt(point, side) {
+    if (side.banks >= CONFIG.bankCount) {
+      return false;
+    }
+    const box = side.bankButtonRect(side.banks);
+    return this.pointInBox(point, box, this.uiMetrics().hitPad);
+  },
+
+  hitBuyAt(point) {
+    const pad = this.uiMetrics().hitPad;
+    const lanes = ["top", "bottom"];
+    let best = null;
+    let bestD = Infinity;
+    for (let L = 0; L < lanes.length; L += 1) {
+      for (let i = 0; i < BUY_UNITS.length; i += 1) {
+        const box = this.buyButtonRect(lanes[L], i);
+        if (!this.pointInBox(point, box, pad)) {
+          continue;
+        }
+        const d = distance(point, { x: box.x + box.w / 2, y: box.y + box.h / 2 });
+        if (d < bestD) {
+          bestD = d;
+          best = { lane: lanes[L], type: BUY_UNITS[i].type };
+        }
+      }
+    }
+    return best;
+  },
+
+  /**
+   * Centered buy rows in the open gap: top row under the top lane,
+   * bottom row above the rings, with a tight space between them.
+   */
+  buyRowLayout() {
+    const ui = this.uiMetrics();
+    const row = BUY_UNITS.length * ui.buyW + (BUY_UNITS.length - 1) * ui.buyGap;
+    const x = CONFIG.canvasWidth / 2 - row / 2;
+    const pad = 12;
+    const pairGap = 14;
+    const minTop = CONFIG.playerCapital.y + CONFIG.topLaneHeight / 2 + pad;
+    const c = Path.bottomCenter();
+    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
+    const dx = Math.min(row / 2, rIn - 8);
+    const ringY = c.y + Math.sqrt(Math.max(0, rIn * rIn - dx * dx));
+    const maxBottom = ringY - pad - ui.buyH;
+    const pairH = ui.buyH * 2 + pairGap;
+    let topY = (minTop + maxBottom + ui.buyH - pairH) / 2;
+    topY = Math.max(minTop, Math.min(topY, maxBottom - pairGap - ui.buyH));
+    return { x, topY, bottomY: topY + ui.buyH + pairGap, ui };
+  },
+
+  buyButtonOrigin(lane) {
+    const layout = this.buyRowLayout();
+    return { x: layout.x, y: lane === "top" ? layout.topY : layout.bottomY };
+  },
+
+  buyButtonRect(lane, index) {
+    const layout = this.buyRowLayout();
+    const ui = layout.ui;
+    return {
+      x: layout.x + index * (ui.buyW + ui.buyGap),
+      y: lane === "top" ? layout.topY : layout.bottomY,
+      w: ui.buyW,
+      h: ui.buyH,
+    };
+  },
+
+  /** Owned town under the cursor, or null. */
+  hitCheckpoint(event) {
+    const point = this.canvasPoint(event);
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i < this.checkpoints.length; i += 1) {
+      const town = this.checkpoints[i];
+      const d = distance(point, town);
+      if (d <= town.radius() + this.uiMetrics().townReach && d < bestD) {
+        bestD = d;
+        best = town;
+      }
+    }
+    return best;
+  },
+
+  /**
+   * Classify a drag as a row change, a forward charge, or a fallback.
+   * Along-the-path wins over a slight sideways drift.
+   */
+  dragIntent(troop, from, to) {
+    const tan = Path.tangentAt(troop.points, troop.progress);
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const along = dx * tan.x + dy * tan.y;
+    const across = dx * -tan.y + dy * tan.x;
+    const row = Path.closestSublane(troop.side.id, troop.lane, troop.progress, to);
+    if (Math.abs(across) > Math.abs(along) && row !== troop.sublane) {
+      return { kind: "lane", row };
+    }
+    if (along > 0) {
+      return { kind: "charge" };
+    }
+    if (along < 0) {
+      return { kind: "fallback" };
+    }
+    return { kind: "none" };
+  },
+
+  /**
+   * Left-release: drag across to change row, forward to charge, back
+   * to fall back, click to cycle reform / halt / advance, or click a
+   * town you own to buy its upgrade. Only fallback works in melee.
+   */
+  onPointerUp(event) {
+    if (!event.isPrimary) {
+      return;
+    }
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    if (!this.drag) {
+      if (this.winner) {
+        return;
+      }
+      const town = this.hitCheckpoint(event);
+      if (town && town.owner === "player") {
+        this.player.tryBuyUpgrade(town.upgradeKind());
+      }
+      return;
+    }
+    const start = this.drag;
+    this.drag = null;
+    if (this.winner || start.troop.hp <= 0) {
+      return;
+    }
+    const allies = this.player.troops;
+    const enemies = this.enemy.troops;
+    const point = this.canvasPoint(event);
+    const pulled = distance(start, point);
+    if (pulled >= this.uiMetrics().dragMin) {
+      const intent = this.dragIntent(start.troop, start, point);
+      if (intent.kind === "fallback") {
+        start.troop.issueFallback(allies);
+        return;
+      }
+      if (start.troop.lineInMelee(allies, enemies)) {
+        return;
+      }
+      if (intent.kind === "lane") {
+        start.troop.issueLaneChange(intent.row, allies, enemies);
+        return;
+      }
+      if (intent.kind === "charge") {
+        start.troop.issueCharge(allies, enemies);
+        return;
+      }
+    }
+    start.troop.issueOrder(allies, enemies);
+  },
+
+  /**
+   * Bot action: spend gold on a unit in the lane where its center-line
+   * share is smaller (ties: top). An empty lane always gets a troop
+   * first. If it already has more troops there than the player, it
+   * saves for a dragoon. If a bank is available and it leads army
+   * value in both lanes, it saves for the bank.
+   */
+  botAct() {
+    this.botFormLines();
+    this.botChargeDragoons();
+    this.botBuyUpgrades();
+    const emptyLane = this.botLaneMissingTroop();
+    if (emptyLane) {
+      if (this.enemy.tryBuy(emptyLane, this.nextTroopId, "melee")) {
+        this.nextTroopId += 1;
+      }
+      return;
+    }
+    if (this.botShouldSaveForBank()) {
+      this.enemy.tryUnlockBank();
+      return;
+    }
+    const topShare = 1 - this.topLaneCenterT();
+    const bottomShare = 1 - this.bottomLaneCenterT();
+    const lane = bottomShare < topShare ? "bottom" : "top";
+    if (this.enemy.countInLane(lane) > this.player.countInLane(lane)) {
+      if (this.enemy.tryBuy(lane, this.nextTroopId, "dragoon")) {
+        this.nextTroopId += 1;
+      }
+      this.enemy.tryUnlockBank();
+      return;
+    }
+    if (this.enemy.gold < CONFIG.troopCost) {
+      this.enemy.tryUnlockBank();
+      return;
+    }
+    if (this.enemy.tryBuy(lane, this.nextTroopId, "melee")) {
+      this.nextTroopId += 1;
+    }
+    this.enemy.tryUnlockBank();
+  },
+
+  /**
+   * Lane with no living bot melee troop. If both are empty, use the
+   * weaker center-line share (ties: top).
+   */
+  botLaneMissingTroop() {
+    const topEmpty = this.enemy.countTypeInLane("top", "melee") === 0;
+    const bottomEmpty = this.enemy.countTypeInLane("bottom", "melee") === 0;
+    if (!topEmpty && !bottomEmpty) {
+      return null;
+    }
+    if (topEmpty && !bottomEmpty) {
+      return "top";
+    }
+    if (bottomEmpty && !topEmpty) {
+      return "bottom";
+    }
+    const topShare = 1 - this.topLaneCenterT();
+    const bottomShare = 1 - this.bottomLaneCenterT();
+    return bottomShare < topShare ? "bottom" : "top";
+  },
+
+  /**
+   * Bot dragoon (and dragoon-line) orders, first match:
+   * no troop within 100 → fallback; enemy within 100 → charge;
+   * troop within 100 behind → reform; otherwise advance.
+   */
+  botChargeDragoons() {
+    const allies = this.enemy.troops;
+    const foes = this.player.troops;
+    const seen = {};
+    for (let i = 0; i < allies.length; i += 1) {
+      const troop = allies[i];
+      if (troop.hp <= 0 || troop.type !== "dragoon" || seen[troop.id]) {
+        continue;
+      }
+      const line = troop.lineGroup(allies);
+      const lead = troop.sortRearToFront(line)[line.length - 1];
+      const next = this.botDragoonOrder(lead, allies, foes);
+      let locked = false;
+      for (let g = 0; g < line.length; g += 1) {
+        seen[line[g].id] = true;
+        if (line[g].order !== next && line[g].orderLock > 0) {
+          locked = true;
+        }
+      }
+      if (locked) {
+        continue;
+      }
+      for (let g = 0; g < line.length; g += 1) {
+        this.botSetOrder(line[g], next);
+      }
+    }
+  },
+
+  /** Apply an order if it changed and the bot lock has expired. */
+  botSetOrder(troop, next) {
+    if (troop.order === next || troop.orderLock > 0) {
+      return false;
+    }
+    troop.order = next;
+    troop.reformNeedsAlign = next === "reform";
+    troop.wantedSublane = null;
+    troop.orderLock = CONFIG.botOrderCooldown;
+    return true;
+  },
+
+  /** Pick fallback, charge, reform, or advance (null) for a bot dragoon. */
+  botDragoonOrder(dragoon, allies, foes) {
+    const range = CONFIG.dragoonSupportRange;
+    if (this.dragoonHasTroopAhead(dragoon, allies)) {
+      return null;
+    }
+    if (!this.dragoonHasTroopNear(dragoon, allies, range)) {
+      return "fallback";
+    }
+    if (this.dragoonHasEnemyNear(dragoon, foes, range)) {
+      return "charge";
+    }
+    if (this.dragoonHasTroopBehind(dragoon, allies, range)) {
+      return "reform";
+    }
+    return null;
+  },
+
+  /** Friendly troop ahead of this dragoon, any sublane of the same lane. */
+  dragoonHasTroopAhead(dragoon, allies) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") {
+        continue;
+      }
+      if (ally.lane !== dragoon.lane) {
+        continue;
+      }
+      if (dragoon.alongSigned(ally) > 0) {
+        return true;
+      }
+    }
+    return false;
+  },
+
+  dragoonHasTroopNear(dragoon, allies, range) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") {
+        continue;
+      }
+      if (distance(dragoon, ally) <= range) {
+        return true;
+      }
+    }
+    return false;
+  },
+
+  dragoonHasEnemyNear(dragoon, foes, range) {
+    for (let i = 0; i < foes.length; i += 1) {
+      const foe = foes[i];
+      if (foe.hp <= 0) {
+        continue;
+      }
+      if (distance(dragoon, foe) <= range) {
+        return true;
+      }
+    }
+    return false;
+  },
+
+  dragoonHasTroopBehind(dragoon, allies, range) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") {
+        continue;
+      }
+      if (dragoon.alongSigned(ally) >= 0) {
+        continue;
+      }
+      if (distance(dragoon, ally) <= range) {
+        return true;
+      }
+    }
+    return false;
+  },
+
+  /**
+   * True when the next bank is time-unlocked and the bot's living
+   * unit gold-value is ahead in both lanes.
+   */
+  botShouldSaveForBank() {
+    const bot = this.enemy;
+    if (bot.banks >= CONFIG.bankCount || !bot.bankUnlockedByTime(bot.banks)) {
+      return false;
+    }
+    return this.laneArmyValue(bot, "top") > this.laneArmyValue(this.player, "top")
+      && this.laneArmyValue(bot, "bottom") > this.laneArmyValue(this.player, "bottom");
+  },
+
+  /**
+   * If a lane has more than one bot troop, only a lone leader that is
+   * ahead of an adjacent follower reforms. Troops that can walk up into
+   * a line already ahead keep advancing, as do already-formed lines.
+   */
+  botFormLines() {
+    const allies = this.enemy.troops;
+    const foes = this.player.troops;
+    const lanes = ["top", "bottom"];
+    for (let L = 0; L < lanes.length; L += 1) {
+      const lane = lanes[L];
+      let count = 0;
+      for (let i = 0; i < allies.length; i += 1) {
+        if (allies[i].hp > 0 && allies[i].lane === lane) {
+          count += 1;
+        }
+      }
+      if (count < 2) {
+        continue;
+      }
+      for (let i = 0; i < allies.length; i += 1) {
+        const troop = allies[i];
+        if (troop.hp <= 0 || troop.lane !== lane || troop.type === "dragoon") {
+          continue;
+        }
+        if (troop.order === "charge" || troop.order === "halt" || troop.order === "fallback") {
+          continue;
+        }
+        if (troop.lineInMelee(allies, foes)) {
+          continue;
+        }
+        const line = troop.lineGroup(allies);
+        if (line.length >= 2) {
+          if (troop.order === "reform") {
+            for (let g = 0; g < line.length; g += 1) {
+              if (line[g].order === "reform") {
+                this.botSetOrder(line[g], null);
+              }
+            }
+          }
+          continue;
+        }
+        if (troop.canJoinLineAhead(allies)) {
+          if (troop.order === "reform") {
+            this.botSetOrder(troop, null);
+          }
+          continue;
+        }
+        if (troop.order === "reform") {
+          continue;
+        }
+        const partner = troop.nextBehindOtherSublane(allies);
+        if (!partner) {
+          continue;
+        }
+        this.botSetOrder(troop, "reform");
+      }
+    }
+  },
+
+  /**
+   * Bot spends land on an owned town's upgrade when it can afford one.
+   */
+  botBuyUpgrades() {
+    let best = null;
+    let bestCost = Infinity;
+    for (let i = 0; i < this.checkpoints.length; i += 1) {
+      const town = this.checkpoints[i];
+      if (town.owner !== "enemy") {
+        continue;
+      }
+      const kind = town.upgradeKind();
+      if (this.enemy.upgrades[kind] >= CONFIG.upgradeMax) {
+        continue;
+      }
+      const cost = this.enemy.upgradeCost(kind);
+      if (cost < bestCost && this.enemy.canBuyUpgrade(kind)) {
+        bestCost = cost;
+        best = kind;
+      }
+    }
+    if (best) {
+      this.enemy.tryBuyUpgrade(best);
+    }
+  },
+
+  /**
+   * Apply the live lane-center splits to gold and land income, then
+   * award both for this step.
+   */
+  refreshIncomes() {
+    const top = this.topLaneCenterT();
+    const bottom = this.bottomLaneCenterT();
+    this.player.refreshIncome(this.checkpoints, top);
+    this.enemy.refreshIncome(this.checkpoints, 1 - top);
+    this.player.refreshLand(bottom);
+    this.enemy.refreshLand(1 - bottom);
+  },
+
+  /** Award passive gold and land from current income. */
+  tickIncome(dt) {
+    this.refreshIncomes();
+    this.player.gold += this.player.income * dt;
+    this.enemy.gold += this.enemy.income * dt;
+    this.player.land += this.player.landIncome * dt;
+    this.enemy.land += this.enemy.landIncome * dt;
+  },
+
+  /** Move, fight, capture, and drop dead troops for one side. */
+  updateSide(side, opponents, enemySide, dt) {
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (troop.hp <= 0) {
+        continue;
+      }
+      troop.update(dt, side.troops, opponents, enemySide, this.projectiles);
+      if (troop.lane === "bottom") {
+        for (let c = 0; c < this.checkpoints.length; c += 1) {
+          if (this.checkpoints[c].tryCapture(troop)) {
+            this.refreshIncomes();
+          }
+        }
+      }
+    }
+    side.troops = side.troops.filter((troop) => troop.hp > 0);
+  },
+
+  /** Create a floating damage number at a world point. */
+  spawnSplat(x, y, amount, kind) {
+    this.splats.push(new HitSplat(x, y, amount, kind));
+  },
+
+  /** Rise and drop expired hit splats. */
+  updateSplats(dt) {
+    for (let i = 0; i < this.splats.length; i += 1) {
+      this.splats[i].update(dt);
+    }
+    this.splats = this.splats.filter((splat) => splat.alive);
+  },
+
+  /** Fly shells; they pass over units and only hit their locked target. */
+  updateProjectiles(dt) {
+    for (let i = 0; i < this.projectiles.length; i += 1) {
+      this.projectiles[i].update(dt);
+    }
+    this.projectiles = this.projectiles.filter((shot) => shot.alive);
+  },
+
+  /** First capital to 0 HP loses; damage is cumulative across the match. */
+  checkWinner() {
+    if (this.enemy.capitalHP <= 0) {
+      this.winner = "player";
+      this.ui.bannerText.textContent = "Player wins";
+      this.ui.banner.classList.remove("hidden");
+    } else if (this.player.capitalHP <= 0) {
+      this.winner = "enemy";
+      this.ui.bannerText.textContent = "Bot wins";
+      this.ui.banner.classList.remove("hidden");
+    }
+  },
+
+  /** One simulation step: income, bot spend, both armies, shells, win check. */
+  tick(dt) {
+    if (this.winner) {
+      return;
+    }
+    this.elapsed += dt;
+    this.tickIncome(dt);
+    this.botAct();
+    this.updateSide(this.player, this.enemy.troops, this.enemy, dt);
+    this.updateSide(this.enemy, this.player.troops, this.player, dt);
+    this.player.updateGuns(dt, this.enemy.troops, this.player.troops, this.projectiles);
+    this.enemy.updateGuns(dt, this.player.troops, this.enemy.troops, this.projectiles);
+    this.updateProjectiles(dt);
+    this.checkWinner();
+  },
+
+  /** Stroke every sublane so the 5-wide top and 3-wide U are visible. */
+  drawLanes(ctx) {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+
+    ctx.fillStyle = CONFIG.colors.topLane;
+    ctx.fillRect(
+      left.x,
+      left.y - CONFIG.topLaneHeight / 2,
+      right.x - left.x,
+      CONFIG.topLaneHeight,
+    );
+
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    ctx.strokeStyle = CONFIG.colors.topSublane;
+    ctx.lineWidth = CONFIG.topSublaneWidth;
+    for (let s = 0; s < CONFIG.topSublaneCount; s += 1) {
+      const pts = Path.worldPoints("top", s);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = CONFIG.colors.bottomSublane;
+    ctx.lineWidth = CONFIG.bottomSublaneWidth;
+    const ring = Path.bottomCenter();
+    for (let s = 0; s < CONFIG.bottomSublaneCount; s += 1) {
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, Path.bottomRadius(s), Math.PI, 0, true);
+      ctx.stroke();
+    }
+
+    this.drawQuarterLines(ctx);
+    this.drawTopCenter(ctx);
+    this.drawBottomCenter(ctx);
+  },
+
+  /**
+   * Cover bars at 1/4 of the lane from each keep: vertical on top,
+   * radial on the bottom rings. Thickness matches a troop.
+   */
+  quarterSegments() {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+    const topY = left.y - CONFIG.topLaneHeight / 2;
+    const botY = left.y + CONFIG.topLaneHeight / 2;
+    const span = right.x - left.x;
+    const px = left.x + CONFIG.quarterMark * span;
+    const ex = left.x + (1 - CONFIG.quarterMark) * span;
+    const c = Path.bottomCenter();
+    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
+    const rOut = Path.bottomRadius(0);
+    const pTheta = Math.PI * (1 - CONFIG.quarterMark);
+    const eTheta = Math.PI * CONFIG.quarterMark;
+    return [
+      { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player },
+      { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy },
+      {
+        x1: c.x + rIn * Math.cos(pTheta),
+        y1: c.y + rIn * Math.sin(pTheta),
+        x2: c.x + rOut * Math.cos(pTheta),
+        y2: c.y + rOut * Math.sin(pTheta),
+        color: CONFIG.colors.player,
+      },
+      {
+        x1: c.x + rIn * Math.cos(eTheta),
+        y1: c.y + rIn * Math.sin(eTheta),
+        x2: c.x + rOut * Math.cos(eTheta),
+        y2: c.y + rOut * Math.sin(eTheta),
+        color: CONFIG.colors.enemy,
+      },
+    ];
+  },
+
+  quarterThickness() {
+    return CONFIG.troopRadius * 2;
+  },
+
+  touchesQuarterLine(troop) {
+    const reach = troop.bodyRadius() + this.quarterThickness() / 2;
+    const segs = this.quarterSegments();
+    for (let i = 0; i < segs.length; i += 1) {
+      const s = segs[i];
+      if (pointToSegment(troop, s.x1, s.y1, s.x2, s.y2) <= reach) {
+        return true;
+      }
+    }
+    return false;
+  },
+
+  drawQuarterLines(ctx) {
+    const segs = this.quarterSegments();
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineWidth = this.quarterThickness();
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i < segs.length; i += 1) {
+      const s = segs[i];
+      ctx.strokeStyle = s.color;
+      ctx.beginPath();
+      ctx.moveTo(s.x1, s.y1);
+      ctx.lineTo(s.x2, s.y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+
+  /** Gold cost of living units in one lane. */
+  laneArmyValue(side, lane) {
+    let total = 0;
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (troop.hp <= 0 || troop.lane !== lane) {
+        continue;
+      }
+      total += side.unitCost(troop.type);
+    }
+    return total;
+  },
+
+  /**
+   * One side's push in a lane: each living unit adds progress-from-its
+   * keep times its gold cost.
+   */
+  laneValue(side, lane) {
+    let total = 0;
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (troop.hp <= 0 || troop.lane !== lane) {
+        continue;
+      }
+      total += troop.progress * side.unitCost(troop.type);
+    }
+    return total;
+  },
+
+  /**
+   * Share of a lane from the player keep. Player value over both
+   * sides' values; 0.5 when nobody is on the lane.
+   */
+  laneCenterT(lane) {
+    const playerVal = this.laneValue(this.player, lane);
+    const enemyVal = this.laneValue(this.enemy, lane);
+    const sum = playerVal + enemyVal;
+    if (sum <= 0) {
+      return 0.5;
+    }
+    return playerVal / sum;
+  },
+
+  topLaneCenterT() {
+    return this.laneCenterT("top");
+  },
+
+  bottomLaneCenterT() {
+    return this.laneCenterT("bottom");
+  },
+
+  /** Vertical divider on the top band at the cost-weighted center. */
+  drawTopCenter(ctx) {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+    const t = this.topLaneCenterT();
+    const x = left.x + (right.x - left.x) * t;
+    const top = left.y - CONFIG.topLaneHeight / 2;
+    const bottom = left.y + CONFIG.topLaneHeight / 2;
+    ctx.save();
+    ctx.strokeStyle = CONFIG.colors.laneCenter;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+
+  /** Short ray that only crosses the bottom rings. */
+  drawBottomCenter(ctx) {
+    const c = Path.bottomCenter();
+    const t = this.bottomLaneCenterT();
+    const theta = Math.PI * (1 - t);
+    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
+    const rOut = Path.bottomRadius(0);
+    ctx.save();
+    ctx.strokeStyle = CONFIG.colors.laneCenter;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(c.x + rIn * Math.cos(theta), c.y + rIn * Math.sin(theta));
+    ctx.lineTo(c.x + rOut * Math.cos(theta), c.y + rOut * Math.sin(theta));
+    ctx.stroke();
+    ctx.restore();
+  },
+
+  /** Brighten the sublane under the cursor during a row-change drag. */
+  drawLaneHover(ctx) {
+    if (!this.drag || this.drag.troop.hp <= 0) {
+      return;
+    }
+    const troop = this.drag.troop;
+    const row = Path.closestSublane(
+      troop.side.id,
+      troop.lane,
+      troop.progress,
+      { x: this.drag.hx, y: this.drag.hy },
+    );
+    ctx.save();
+    ctx.strokeStyle = CONFIG.colors.laneHover;
+    ctx.globalAlpha = 0.8;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (troop.lane === "top") {
+      ctx.lineWidth = CONFIG.topSublaneWidth + 6;
+      const pts = Path.worldPoints("top", row);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.stroke();
+    } else {
+      ctx.lineWidth = CONFIG.bottomSublaneWidth + 6;
+      const ring = Path.bottomCenter();
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, Path.bottomRadius(row), Math.PI, 0, true);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+
+  /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
+  render() {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    ctx.fillStyle = CONFIG.colors.bg;
+    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    this.drawLanes(ctx);
+    this.drawLaneHover(ctx);
+
+    for (let i = 0; i < this.checkpoints.length; i += 1) {
+      this.checkpoints[i].draw(ctx);
+    }
+    this.player.drawCapital(ctx);
+    this.enemy.drawCapital(ctx);
+
+    const everyone = this.player.troops.concat(this.enemy.troops);
+    for (let i = 0; i < everyone.length; i += 1) {
+      everyone[i].draw(ctx);
+    }
+    for (let i = 0; i < this.projectiles.length; i += 1) {
+      this.projectiles[i].draw(ctx);
+    }
+    for (let i = 0; i < this.splats.length; i += 1) {
+      this.splats[i].draw(ctx);
+    }
+    this.drawCanvasUI(ctx);
+  },
+
+  /** Banks, scoreboard, and lane buy buttons drawn over the map. */
+  drawCanvasUI(ctx) {
+    this.player.drawBanks(ctx);
+    this.enemy.drawBanks(ctx);
+    this.drawScoreboard(ctx);
+    this.drawBuyButtons(ctx);
+  },
+
+  /** Player and bot stats plus keep score, between the two bank rows. */
+  drawScoreboard(ctx) {
+    const pLast = this.player.bankButtonRect(CONFIG.bankCount - 1);
+    const eFirst = this.enemy.bankButtonRect(0);
+    const left = pLast.x + pLast.w + 14 * CONFIG.uiScale;
+    const right = eFirst.x - 14 * CONFIG.uiScale;
+    const mid = (left + right) / 2;
+    const top = pLast.y;
+    const midY = top + pLast.h / 2;
+    this.drawSideStats(ctx, this.player, left, midY, "left");
+    this.drawSideStats(ctx, this.enemy, right, midY, "right");
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = this.uiFont(18);
+    ctx.fillStyle = CONFIG.colors.player;
+    ctx.fillText(String(Math.max(0, this.player.capitalHP)), mid - 28 * CONFIG.uiScale, midY);
+    ctx.fillStyle = CONFIG.colors.text;
+    ctx.font = this.uiFont(14);
+    ctx.fillText("—", mid, midY);
+    ctx.fillStyle = CONFIG.colors.enemy;
+    ctx.font = this.uiFont(18);
+    ctx.fillText(String(Math.max(0, this.enemy.capitalHP)), mid + 28 * CONFIG.uiScale, midY);
+    ctx.restore();
+  },
+
+  drawSideStats(ctx, side, x, midY, align) {
+    const gold = Math.floor(side.gold);
+    const land = Math.floor(side.land);
+    const line1 = `${gold}🪙 +${side.income}/s   ${land}🌿 +${side.landIncome}/s`;
+    const line2 = `${side.speedMultiplier.toFixed(2)}x ⚡  ${side.damageScale().toFixed(2)}x ⚔️  ${Math.round(side.armorReduction() * 100)}% 🛡️`;
+    ctx.save();
+    ctx.textAlign = align;
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
+    ctx.font = this.uiFont(12);
+    ctx.fillText(line1, x, midY - 8 * CONFIG.uiScale);
+    ctx.fillStyle = CONFIG.colors.text;
+    ctx.font = this.uiFont(11, "normal");
+    ctx.fillText(line2, x, midY + 9 * CONFIG.uiScale);
+    ctx.restore();
+  },
+
+  drawBuyButtons(ctx) {
+    const hover = this.hover;
+    const over = Boolean(this.winner);
+    const lanes = ["top", "bottom"];
+    for (let L = 0; L < lanes.length; L += 1) {
+      for (let i = 0; i < BUY_UNITS.length; i += 1) {
+        const unit = BUY_UNITS[i];
+        const box = this.buyButtonRect(lanes[L], i);
+        const cost = CONFIG[unit.costKey];
+        const can = !over && this.player.gold >= cost;
+        const lit = hover
+          && hover.x >= box.x && hover.x <= box.x + box.w
+          && hover.y >= box.y && hover.y <= box.y + box.h;
+        ctx.fillStyle = unit.fill;
+        ctx.strokeStyle = can && lit ? "#ffffff" : unit.stroke;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = can ? 1 : 0.45;
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        ctx.strokeRect(box.x, box.y, box.w, box.h);
+        ctx.fillStyle = CONFIG.colors.text;
+        ctx.font = this.uiFont(box.h > 26 * CONFIG.uiScale ? 13 : 11);
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.fillText(unit.label, box.x + 6 * CONFIG.uiScale, box.y + box.h / 2);
+        ctx.fillStyle = CONFIG.colors.gold;
+        ctx.textAlign = "right";
+        ctx.fillText(`${cost}🪙`, box.x + box.w - 6 * CONFIG.uiScale, box.y + box.h / 2);
+        ctx.globalAlpha = 1;
+      }
+    }
+  },
+
+  /** Frame driver. Caps dt so a tab-switch does not teleport units. */
+  loop(now) {
+    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    this.lastTime = now;
+    this.tick(dt);
+    this.updateSplats(dt);
+    this.render();
+    requestAnimationFrame((t) => this.loop(t));
+  },
+};
+
+Game.init();
+
+  </script>
+</body>
+</html>

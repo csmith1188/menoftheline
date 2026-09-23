@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Men Of The Line</title>
+  <link rel="stylesheet" href="/css/game.css">
+</head>
+<body>
+  <div class="shell">
+    <div class="stage">
+      <canvas id="board" width="960" height="620" role="img" aria-label="Lane map"></canvas>
+      <div id="lobby" class="banner">
+        <p id="lobby-you" class="sub"></p>
+        <p id="lobby-text">Connecting...</p>
+        <button type="button" id="play-bot" class="action hidden">Play vs bot</button>
+      </div>
+      <div id="banner" class="banner hidden">
+        <p id="banner-text"></p>
+        <button type="button" id="leave" class="action">Leave</button>
+      </div>
+      <button type="button" id="gear" class="gear hidden" aria-label="Menu">⚙</button>
+      <div id="menu" class="menu hidden">
+        <p class="label">You</p>
+        <p id="menu-you" class="value"></p>
+        <p class="label">Opponent</p>
+        <p id="opp-name" class="value"></p>
+        <p id="opp-kind" class="value"></p>
+        <button type="button" id="concede" class="action">Concede</button>
+        <div id="confirm" class="confirm hidden">
+          <p>Concede this match?</p>
+          <button type="button" id="concede-yes" class="action">Concede</button>
+          <button type="button" id="concede-no" class="action">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

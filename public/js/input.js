@@ -1,20 +1,53 @@
 import { CONFIG } from "../shared/config.js";
+import { UNIT_VARIANTS } from "../shared/units.js";
 import { Path, distance } from "../shared/path.js";
 import { unlockAudio } from "./audio.js";
 
-/** A press this long selects the unit instead of cycling its order. */
+/** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
 
 const pointerMethods = {
   /**
-   * Left-press on a friendly starts a possible drag-to-row. A short
-   * press still issues halt / reform / advance. Holding selects it.
+   * Press a unit to select, reform/restore, or drag for speed / lane.
+   * Enemies can be selected for info only.
    */
   onPointerDown(event) {
-    if ((this.winner || this.status !== "playing") || !event.isPrimary) {
+    if (!event.isPrimary) return;
+    if (event.pointerType === "mouse" && event.button !== 0) {
       return;
     }
-    if (event.pointerType === "mouse" && event.button !== 0) {
+    if (this.telescope) {
+      event.preventDefault();
+      this.telescopeSlide = 0;
+      if (!(this.winner || this.status !== "playing")) {
+        const world = this.worldPoint(event);
+        const troop = this.hitAnyTroopAt(world);
+        if (troop) {
+          this.drag = {
+            troop,
+            x: world.x,
+            y: world.y,
+            hx: world.x,
+            hy: world.y,
+            downAt: performance.now(),
+            soloPick: false,
+          };
+          this.canvas.setPointerCapture(event.pointerId);
+          return;
+        }
+      }
+      const point = this.screenPoint(event);
+      this.telescopeDrag = {
+        x: point.x,
+        y: point.y,
+        along: this.telescope.along,
+        switched: false,
+        samples: [{ t: performance.now(), along: this.telescope.along }],
+      };
+      this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    if ((this.winner || this.status !== "playing")) {
       return;
     }
     event.preventDefault();
@@ -29,16 +62,29 @@ const pointerMethods = {
         hx: point.x,
         hy: point.y,
         lane: null,
+        variantSwipe: null,
       };
       this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+    const unlock = this.hitVariantUnlockAt(point);
+    if (unlock) {
+      if (!this.buySelection) this.buySelection = {};
+      this.buySelection[unlock.base] = unlock.variant;
+      this.onCommand({ type: "unlockVariant", base: unlock.base });
       return;
     }
     if (this.hitBankAt(point, this.player)) {
       this.onCommand({ type: "bank" });
       return;
     }
-    const troop = this.hitTroop(event);
+    const troop = this.hitAnyTroopAt(point);
     if (!troop) {
+      const spot = this.laneAt(point);
+      if (spot && !this.hitUnitAt(point)) {
+        this.lanePress = { x: point.x, y: point.y, lane: spot.lane, along: spot.along };
+        this.canvas.setPointerCapture(event.pointerId);
+      }
       return;
     }
     this.drag = {
@@ -48,6 +94,7 @@ const pointerMethods = {
       hx: point.x,
       hy: point.y,
       downAt: performance.now(),
+      soloPick: false,
     };
     this.canvas.setPointerCapture(event.pointerId);
   },
@@ -58,6 +105,21 @@ const pointerMethods = {
       return;
     }
     event.preventDefault();
+    if (this.telescope) {
+      if (this.drag) {
+        const world = this.worldPoint(event);
+        this.drag.hx = world.x;
+        this.drag.hy = world.y;
+        this.canvas.style.cursor = "pointer";
+        return;
+      }
+      const point = this.screenPoint(event);
+      if (this.telescopeDrag) this.moveTelescope(point);
+      const world = this.telescopeWorld(point);
+      const over = this.hitAnyTroopAt(world) || this.hitCheckpointAt(world);
+      this.canvas.style.cursor = over || this.laneAt(world) ? "pointer" : "default";
+      return;
+    }
     if (!this.player) return;
     const point = this.canvasPoint(event);
     this.hover = point;
@@ -65,6 +127,11 @@ const pointerMethods = {
       this.buyDrag.hx = point.x;
       this.buyDrag.hy = point.y;
       this.buyDrag.lane = this.buyLaneFromSwipe(this.buyDrag, point);
+      const swipe = this.buyVariantFromSwipe(this.buyDrag, point);
+      if (swipe && this.buyDrag.variantSwipe !== swipe) {
+        this.buyDrag.variantSwipe = swipe;
+        this.cycleBuyVariant(this.buyDrag.type, swipe);
+      }
     }
     if (this.drag) {
       this.drag.hx = point.x;
@@ -75,16 +142,45 @@ const pointerMethods = {
   },
 
   /**
-   * Left-release: drag across to change row, forward to charge, back
-   * to fall back, click to cycle halt / reform / advance, or click a
-   * town you own to buy its upgrade. A hold only selects. Only
-   * fallback works in melee.
+   * Release: click selects / reforms / restores; along-drag changes speed;
+   * across-drag changes row; long-press selects only that unit.
    */
   onPointerUp(event) {
     if (!event.isPrimary) {
       return;
     }
     if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    if (this.telescopeDrag) {
+      const start = this.telescopeDrag;
+      const point = this.screenPoint(event);
+      const pulled = distance(start, point);
+      if (!start.switched && pulled < this.uiMetrics().dragMin) {
+        this.telescopeDrag = null;
+        this.telescopeSlide = 0;
+        const world = this.telescopeWorld(point);
+        if (!(this.winner || this.status !== "playing")) {
+          const town = this.hitCheckpointAt(world);
+          if (town && town.owner === "player") {
+            this.onCommand({ type: "upgrade", checkpointId: town.index });
+            return;
+          }
+        }
+        if (!this.laneAt(world)) this.closeTelescope();
+        return;
+      }
+      this.releaseTelescope();
+      return;
+    }
+    if (this.lanePress) {
+      const start = this.lanePress;
+      this.lanePress = null;
+      if (this.winner || this.status !== "playing") return;
+      const point = this.canvasPoint(event);
+      if (distance(start, point) < this.uiMetrics().dragMin && !this.hitUnitAt(point)) {
+        this.openTelescopeAt(start.lane, start.along);
+      }
       return;
     }
     if (this.buyDrag) {
@@ -94,9 +190,12 @@ const pointerMethods = {
         return;
       }
       const point = this.canvasPoint(event);
+      if (start.variantSwipe) {
+        return;
+      }
       const lane = this.buyLaneFromSwipe(start, point);
       if (lane) {
-        this.onCommand({ type: "buy", lane, unit: start.type });
+        this.onCommand({ type: "buy", lane, unit: this.selectedBuyUnit(start.type) });
       }
       return;
     }
@@ -115,41 +214,84 @@ const pointerMethods = {
     if ((this.winner || this.status !== "playing") || start.troop.hp <= 0) {
       return;
     }
-    const point = this.canvasPoint(event);
+    const point = this.worldPoint(event);
     const pulled = distance(start, point);
-    const troopId = start.troop.id;
-    const intent = this.dragIntent(start.troop, start, point);
-    const held = start.downAt != null && performance.now() - start.downAt >= SELECT_HOLD_MS;
-    // A held press that never becomes a charge or fallback only selects.
-    if (held && pulled < this.uiMetrics().dragMin) {
-      this.inspectedId = start.troop.id;
+    const troop = start.troop;
+    const orderMin = this.orderDragMin();
+    const friendly = troop.side && troop.side.id === "player";
+
+    // Long-press without a drag: select only this unit.
+    if (start.soloPick && pulled < orderMin) {
       return;
     }
-    // Row changes commit once the pointer has crossed into the highlighted
-    // sublane. The longer drag minimum is for charge and fallback only;
-    // that screen-pixel floor is wider than one row when the board is scaled down.
-    if (intent.kind === "lane" && pulled >= CONFIG.laneDragMin) {
-      this.announceOrder(start.troop, "lane");
-      this.onCommand({ type: "order", troopId, action: "lane", sublane: intent.row });
+
+    // Across: change sublane (friendlies only).
+    const intent = this.dragIntent(troop, start, point);
+    if (friendly && intent.kind === "lane" && pulled >= this.laneDragMin()) {
+      this.selectTroop(troop, this.inspectedSolo);
+      this.announceOrder(troop, "lane");
+      this.onCommand({
+        type: "order",
+        troopId: troop.id,
+        action: "lane",
+        sublane: intent.row,
+        solo: Boolean(this.inspectedSolo),
+      });
       return;
     }
-    if (pulled >= this.uiMetrics().dragMin) {
-      if (intent.kind === "fallback") {
-        this.announceOrder(start.troop, "fallback");
-        this.onCommand({ type: "order", troopId, action: "fallback" });
-        return;
-      }
-      if (intent.kind === "charge") {
-        this.announceOrder(start.troop, "charge");
-        this.onCommand({ type: "order", troopId, action: "charge" });
-        return;
-      }
+
+    // Along: one step on the speed ladder (retreat / fallback / halt / advance / charge).
+    if (friendly && pulled >= orderMin && (intent.kind === "charge" || intent.kind === "fallback")) {
+      if (!this.isInspected(troop)) this.selectTroop(troop, false);
+      const solo = Boolean(this.inspectedSolo && this.inspectedId === troop.id);
+      const action = intent.kind === "charge" ? "speedUp" : "speedDown";
+      this.announceOrder(troop, action);
+      this.onCommand({ type: "order", troopId: troop.id, action, solo });
+      return;
     }
-    this.announceOrder(start.troop, "cycle");
-    this.onCommand({ type: "order", troopId, action: "cycle" });
+
+    // Click: select, or reform / restore when already selected.
+    if (pulled < orderMin) {
+      this.handleUnitTap(troop);
+    }
   },
 
-  /** While a press is held still, show that unit's stats without an order. */
+  /** True when this unit is in the current selection (solo or line). */
+  isInspected(troop) {
+    return Boolean(this.inspectedLineIds && this.inspectedLineIds[troop.id]);
+  },
+
+  selectTroop(troop, solo) {
+    this.inspectedId = troop.id;
+    this.inspectedSolo = Boolean(solo);
+    this.inspectedTroop();
+  },
+
+  /**
+   * Tap an unselected unit to inspect it. Tap a selected friendly again
+   * to reform, or to restore the prior speed order while reforming.
+   */
+  handleUnitTap(troop) {
+    const friendly = troop.side && troop.side.id === "player";
+    if (!this.isInspected(troop)) {
+      this.selectTroop(troop, false);
+      return;
+    }
+    if (!friendly) return;
+    const solo = Boolean(this.inspectedSolo);
+    if (troop.order === "reform") {
+      this.announceOrder(troop, "restore");
+      this.onCommand({ type: "order", troopId: troop.id, action: "restore", solo });
+      return;
+    }
+    this.announceOrder(troop, "reform");
+    this.onCommand({ type: "order", troopId: troop.id, action: "reform", solo });
+  },
+
+  /**
+   * Holding still long enough selects only that unit so later speed
+   * orders do not spread through its line.
+   */
   refreshHoldSelect() {
     const drag = this.drag;
     if (!drag || !drag.troop || drag.troop.hp <= 0 || drag.downAt == null) {
@@ -159,14 +301,15 @@ const pointerMethods = {
       return;
     }
     const pulled = distance(drag, { x: drag.hx, y: drag.hy });
-    if (pulled >= this.uiMetrics().dragMin) {
+    if (pulled >= this.orderDragMin()) {
       return;
     }
-    this.inspectedId = drag.troop.id;
+    drag.soloPick = true;
+    this.selectTroop(drag.troop, true);
   },
 
   /**
-   * Classify a drag as a row change, a forward charge, or a fallback.
+   * Classify a drag as a row change, a forward speed-up, or a speed-down.
    * Along-the-path wins over a slight sideways drift.
    */
   dragIntent(troop, from, to) {
@@ -201,6 +344,24 @@ const pointerMethods = {
     }
     return dy < 0 ? "top" : "bottom";
   },
+
+  /**
+   * Horizontal swipe on a buy button with an unlocked variant.
+   * Returns -1 (left) or 1 (right), once past the drag threshold.
+   */
+  buyVariantFromSwipe(start, point) {
+    const key = UNIT_VARIANTS[start.type];
+    if (!key || !this.player || !this.player.unlockedVariants[key]) {
+      return null;
+    }
+    const dx = point.x - start.x;
+    const dy = point.y - start.y;
+    const min = Math.max(16, this.uiMetrics().buyW * 0.35);
+    if (Math.abs(dx) < min || Math.abs(dx) <= Math.abs(dy)) {
+      return null;
+    }
+    return dx < 0 ? -1 : 1;
+  },
 };
 
 export function bindInput(board) {
@@ -216,6 +377,9 @@ export function bindInput(board) {
   canvas.addEventListener("pointercancel", () => {
     board.drag = null;
     board.buyDrag = null;
+    board.telescopeDrag = null;
+    board.telescopeSlide = 0;
+    board.lanePress = null;
   });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 }

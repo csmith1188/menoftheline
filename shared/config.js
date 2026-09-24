@@ -1,4 +1,4 @@
-/** Tunable match numbers, grouped for the board, economy, units, and combat. */
+/** Tunable match numbers for the board, economy, combat rules, and UI. */
 export const CONFIG = {
   // Board
 
@@ -39,14 +39,6 @@ export const CONFIG = {
 
   /** Gold each side starts with. */
   startGold: 600,
-  /** Gold price of a melee troop. */
-  troopCost: 120,
-  /** Gold price of a skirmisher (long range, light hits). */
-  skirmisherCost: 60,
-  /** Gold price of a dragoon (weaker shots, extra flanking damage). */
-  dragoonCost: 240,
-  /** Gold price of a cannon (ranged, fires over the line). */
-  cannonCost: 360,
   /** Gold per second before the top-lane share and banks. */
   baseIncome: 10,
   /** Extra gold per second split by the top-lane center ratio. */
@@ -82,6 +74,8 @@ export const CONFIG = {
   armorPerUpgrade: 0.1,
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
+  /** Land price to unlock one unit variant for the match. */
+  variantUnlockCost: 350,
 
   // Interface
 
@@ -90,9 +84,9 @@ export const CONFIG = {
   /** Gap between bank buttons, in pixels, before UI scale. */
   bankButtonGap: 8,
   /** Buy-button width, in pixels, before UI scale. */
-  buyButtonW: 96,
-  /** Buy-button height, in pixels, before UI scale. */
-  buyButtonH: 22,
+  buyButtonW: 80,
+  /** Buy-button height, in pixels, before UI scale. Name and cost stack as two rows. */
+  buyButtonH: 64,
   /** Gap between buy buttons, in pixels, before UI scale. */
   buyButtonGap: 4,
   /** Multiplier for on-canvas HUD, banks, and buy buttons. */
@@ -113,64 +107,8 @@ export const CONFIG = {
   /** Seconds between keep-gun shots. */
   capitalCannonAttackCooldown: 0.5,
 
-  // Troops
+  // Combat rules (not per-unit stats)
 
-  /** Hit points of a troop, dragoon, or field cannon. */
-  troopHP: 200,
-  /** Shot damage of a melee troop before falloff. */
-  troopRangedDamage: 10,
-  /** Melee damage of a melee troop. */
-  troopMeleeDamage: 10,
-  /** Melee reach. A field cannon will not shoot or strike inside this. */
-  troopRange: 200,
-  /** Seconds between strikes for a troop or dragoon. */
-  troopAttackCooldown: 1,
-  /** Base walk speed, in pixels per second, before orders and upgrades. */
-  troopSpeed: 20,
-  /** Body radius of a troop or dragoon, in pixels. */
-  troopRadius: 10,
-
-  // Skirmishers
-
-  /** Hit points of a skirmisher. */
-  skirmisherHP: 100,
-  /** Shot damage of a skirmisher before falloff. */
-  skirmisherRangedDamage: 2,
-  /** Melee damage of a skirmisher. */
-  skirmisherMeleeDamage: 2,
-  /** Farthest a skirmisher can shoot, in pixels. */
-  skirmisherRange: 300,
-  /** Seconds between skirmisher strikes. */
-  skirmisherAttackCooldown: 1,
-  /** Body radius of a skirmisher, in pixels. */
-  skirmisherRadius: 10,
-
-  // Dragoons
-
-  /** Shot damage of a dragoon before falloff. */
-  dragoonRangedDamage: 5,
-  /** Melee damage of a dragoon. */
-  dragoonMeleeDamage: 20,
-  /** Extra multiplier on a dragoon's flanking hits, on top of the shared flank bonus. */
-  dragoonFlankBonus: 1.5,
-  /** Walk-speed multiplier for every dragoon. */
-  dragoonOpenSpeed: 2,
-
-  // Cannons
-
-  /** Farthest a field cannon can shoot, in pixels. */
-  cannonRange: 500,
-  /** Shell damage of a field cannon before falloff. */
-  cannonDamage: 90,
-  /** Seconds between field-cannon shots. */
-  cannonAttackCooldown: 4,
-  /** Body radius of a field cannon, in pixels. */
-  cannonRadius: 10,
-
-  // Combat
-
-  /** Open fire at this fraction of attack range unless a line-mate is already shooting. */
-  openFireFactor: 0.5,
   /**
    * Extra pixels past a body-touch that still count as melee. Chargers halt
    * at the enemy edge and would never overlap without this slack.
@@ -178,28 +116,23 @@ export const CONFIG = {
   meleeSlack: 6,
   /** Floor for ranged falloff (1 at point-blank, this at max range). */
   minDamageFactor: 0.25,
-  /** Charge and flanking each multiply outgoing damage by this. */
-  doubleDamageMultiplier: 1.2,
-  /** Walk-speed multiplier while charging. Cannons and dragoons are excluded. */
-  chargeSpeedFactor: 1.2,
-  /** An enemy troop must be at least this close for the charge speed bonus. */
-  chargeSpeedRange: 100,
-  /** Extra outgoing damage per other melee troop sharing this line. */
-  lineDamageBonus: 0.2,
   /** Random extra or less damage applied before rounding. */
   damageVariance: 0.1,
-  /** How long a shot slows an advancing or charging troop. */
-  shotSlowDuration: 0.6,
-  /** Walk-speed multiplier while that shot slow is active. */
-  shotSlowFactor: 0.4,
+  /**
+   * Fatigue lost per second while halted (outside own keep range).
+   * Charge or melee contact uses fatigueCombatRate to gain instead.
+   */
+  fatigueIdleRate: 1,
+  /** Fatigue per second while charging or in melee contact (not stacked). */
+  fatigueCombatRate: 4,
+  /** Flat fatigue added when hit by a ranged shot. */
+  fatigueOnShot: 2,
+  /** Fatigue lost per second inside own keep cannon range. */
+  fatigueRecoverRate: 4,
   /** Progress from each keep to that side's cover line. */
   quarterMark: 0.25,
   /** Extra armor while a troop's body overlaps its own side's fort line. */
   quarterArmor: 0.2,
-  /** Shell speed, in pixels per second. */
-  projectileSpeed: 220,
-  /** How close a shell must be to count as a hit, in pixels. */
-  projectileRadius: 4,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,
   /** Pixels per second the splat rises. */
@@ -274,8 +207,6 @@ export const CONFIG = {
     neutral: "#c4b48a",
     /** HUD and announcement text. */
     text: "#e8eef6",
-    /** Shell in flight. */
-    projectile: "#f3d27a",
     /** Reform order outline. */
     reform: "#9ee07a",
     /** Halt order outline. */
@@ -284,10 +215,14 @@ export const CONFIG = {
     charge: "#ff0000",
     /** Fallback order outline. */
     fallback: "#6ec8e0",
+    /** Retreat order outline. */
+    retreat: "#b07cff",
     /** Damage number for a shot. */
     splatShoot: "#ffe27a",
     /** Damage number for a melee hit. */
     splatMelee: "#ff5a4a",
+    /** Unit fatigue bar fill. */
+    fatigue: "#5b9fd4",
     /** Outline behind a damage number. */
     splatStroke: "#3a1c10",
     /** Highlighted sublane while dragging. */
@@ -296,11 +231,3 @@ export const CONFIG = {
     laneCenter: "#e8c36a",
   },
 };
-
-/** Lane-buy catalog drawn on the canvas. */
-export const BUY_UNITS = [
-  { type: "melee", label: "Troop", costKey: "troopCost", fill: "#2a4158", stroke: "#3d5a7a" },
-  { type: "skirmisher", label: "Skirmish", costKey: "skirmisherCost", fill: "#243a32", stroke: "#3a6a5a" },
-  { type: "dragoon", label: "Dragoon", costKey: "dragoonCost", fill: "#322848", stroke: "#5a4a7a" },
-  { type: "cannon", label: "Cannon", costKey: "cannonCost", fill: "#3a3428", stroke: "#6a5a3a" },
-];

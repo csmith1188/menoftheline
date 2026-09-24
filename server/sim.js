@@ -1,20 +1,27 @@
 import { CONFIG } from "../shared/config.js";
+import { UNIT_STATS, unitStats, UNIT_VARIANTS } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
 /**
  * Shot fired by a troop or cannon. Travels over intervening units and
- * only collides with its chosen target (or the target keep).
+ * only collides with its chosen target (or the target keep). A shell
+ * already in flight still hits if that target later enters melee.
  */
 class Projectile {
-  constructor(x, y, target, damage, allies, kind, sourceType, sim) {
+  constructor(x, y, target, damage, allies, kind, sourceType, sim, shot) {
     this.x = x;
     this.y = y;
     this.target = target;
     this.damage = damage;
     this.allies = allies;
     this.kind = kind || "shoot";
-    this.sourceType = sourceType || "melee";
+    this.sourceType = sourceType || "troop";
     this.sim = sim;
+    this.speed = shot && shot.speed != null ? shot.speed : UNIT_STATS.troop.projectileSpeed;
+    this.size = shot && shot.size != null ? shot.size : UNIT_STATS.troop.projectileSize;
+    this.color = shot && shot.color ? shot.color : UNIT_STATS.troop.projectileColor;
+    this.splash = shot && shot.splash != null ? shot.splash : 0;
+    this.splashWholeLine = Boolean(shot && shot.splashWholeLine);
     this.alive = true;
     this.sideId = allies.length && allies[0].side ? allies[0].side.id : "player";
   }
@@ -35,16 +42,17 @@ class Projectile {
     }
     const dest = this.dest();
     const d = distance(this, dest);
-    const step = CONFIG.projectileSpeed * dt;
-    if (d <= step + CONFIG.projectileRadius) {
+    const step = this.speed * dt;
+    if (d <= step + this.size) {
       if (this.target.capitalHP !== undefined) {
         const hit = this.target.mitigate(this.damage);
         this.target.capitalHP -= hit;
         const keep = this.target.capital;
         this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
-      } else if (this.kind === "melee" || !this.target.isInMelee(this.allies)) {
+      } else {
         this.target.takeDamage(this.damage, this.kind);
         this.splashCannonLine();
+        this.slowSkirmisherLine();
       }
       this.alive = false;
       return;
@@ -54,18 +62,33 @@ class Projectile {
   }
 
   /**
-   * Cannon shells also hit units one row over if they share the
-   * target's line. Those neighbors take half the shell's damage.
+   * Cannon shells also hit other units on the target's line. Normal
+   * field guns splash half damage onto adjacent rows. Howitzers hit
+   * the whole line for full damage.
    */
   splashCannonLine() {
-    if (this.sourceType !== "cannon" || !this.target.side) {
+    if (!(this.splash > 0) || !this.target.side) {
       return;
     }
-    const splash = Math.round(this.damage / 2);
+    const splash = Math.round(this.damage * this.splash);
     if (splash <= 0) {
       return;
     }
     const hit = this.target;
+    if (this.splashWholeLine) {
+      const line = hit.lineGroup(hit.side.troops);
+      for (let i = 0; i < line.length; i += 1) {
+        const other = line[i];
+        if (other === hit || other.hp <= 0) {
+          continue;
+        }
+        if (other.isInMelee(this.allies)) {
+          continue;
+        }
+        other.takeDamage(splash, this.kind);
+      }
+      return;
+    }
     const foes = hit.side.troops;
     for (let i = 0; i < foes.length; i += 1) {
       const other = foes[i];
@@ -79,6 +102,28 @@ class Projectile {
         continue;
       }
       other.takeDamage(splash, this.kind);
+    }
+  }
+
+  /**
+   * A skirmisher shot slows every living unit in the target's line,
+   * not only the body that was hit. Halt and reform still ignore the
+   * slow while that order lasts.
+   */
+  slowSkirmisherLine() {
+    if (this.sourceType !== "skirmisher" || this.kind === "melee" || !this.target.side) {
+      return;
+    }
+    const hit = this.target;
+    const line = hit.lineGroup(hit.side.troops);
+    for (let i = 0; i < line.length; i += 1) {
+      const other = line[i];
+      if (other === hit || other.hp <= 0) {
+        continue;
+      }
+      if (other.order === null || other.order === "charge") {
+        other.shotSlow = other.shotSlowSpeed;
+      }
     }
   }
 
@@ -116,22 +161,27 @@ class HitSplat {
 
 /**
  * One purchased unit. Walks a sublane, sidesteps blockers and side enemies,
- * and fires visible shots (skirmishers reach farther with light hits;
- * dragoons flank harder; cannons reach farther).
+ * and fires visible shots. Subclasses set stats and special rules.
  */
-class Troop {
-  constructor(id, side, lane, sublane, type) {
+class Unit {
+  constructor(id, side, lane, sublane) {
     this.id = id;
     this.side = side;
     this.lane = lane;
     this.sublane = sublane;
-    this.type = type;
-    this.hp = this.maxHP();
+    this.type = "troop";
+    this.variant = null;
+    this.alternate = false;
+    this.auraAttack = 1;
+    this.auraSpeed = 1;
+    this.applyStats(UNIT_STATS.troop);
     this.progress = 0;
     this.cooldown = 0;
     this.flash = 0;
     this.strafing = false;
     this.order = null;
+    this.priorOrder = null;
+    this.broken = false;
     this.reformNeedsAlign = false;
     this.shotSlow = 0;
     this.wantedSublane = null;
@@ -139,6 +189,206 @@ class Troop {
     const spawn = Path.pointAt(this.points, 0);
     this.x = spawn.x;
     this.y = spawn.y;
+  }
+
+  /** Copy this kind's combat numbers onto the instance. */
+  applyStats(stats) {
+    this.maxHp = stats.hp;
+    this.hp = stats.hp;
+    this.maxFatigue = stats.fatigue;
+    this.fatigue = 0;
+    this.rangedDamage = stats.rangedDamage;
+    this.meleeDamage = stats.meleeDamage;
+    this.range = stats.range;
+    this.meleeReach = stats.meleeReach;
+    this.shotSlowSpeed = stats.shotSlowSpeed;
+    this.slowFactor = stats.slowFactor;
+    this.engageRange = stats.engageRange;
+    this.chargeSpeed = stats.chargeSpeed;
+    this.chargeMultiplier = stats.chargeMultiplier;
+    this.flankMultiplier = stats.flankMultiplier;
+    this.rangedCooldown = stats.rangedCooldown;
+    this.meleeCooldown = stats.meleeCooldown;
+    this.projectileSize = stats.projectileSize;
+    this.projectileSpeed = stats.projectileSpeed;
+    this.projectileColor = stats.projectileColor;
+    this.radius = stats.radius;
+    this.speed = stats.speed;
+    this.lineBonus = stats.lineBonus;
+    this.fightsMelee = stats.fightsMelee;
+    this.splash = stats.splash;
+    this.splashWholeLine = Boolean(stats.splashWholeLine);
+    this.avoidMeleeBand = stats.avoidMeleeBand;
+    this.restoreRange = stats.restoreRange || 0;
+    this.restoreRate = stats.restoreRate || 0;
+    this.officerDamageMultiplier = stats.officerDamageMultiplier || 1;
+    this.buffRange = stats.buffRange || 0;
+    this.attackBuff = stats.attackBuff || 0;
+    this.speedBuff = stats.speedBuff || 0;
+  }
+
+  /**
+   * Speed ladder for swipes: retreat, fallback, halt, advance, charge.
+   * Reform sits beside advance for swipe stepping.
+   */
+  speedOrders() {
+    return ["retreat", "fallback", "halt", null, "charge"];
+  }
+
+  speedIndex() {
+    if (this.order === "retreat") return 0;
+    if (this.order === "fallback") return 1;
+    if (this.order === "halt") return 2;
+    if (this.order === "charge") return 4;
+    return 3;
+  }
+
+  /** Units that receive this order: the whole line, or only this troop. */
+  orderGroup(allies, solo) {
+    if (solo) return [this];
+    return this.lineGroup(allies);
+  }
+
+  /**
+   * Click cycle: advance, halt, reform. Charge and fallback are drag orders.
+   * Subclasses replace this when they use a different set.
+   */
+  clickOrders() {
+    return [null, "halt", "reform"];
+  }
+
+  /** Next order from a click. Anything outside the cycle (charge, fallback) returns to halt. */
+  nextClickOrder() {
+    if (this.order === "halt") return "reform";
+    if (this.order === "reform") return null;
+    return "halt";
+  }
+
+  /** Apply an order to this troop's order group. */
+  applyGroupOrder(allies, next, solo) {
+    const group = this.orderGroup(allies, solo);
+    for (let i = 0; i < group.length; i += 1) {
+      if (group[i].broken) continue;
+      group[i].order = next;
+      group[i].reformNeedsAlign = next === "reform";
+      if (next !== "reform") group[i].priorOrder = null;
+      if (next === "charge" || next === "fallback" || next === "retreat"
+          || next === null || next === "halt") {
+        group[i].wantedSublane = null;
+      }
+    }
+  }
+
+  /**
+   * Left-click while selected: enter reform, remembering the prior order.
+   * Locked while the line is in melee or broken.
+   */
+  issueReform(allies, enemies, solo) {
+    if (this.broken || this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    if (this.order === "reform") return;
+    const group = this.orderGroup(allies, solo);
+    for (let i = 0; i < group.length; i += 1) {
+      if (group[i].broken) continue;
+      group[i].priorOrder = group[i].order;
+      group[i].order = "reform";
+      group[i].reformNeedsAlign = true;
+    }
+  }
+
+  /**
+   * Left-click while reforming: restore the prior speed order when it is
+   * still legal, otherwise advance.
+   */
+  issueRestore(allies, enemies, solo) {
+    if (this.broken || this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    let want = this.priorOrder;
+    if (want === "reform") want = null;
+    if (want === "charge" && this.lineInMelee(allies, enemies)) want = null;
+    if (want !== "halt" && want !== "charge" && want !== "fallback"
+        && want !== "retreat" && want !== null) {
+      want = null;
+    }
+    this.applyGroupOrder(allies, want, solo);
+  }
+
+  /**
+   * Left-click: halt, or reform if already halted, or resume a normal
+   * advance if reforming. Locked while the line is in melee or broken.
+   */
+  issueOrder(allies, enemies, solo) {
+    if (this.broken || this.lineInMelee(allies, enemies)) {
+      return;
+    }
+    const next = this.nextClickOrder();
+    this.applyGroupOrder(allies, next, solo);
+  }
+
+  /**
+   * Swipe forward: one step up the speed ladder
+   * (retreat → fallback → halt → advance → charge).
+   */
+  issueSpeedUp(allies, enemies, solo) {
+    if (this.broken) return;
+    const ladder = this.speedOrders();
+    const next = Math.min(ladder.length - 1, this.speedIndex() + 1);
+    const order = ladder[next];
+    if (order === this.order) return;
+    if (order === "charge" && this.lineInMelee(allies, enemies)) return;
+    this.applyGroupOrder(allies, order, solo);
+  }
+
+  /**
+   * Swipe back: one step down the speed ladder
+   * (charge → advance → halt → fallback → retreat).
+   */
+  issueSpeedDown(allies, enemies, solo) {
+    if (this.broken) {
+      return;
+    }
+    const ladder = this.speedOrders();
+    const next = Math.max(0, this.speedIndex() - 1);
+    const order = ladder[next];
+    if (order === this.order) return;
+    this.applyGroupOrder(allies, order, solo);
+  }
+
+  /**
+   * Drag forward: charge (seek melee, no shooting until contact).
+   * Cannons push forward without firing. A second drag keeps charging.
+   * Locked while in melee or broken.
+   */
+  issueCharge(allies, enemies, solo) {
+    if (this.broken || this.lineInMelee(allies, enemies) || this.order === "charge") {
+      return;
+    }
+    this.applyGroupOrder(allies, "charge", solo);
+  }
+
+  /**
+   * Drag back: walk backward at reform speed. Allowed in melee so a
+   * line can disengage. A second drag keeps falling back. Broken units
+   * already fall back and ignore further orders.
+   */
+  issueFallback(allies, solo) {
+    if (this.broken || this.order === "fallback") {
+      return;
+    }
+    this.applyGroupOrder(allies, "fallback", solo);
+  }
+
+  /** Put this line on reform without cycling through halt. */
+  startReform(allies, solo) {
+    const group = this.orderGroup(allies, solo);
+    for (let i = 0; i < group.length; i += 1) {
+      if (group[i].broken) continue;
+      group[i].priorOrder = group[i].order;
+      group[i].order = "reform";
+      group[i].reformNeedsAlign = true;
+    }
   }
 
   /** Rebuild the polyline after a sublane change so progress stays on-track. */
@@ -452,7 +702,8 @@ class Troop {
    * an outsider's order nor hands its own order on.
    */
   tryJoinAhead(allies) {
-    if (this.order === "charge" || this.order === "fallback") {
+    if (this.broken || this.order === "charge" || this.order === "fallback"
+        || this.order === "retreat") {
       return;
     }
     for (let i = 0; i < allies.length; i += 1) {
@@ -466,7 +717,7 @@ class Troop {
       if (!this.sameLineType(ally)) {
         continue;
       }
-      if (!ally.order || ally.order === "fallback") {
+      if (!ally.order || ally.order === "fallback" || ally.order === "retreat") {
         continue;
       }
       if (this.order === ally.order) {
@@ -496,6 +747,7 @@ class Troop {
       const group = this.lineGroup(allies);
       for (let g = 0; g < group.length; g += 1) {
         const member = group[g];
+        if (member.broken) continue;
         if (member !== this && member.rankIsFull(allies, ally)) {
           continue;
         }
@@ -543,6 +795,7 @@ class Troop {
       return;
     }
     for (let g = 0; g < group.length; g += 1) {
+      if (group[g].broken) continue;
       group[g].order = "charge";
       group[g].reformNeedsAlign = false;
     }
@@ -554,7 +807,8 @@ class Troop {
    * Perfectly beside an open line is handled by tryJoinAhead.
    */
   takeReformFromBehind(allies) {
-    if (this.order === "charge" || this.order === "fallback" || this.order === "reform") {
+    if (this.broken || this.order === "charge" || this.order === "fallback"
+        || this.order === "retreat" || this.order === "reform") {
       return;
     }
     const beside = this.stationSlack("parallel");
@@ -601,39 +855,33 @@ class Troop {
   }
 
   bodyRadius() {
-    if (this.type === "cannon") {
-      return CONFIG.cannonRadius;
-    }
-    if (this.type === "skirmisher") {
-      return CONFIG.skirmisherRadius;
-    }
-    return CONFIG.troopRadius;
+    return this.radius;
   }
 
   maxHP() {
-    return this.type === "skirmisher" ? CONFIG.skirmisherHP : CONFIG.troopHP;
+    return this.maxHp;
   }
 
   /**
-   * True when this melee troop is locked in body contact with an enemy
-   * troop. Cannons are never in melee; overlapping a cannon is not melee.
+   * True when this unit is locked in body contact with an enemy that
+   * also fights in melee. Cannons are never in melee.
    */
   isInMelee(foes) {
-    if (this.type === "cannon") {
+    if (!this.fightsMelee) {
       return false;
     }
     const foe = this.collidingEnemy(foes);
-    return Boolean(foe && foe.type !== "cannon");
+    return Boolean(foe && foe.fightsMelee);
   }
 
   /** True if any member of this line is in melee. Orders are locked then. */
   lineInMelee(allies, enemies) {
-    if (this.type === "cannon") {
+    if (!this.fightsMelee) {
       return false;
     }
     const group = this.lineGroup(allies);
     for (let i = 0; i < group.length; i += 1) {
-      if (group[i].type !== "cannon" && group[i].collidingEnemy(enemies)) {
+      if (group[i].fightsMelee && group[i].collidingEnemy(enemies)) {
         return true;
       }
     }
@@ -673,9 +921,11 @@ class Troop {
   /**
    * A formed (perfectly parallel) line holds if anyone in it has opened
    * fire. Troops still closing up are not held — they walk into square.
+   * Charge, fallback, and reform use their own movement.
    */
   lineIsHolding(allies, enemies, enemySide) {
-    if (this.order === "charge" || this.order === "fallback" || this.order === "reform") {
+    if (this.order === "charge" || this.order === "fallback" || this.order === "retreat"
+        || this.order === "reform") {
       return false;
     }
     const line = this.lineGroup(allies);
@@ -752,6 +1002,30 @@ class Troop {
     return false;
   }
 
+  /**
+   * A squared reforming line holds while anyone in it is inside engage
+   * range. A staggered line does not: the rear still walks up to square.
+   */
+  reformSquaredInRange(allies, enemies, enemySide) {
+    if (this.order !== "reform") {
+      return false;
+    }
+    const formation = this.reformFormation(allies);
+    const front = this.sortRearToFront(formation)[formation.length - 1];
+    for (let i = 0; i < formation.length; i += 1) {
+      if (!formation[i].isParallelTo(front)) {
+        return false;
+      }
+    }
+    for (let i = 0; i < formation.length; i += 1) {
+      const mate = formation[i];
+      if (mate.nearestTarget(enemies, mate.openFireRange(), allies, enemySide)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Front-most member of a line, or a lone unit with someone behind. */
   isLineLeader(allies) {
     const line = this.lineGroup(allies);
@@ -760,68 +1034,6 @@ class Troop {
       return ordered[ordered.length - 1] === this;
     }
     return Boolean(this.nextBehindOtherSublane(allies));
-  }
-
-  /** Put this line on reform without cycling through halt. */
-  startReform(allies) {
-    const group = this.lineGroup(allies);
-    for (let i = 0; i < group.length; i += 1) {
-      group[i].order = "reform";
-      group[i].reformNeedsAlign = true;
-    }
-  }
-
-  /**
-   * Left-click: halt, or reform if already halted, or resume a normal
-   * advance if reforming. Locked while the line is in melee.
-   */
-  issueOrder(allies, enemies) {
-    if (this.lineInMelee(allies, enemies)) {
-      return;
-    }
-    const next = this.order === "halt"
-      ? "reform"
-      : this.order === "reform"
-        ? null
-        : "halt";
-    const group = this.lineGroup(allies);
-    for (let i = 0; i < group.length; i += 1) {
-      group[i].order = next;
-      group[i].reformNeedsAlign = next === "reform";
-    }
-  }
-
-  /**
-   * Drag forward: charge (seek melee, no shooting until contact).
-   * Cannons push forward without firing. A second drag keeps charging.
-   * Locked while in melee.
-   */
-  issueCharge(allies, enemies) {
-    if (this.lineInMelee(allies, enemies) || this.order === "charge") {
-      return;
-    }
-    const group = this.lineGroup(allies);
-    for (let i = 0; i < group.length; i += 1) {
-      group[i].order = "charge";
-      group[i].reformNeedsAlign = false;
-      group[i].wantedSublane = null;
-    }
-  }
-
-  /**
-   * Drag back: walk backward at reform speed. Allowed in melee so a
-   * line can disengage. A second drag keeps falling back.
-   */
-  issueFallback(allies) {
-    if (this.order === "fallback") {
-      return;
-    }
-    const group = this.lineGroup(allies);
-    for (let i = 0; i < group.length; i += 1) {
-      group[i].order = "fallback";
-      group[i].reformNeedsAlign = false;
-      group[i].wantedSublane = null;
-    }
   }
 
   /**
@@ -850,12 +1062,7 @@ class Troop {
     if (this.order !== null && this.order !== "charge") {
       return 1;
     }
-    return CONFIG.shotSlowFactor;
-  }
-
-  /** Dragoons always walk faster than melee troops. */
-  dragoonSpeedScale() {
-    return this.type === "dragoon" ? CONFIG.dragoonOpenSpeed : 1;
+    return this.slowFactor;
   }
 
   /** Living troops on the other side. */
@@ -876,12 +1083,76 @@ class Troop {
     return false;
   }
 
-  /** Troops and skirmishers walk faster while charging near an enemy. */
+  /** Troops and skirmishers walk faster while charging or retreating. */
   chargeSpeedScale() {
-    if (this.order !== "charge") return 1;
-    if (this.type === "cannon" || this.type === "dragoon") return 1;
-    if (!this.nearEnemy(CONFIG.chargeSpeedRange)) return 1;
-    return CONFIG.chargeSpeedFactor;
+    if (this.order !== "charge" && this.order !== "retreat") return 1;
+    if (this.chargeSpeed === 1) return 1;
+    return this.chargeSpeed;
+  }
+
+  /** Fatigue as a 0–100 percent of the unit's pool. */
+  fatiguePct() {
+    if (this.maxFatigue <= 0) return 0;
+    return (this.fatigue / this.maxFatigue) * 100;
+  }
+
+  /** Remaining hit points as a 0–100 percent of max. */
+  hpPct() {
+    if (this.maxHp <= 0) return 0;
+    return (Math.max(0, this.hp) / this.maxHp) * 100;
+  }
+
+  /** True while standing in this side's keep cannon range. */
+  inCapitalRange() {
+    return distance(this, this.side.capital) <= CONFIG.capitalCannonRange;
+  }
+
+  /**
+   * Raise or lower fatigue for this step. Charge and melee contact gain
+   * at combat rate (even inside the keep). Otherwise halt recovers at
+   * idle rate, and own capital recovers faster. A broken unit rallies
+   * once fatigue % falls below half of hp %.
+   */
+  tickFatigue(dt, enemies) {
+    const inMelee = Boolean(this.collidingEnemy(enemies));
+    const gaining = !this.broken
+      && (this.order === "charge" || this.order === "retreat" || inMelee);
+    if (gaining) {
+      this.fatigue = Math.min(
+        this.maxFatigue,
+        this.fatigue + CONFIG.fatigueCombatRate * dt,
+      );
+    } else if (this.inCapitalRange()) {
+      this.fatigue = Math.max(0, this.fatigue - CONFIG.fatigueRecoverRate * dt);
+    } else if (this.order === "halt") {
+      this.fatigue = Math.max(0, this.fatigue - CONFIG.fatigueIdleRate * dt);
+    }
+    if (this.broken && this.fatiguePct() < this.hpPct() * 0.5) {
+      this.broken = false;
+      this.order = null;
+    }
+  }
+
+  /** Force a rout: fall back with no combat or orders until rallied. */
+  breakUnit() {
+    this.broken = true;
+    this.order = "fallback";
+    this.priorOrder = null;
+    this.reformNeedsAlign = false;
+    this.wantedSublane = null;
+  }
+
+  /**
+   * After a hit, roll to break when fatigue % exceeds hp %. Chance equals
+   * the percent gap between them.
+   */
+  tryBreak() {
+    if (this.broken || this.hp <= 0) return;
+    const gap = this.fatiguePct() - this.hpPct();
+    if (gap <= 0) return;
+    if (Math.random() * 100 < gap) {
+      this.breakUnit();
+    }
   }
 
   /**
@@ -890,15 +1161,15 @@ class Troop {
    * ringSpeedScale.
    */
   marchSpeed(allies) {
-    const scale = this.ringSpeedScale() * this.shotSlowScale() * this.dragoonSpeedScale(allies);
-    const base = CONFIG.troopSpeed * this.side.speedMultiplier * scale;
+    const scale = this.ringSpeedScale() * this.shotSlowScale();
+    const base = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
     if (this.order === "halt") {
       return 0;
     }
     if (this.order === "fallback") {
       return base * CONFIG.reformSpeedFactor;
     }
-    if (this.order === "charge") {
+    if (this.order === "charge" || this.order === "retreat") {
       return base * this.chargeSpeedScale();
     }
     if (this.order === "reform") {
@@ -910,26 +1181,20 @@ class Troop {
     return base;
   }
 
-  /** Melee reach, or the longer cannon / skirmisher reach. */
+  /** Firing range for this unit. */
   attackRange() {
-    if (this.type === "cannon") {
-      return CONFIG.cannonRange;
-    }
-    if (this.type === "skirmisher") {
-      return CONFIG.skirmisherRange;
-    }
-    return CONFIG.troopRange;
+    return this.range;
   }
 
   /** True when other, or a keep's capital, is inside melee reach. */
   insideMeleeRange(other) {
     const pos = other && other.capital ? other.capital : other;
-    return distance(this, pos) <= CONFIG.troopRange;
+    return distance(this, pos) <= this.meleeReach;
   }
 
   /** Distance at which this troop may open fire on its own. */
   openFireRange() {
-    return this.attackRange() * CONFIG.openFireFactor;
+    return this.attackRange() * this.engageRange;
   }
 
   /**
@@ -938,7 +1203,7 @@ class Troop {
    * once they are in contact.
    */
   isOpeningFire(enemies, allies, enemySide) {
-    if (this.type !== "cannon" && this.collidingEnemy(enemies)) {
+    if (this.fightsMelee && this.collidingEnemy(enemies)) {
       return true;
     }
     if (this.order === "charge") {
@@ -968,12 +1233,8 @@ class Troop {
   }
 
   /** How often this unit may strike, including speed-upgrade scaling. */
-  strikeDelay() {
-    const base = this.type === "cannon"
-      ? CONFIG.cannonAttackCooldown
-      : this.type === "skirmisher"
-        ? CONFIG.skirmisherAttackCooldown
-        : CONFIG.troopAttackCooldown;
+  strikeDelay(kind) {
+    const base = kind === "melee" ? this.meleeCooldown : this.rangedCooldown;
     return base / (1 + CONFIG.speedAttackFactor * this.side.upgrades.speed);
   }
 
@@ -995,8 +1256,8 @@ class Troop {
     const ny = tan.x;
     const across = (dest.x - this.x) * nx + (dest.y - this.y) * ny;
     const charge = this.chargeSpeedScale();
-    const step = CONFIG.troopSpeed * this.side.speedMultiplier
-      * this.shotSlowScale() * this.dragoonSpeedScale(allies || []) * charge * dt;
+    const step = this.speed * this.side.speedMultiplier
+      * this.shotSlowScale() * charge * dt;
     const dir = across > 0 ? 1 : -1;
     const move = Math.min(Math.abs(across), step) * dir;
     const nxPos = this.x + nx * move;
@@ -1060,6 +1321,9 @@ class Troop {
 
   /** Remember a row to slide into; waits if that stretch is blocked. */
   issueLaneChange(sublane, allies, enemies) {
+    if (this.broken) {
+      return;
+    }
     if (allies && enemies && this.lineInMelee(allies, enemies)) {
       return;
     }
@@ -1246,15 +1510,19 @@ class Troop {
   }
 
   /**
-   * Friendly cannons are not solid to troops. Skirmishers pass through
-   * all teammates. Troops still block troops, and cannons still block
-   * other cannons.
+   * Same type always blocks, and so does every other type. A unit
+   * falling back passes through anyone. Skirmishers pass through every
+   * type but their own. Officers walk through every friendly.
    */
   blocksAlly(ally) {
-    if (this.type === "skirmisher" || ally.type === "skirmisher") {
+    if (this.order === "fallback" || ally.order === "fallback"
+        || this.order === "retreat" || ally.order === "retreat") {
       return false;
     }
-    if (ally.type === "cannon" && this.type !== "cannon") {
+    if (this.type === "officer" || ally.type === "officer") {
+      return false;
+    }
+    if (this.type !== ally.type && (this.type === "skirmisher" || ally.type === "skirmisher")) {
       return false;
     }
     return true;
@@ -1330,14 +1598,18 @@ class Troop {
 
   /**
    * Closest living enemy inside a world-space circle. Lane and sublane
-   * do not matter, but units locked in melee cannot be shot. Cannons
-   * also skip anyone inside melee range. The enemy keep is a valid
-   * target when no unit is closer.
+   * do not matter. Units locked in melee are not targeted until they
+   * leave it. Cannons also skip anyone inside melee range. Non-skirmishers
+   * ignore officers while any other enemy is in range. The enemy keep is
+   * a valid target when no unit is closer.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
+    const range = maxRange === undefined ? this.attackRange() : maxRange;
+    const shyOfOfficers = this.type !== "skirmisher";
     let best = null;
     let bestD = Infinity;
-    const range = maxRange === undefined ? this.attackRange() : maxRange;
+    let bestOfficer = null;
+    let bestOfficerD = Infinity;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
@@ -1347,17 +1619,30 @@ class Troop {
         continue;
       }
       const d = distance(this, other);
-      if (this.type === "cannon" && this.insideMeleeRange(other)) {
+      if (d > range) {
         continue;
       }
-      if (d <= range && d < bestD) {
+      if (this.avoidMeleeBand && this.insideMeleeRange(other)) {
+        continue;
+      }
+      if (other.type === "officer" && shyOfOfficers) {
+        if (d < bestOfficerD) {
+          bestOfficerD = d;
+          bestOfficer = other;
+        }
+        continue;
+      }
+      if (d < bestD) {
         bestD = d;
         best = other;
       }
     }
+    if (!best) {
+      best = bestOfficer;
+    }
     if (!best && enemySide && enemySide.capitalHP > 0) {
       const d = distance(this, enemySide.capital);
-      if (d <= range && !(this.type === "cannon" && this.insideMeleeRange(enemySide))) {
+      if (d <= range && !(this.avoidMeleeBand && this.insideMeleeRange(enemySide))) {
         return enemySide;
       }
     }
@@ -1397,9 +1682,13 @@ class Troop {
     this.hp -= hit;
     this.flash = 0.12;
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
-    if (kind !== "melee" && (this.order === null || this.order === "charge")) {
-      this.shotSlow = CONFIG.shotSlowDuration;
+    if (kind !== "melee") {
+      this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnShot);
+      if (this.order === null || this.order === "charge") {
+        this.shotSlow = this.shotSlowSpeed;
+      }
     }
+    this.tryBreak();
   }
 
   /** True when this body overlaps this side's fort line. */
@@ -1411,11 +1700,11 @@ class Troop {
    * Melee troops deal more while formed: +20% per other troop in line.
    */
   lineDamageScale(allies) {
-    if (this.type !== "melee") {
+    if (!this.lineBonus) {
       return 1;
     }
     const mates = this.lineGroup(allies || []).length - 1;
-    return 1 + Math.max(0, mates) * CONFIG.lineDamageBonus;
+    return 1 + Math.max(0, mates) * this.lineBonus;
   }
 
   /**
@@ -1433,39 +1722,34 @@ class Troop {
       damage *= falloff;
     }
     if (this.order === "charge") {
-      damage *= CONFIG.doubleDamageMultiplier;
+      damage *= this.chargeMultiplier;
     }
     if (target.lane && this.isFlanking(target)) {
-      damage *= CONFIG.doubleDamageMultiplier;
-      if (this.type === "dragoon") {
-        damage *= CONFIG.dragoonFlankBonus;
-      }
+      damage *= this.flankMultiplier;
+    }
+    if (target.type === "officer") {
+      damage *= this.officerDamageMultiplier;
     }
     damage *= this.lineDamageScale(allies);
     damage *= this.side.damageScale();
+    damage *= this.auraAttack;
     const roll = 1 + (Math.random() * 2 - 1) * CONFIG.damageVariance;
     damage *= roll;
     return Math.round(damage);
   }
 
-  /** Ranged or melee base by unit type. Cannons only have a ranged shell. */
+  /** Ranged or melee base from this unit's own stats. */
   baseAttackDamage(kind) {
-    if (this.type === "cannon") {
-      return CONFIG.cannonDamage;
-    }
-    if (this.type === "dragoon") {
-      return kind === "melee" ? CONFIG.dragoonMeleeDamage : CONFIG.dragoonRangedDamage;
-    }
-    if (this.type === "skirmisher") {
-      return kind === "melee" ? CONFIG.skirmisherMeleeDamage : CONFIG.skirmisherRangedDamage;
-    }
-    return kind === "melee" ? CONFIG.troopMeleeDamage : CONFIG.troopRangedDamage;
+    return kind === "melee" ? this.meleeDamage : this.rangedDamage;
   }
 
   /** Fire a shell that ignores bodies between this unit and its target. */
   fire(target, allies, projectiles, kind) {
     const strike = kind || "shoot";
-    if (this.type === "cannon" && this.insideMeleeRange(target)) {
+    if (strike !== "melee" && allies && target.isInMelee && target.isInMelee(allies)) {
+      return;
+    }
+    if (this.avoidMeleeBand && this.insideMeleeRange(target)) {
       return;
     }
     if (strike === "melee") {
@@ -1488,8 +1772,15 @@ class Troop {
       strike,
       this.type,
       this.side.sim,
+      {
+        speed: this.projectileSpeed,
+        size: this.projectileSize,
+        color: this.projectileColor,
+        splash: this.splash,
+        splashWholeLine: this.splashWholeLine,
+      },
     ));
-    this.cooldown = this.strikeDelay();
+    this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
   }
 
@@ -1506,6 +1797,16 @@ class Troop {
     }
     if (this.shotSlow > 0) {
       this.shotSlow -= dt;
+    }
+
+    this.tickFatigue(dt, enemies);
+
+    if (this.broken) {
+      if (this.strafing && this.strafe(dt, enemies, allies)) {
+        return;
+      }
+      this.marchAlong(dt, allies, enemies, -1);
+      return;
     }
 
     this.takeReformFromBehind(allies);
@@ -1526,9 +1827,15 @@ class Troop {
     const atKeep = this.progress >= 1;
     const charging = this.order === "charge";
     const fallingBack = this.order === "fallback";
+    const retreating = this.order === "retreat";
+
+    if (retreating) {
+      this.marchAlong(dt, allies, enemies, -1);
+      return;
+    }
 
     if (fallingBack) {
-      if (contact && this.type !== "cannon") {
+      if (contact && this.fightsMelee) {
         if (this.cooldown <= 0) {
           this.fire(contact, allies, projectiles, "melee");
         }
@@ -1541,14 +1848,14 @@ class Troop {
       return;
     }
 
-    if (contact && this.type !== "cannon") {
+    if (contact && this.fightsMelee) {
       if (this.cooldown <= 0) {
         this.fire(contact, allies, projectiles, "melee");
       }
       return;
     }
 
-    if (charging && this.type !== "cannon" && laneMove !== "waiting") {
+    if (charging && this.fightsMelee && laneMove !== "waiting") {
       if (this.seekChargeMelee(dt, allies, enemies)) {
         return;
       }
@@ -1561,12 +1868,11 @@ class Troop {
     }
 
     if (this.order === "reform") {
-      if (target && this.mayShoot(allies, enemies, enemySide)) {
-        if (this.cooldown <= 0) {
-          this.fire(target, allies, projectiles, "shoot");
-        }
+      if (target && this.mayShoot(allies, enemies, enemySide) && this.cooldown <= 0) {
+        this.fire(target, allies, projectiles, "shoot");
       }
-      if (laneMove === "waiting" || this.reformHold) {
+      if (laneMove === "waiting" || this.reformHold
+          || this.reformSquaredInRange(allies, enemies, enemySide)) {
         return;
       }
       const reformSpeed = this.marchSpeed(allies);
@@ -1633,6 +1939,235 @@ class Troop {
     this.tryJoinAhead(allies);
   }
 
+}
+
+/** Melee infantry. Formed lines add damage. Charges faster near an enemy. */
+class Troop extends Unit {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.type = "troop";
+    this.applyStats(UNIT_STATS.troop);
+  }
+}
+
+/**
+ * Light infantry. Long range, light hits, and they walk through other types.
+ * Same click orders as a troop.
+ */
+class Skirmisher extends Unit {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.type = "skirmisher";
+    this.applyStats(UNIT_STATS.skirmisher);
+  }
+}
+
+/**
+ * Mounted infantry. Weaker shots, harder melee, a wider flank bonus, and
+ * twice the walk speed. Charge speed uses their own chargeSpeed (usually 1).
+ * Their own order picks fallback, charge, or reform from nearby troops.
+ */
+class Dragoon extends Unit {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.type = "dragoon";
+    this.applyStats(UNIT_STATS.dragoon);
+  }
+
+  /**
+   * Alternate orders: no troop ahead stays on advance; no troop nearby
+   * falls back; an enemy nearby charges; a troop behind reforms.
+   */
+  supportOrder(allies, foes) {
+    const range = CONFIG.dragoonSupportRange;
+    if (this.kindAhead(allies, "troop")) return null;
+    if (!this.kindNear(allies, "troop", range)) return "fallback";
+    if (this.enemyNear(foes, range)) return "charge";
+    if (this.kindBehind(allies, "troop", range)) return "reform";
+    return null;
+  }
+
+  kindAhead(allies, type) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
+      if (ally.lane !== this.lane) continue;
+      if (this.alongSigned(ally) > 0) return true;
+    }
+    return false;
+  }
+
+  kindNear(allies, type, range) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
+      if (distance(this, ally) <= range) return true;
+    }
+    return false;
+  }
+
+  kindBehind(allies, type, range) {
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
+      if (this.alongSigned(ally) >= 0) continue;
+      if (distance(this, ally) <= range) return true;
+    }
+    return false;
+  }
+
+  enemyNear(foes, range) {
+    for (let i = 0; i < foes.length; i += 1) {
+      const foe = foes[i];
+      if (foe.hp <= 0) continue;
+      if (distance(this, foe) <= range) return true;
+    }
+    return false;
+  }
+}
+
+/**
+ * Field gun. Fires over the line, splashes the next row, and will not
+ * shoot inside melee reach. Charge is a push: no firing and no melee.
+ */
+class Cannon extends Unit {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.type = "cannon";
+    this.applyStats(UNIT_STATS.cannon);
+  }
+
+  /** A charging cannon keeps marching. It does not count as opening fire. */
+  isOpeningFire(enemies, allies, enemySide) {
+    if (this.order === "charge") return false;
+    return Boolean(this.nearestTarget(enemies, this.openFireRange(), allies, enemySide));
+  }
+}
+
+/**
+ * Command unit. Restores fatigue to living allies within restoreRange.
+ * Restores twice as fast when this officer stands ahead of that ally.
+ */
+class Officer extends Unit {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.type = "officer";
+    this.applyStats(UNIT_STATS.officer);
+  }
+
+  /**
+   * Lower fatigue on nearby teammates. Ahead of an ally doubles the rate.
+   * Does not restore this officer.
+   */
+  restoreNearby(allies, dt) {
+    if (!(this.restoreRange > 0) || !(this.restoreRate > 0) || this.hp <= 0) {
+      return;
+    }
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0) continue;
+      if (distance(this, ally) > this.restoreRange) continue;
+      const rate = ally.alongSigned(this) > 0
+        ? this.restoreRate * 2
+        : this.restoreRate;
+      ally.fatigue = Math.max(0, ally.fatigue - rate * dt);
+    }
+  }
+
+  update(dt, allies, enemies, enemySide, projectiles) {
+    super.update(dt, allies, enemies, enemySide, projectiles);
+    this.restoreNearby(allies, dt);
+  }
+}
+
+/** Troop alternate: tougher body, shorter musket. */
+class Grenadier extends Troop {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "grenadier";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.grenadier);
+  }
+}
+
+/** Skirmisher alternate: longer reach, harder shot, slower reload. */
+class Rifle extends Skirmisher {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "rifle";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.rifle);
+  }
+}
+
+/** Dragoon alternate: normal flank, stronger charge damage. */
+class Lancer extends Dragoon {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "lancer";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.lancer);
+  }
+}
+
+/** Cannon alternate: shorter range, half shell, full damage across the line. */
+class Howitzer extends Cannon {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "howitzer";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.howitzer);
+  }
+}
+
+/**
+ * Officer alternate: same fatigue restore, plus attack and speed to
+ * nearby allies within buffRange.
+ */
+class ColorGuard extends Officer {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "colorGuard";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.colorGuard);
+  }
+
+  /** Raise nearby allies' attack and walk auras (does not buff self). */
+  buffNearby(allies) {
+    if (!(this.buffRange > 0) || this.hp <= 0) return;
+    const attack = 1 + this.attackBuff;
+    const speed = 1 + this.speedBuff;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0) continue;
+      if (distance(this, ally) > this.buffRange) continue;
+      if (attack > ally.auraAttack) ally.auraAttack = attack;
+      if (speed > ally.auraSpeed) ally.auraSpeed = speed;
+    }
+  }
+
+  update(dt, allies, enemies, enemySide, projectiles) {
+    super.update(dt, allies, enemies, enemySide, projectiles);
+    this.buffNearby(allies);
+  }
+}
+
+const UNIT_KINDS = {
+  troop: Troop,
+  skirmisher: Skirmisher,
+  dragoon: Dragoon,
+  cannon: Cannon,
+  officer: Officer,
+  grenadier: Grenadier,
+  rifle: Rifle,
+  lancer: Lancer,
+  howitzer: Howitzer,
+  colorGuard: ColorGuard,
+};
+
+function createUnit(id, side, lane, sublane, type) {
+  const Ctor = UNIT_KINDS[type] || Troop;
+  return new Ctor(id, side, lane, sublane);
 }
 
 /**
@@ -1703,6 +2238,7 @@ class Side {
     this.capitalHP = CONFIG.capitalHP;
     this.speedMultiplier = 1;
     this.upgrades = { speed: 0, armor: 0, damage: 0 };
+    this.unlockedVariants = {};
     this.banks = 0;
     this.troops = [];
     this.shotCooldown = 0;
@@ -1740,18 +2276,32 @@ class Side {
     return 1 + CONFIG.damageUpgradeAmount * this.upgrades.damage;
   }
 
-  /** Gold price of a melee troop, skirmisher, dragoon, or cannon. */
+  /** Gold price of a troop, skirmisher, dragoon, cannon, or officer. */
+  /** Gold price of a unit or its unlocked alternate. */
   unitCost(type) {
-    if (type === "cannon") {
-      return CONFIG.cannonCost;
+    return unitStats(type).cost;
+  }
+
+  /** True when this side may spawn this unit key (base or unlocked variant). */
+  canSpawnUnit(type) {
+    if (UNIT_KINDS[type] === undefined) return false;
+    if (UNIT_VARIANTS[type]) return true;
+    return Boolean(this.unlockedVariants[type]);
+  }
+
+  /** Spend land to unlock the alternate for a base buy type. */
+  tryUnlockVariant(base) {
+    const variant = UNIT_VARIANTS[base];
+    if (!variant || this.unlockedVariants[variant]) {
+      return false;
     }
-    if (type === "dragoon") {
-      return CONFIG.dragoonCost;
+    const cost = CONFIG.variantUnlockCost;
+    if (this.land < cost) {
+      return false;
     }
-    if (type === "skirmisher") {
-      return CONFIG.skirmisherCost;
-    }
-    return CONFIG.troopCost;
+    this.land -= cost;
+    this.unlockedVariants[variant] = true;
+    return true;
   }
 
   /** Living troops assigned to one lane. Used by the bot and spawn picking. */
@@ -1856,16 +2406,19 @@ class Side {
   }
 
   /**
-   * Spend gold to spawn a melee troop, skirmisher, dragoon, or cannon.
+   * Spend gold to spawn a troop, skirmisher, dragoon, cannon, or officer.
    * lane is "top" or "bottom". Returns the unit, or null if unaffordable.
    */
   tryBuy(lane, nextId, type) {
+    if (!this.canSpawnUnit(type)) {
+      return null;
+    }
     const cost = this.unitCost(type);
     if (this.gold < cost) {
       return null;
     }
     this.gold -= cost;
-    const troop = new Troop(nextId, this, lane, this.pickSublane(lane), type);
+    const troop = createUnit(nextId, this, lane, this.pickSublane(lane), type);
     this.troops.push(troop);
     return troop;
   }
@@ -1884,10 +2437,13 @@ class Side {
 
   /**
    * Closest enemy troop in cannon range. Units locked in melee are skipped.
+   * Officers are ignored while any other enemy is in range.
    */
   capitalTarget(enemies, allies) {
     let best = null;
     let bestD = Infinity;
+    let bestOfficer = null;
+    let bestOfficerD = Infinity;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
@@ -1897,16 +2453,29 @@ class Side {
         continue;
       }
       const d = distance(this.capital, other);
-      if (d <= CONFIG.capitalCannonRange && d < bestD) {
+      if (d > CONFIG.capitalCannonRange) {
+        continue;
+      }
+      if (other.type === "officer") {
+        if (d < bestOfficerD) {
+          bestOfficerD = d;
+          bestOfficer = other;
+        }
+        continue;
+      }
+      if (d < bestD) {
         bestD = d;
         best = other;
       }
     }
-    return best;
+    return best || bestOfficer;
   }
 
   /** Cannon-style shell at double cannon damage, with falloff and variance. */
   fireCapital(target, allies, projectiles) {
+    if (allies && target.isInMelee && target.isInMelee(allies)) {
+      return;
+    }
     const dest = target.capital ? target.capital : target;
     const d = distance(this.capital, dest);
     let damage = CONFIG.capitalCannonDamage;
@@ -1917,6 +2486,7 @@ class Side {
     damage *= falloff;
     damage *= this.damageScale();
     damage *= 1 + (Math.random() * 2 - 1) * CONFIG.damageVariance;
+    const shell = UNIT_STATS.cannon;
     projectiles.push(new Projectile(
       this.capital.x,
       this.capital.y,
@@ -1926,6 +2496,12 @@ class Side {
       "shoot",
       "cannon",
       this.sim,
+      {
+        speed: shell.projectileSpeed,
+        size: shell.projectileSize,
+        color: shell.projectileColor,
+        splash: shell.splash,
+      },
     ));
     this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "cannon", sideId: this.id });
     this.shotCooldown = CONFIG.capitalCannonAttackCooldown
@@ -2018,10 +2594,13 @@ export class GameSim {
     const foe = side === this.player ? this.enemy : this.player;
     if (cmd.type === "buy") {
       if (cmd.lane !== "top" && cmd.lane !== "bottom") return false;
-      if (!["melee", "skirmisher", "dragoon", "cannon"].includes(cmd.unit)) return false;
+      if (!side.canSpawnUnit(cmd.unit)) return false;
       return Boolean(this.grantTroop(side, cmd.lane, cmd.unit));
     }
     if (cmd.type === "bank") return side.tryUnlockBank();
+    if (cmd.type === "unlockVariant") {
+      return side.tryUnlockVariant(cmd.base);
+    }
     if (cmd.type === "upgrade") {
       const id = Number(cmd.checkpointId);
       const town = this.checkpoints.find((c) => c.index === id);
@@ -2032,9 +2611,14 @@ export class GameSim {
       const troopId = Number(cmd.troopId);
       const troop = side.troops.find((t) => t.id === troopId && t.hp > 0);
       if (!troop) return false;
-      if (cmd.action === "cycle") troop.issueOrder(side.troops, foe.troops);
-      else if (cmd.action === "charge") troop.issueCharge(side.troops, foe.troops);
-      else if (cmd.action === "fallback") troop.issueFallback(side.troops);
+      const solo = Boolean(cmd.solo);
+      if (cmd.action === "reform") troop.issueReform(side.troops, foe.troops, solo);
+      else if (cmd.action === "restore") troop.issueRestore(side.troops, foe.troops, solo);
+      else if (cmd.action === "speedUp") troop.issueSpeedUp(side.troops, foe.troops, solo);
+      else if (cmd.action === "speedDown") troop.issueSpeedDown(side.troops, foe.troops, solo);
+      else if (cmd.action === "cycle") troop.issueOrder(side.troops, foe.troops, solo);
+      else if (cmd.action === "charge") troop.issueCharge(side.troops, foe.troops, solo);
+      else if (cmd.action === "fallback") troop.issueFallback(side.troops, solo);
       else if (cmd.action === "lane") {
         const sublane = Number(cmd.sublane);
         if (!Number.isInteger(sublane)) return false;
@@ -2092,7 +2676,12 @@ export class GameSim {
         y: town.y,
         owner: town.owner,
       })),
-      projectiles: this.projectiles.map((shot) => ({ x: shot.x, y: shot.y })),
+      projectiles: this.projectiles.map((shot) => ({
+        x: shot.x,
+        y: shot.y,
+        size: shot.size,
+        color: shot.color,
+      })),
       splats: this.splats.map((splat) => ({
         x: splat.x,
         y: splat.y,
@@ -2118,12 +2707,22 @@ export class GameSim {
       banks: side.banks,
       speedMultiplier: side.speedMultiplier,
       upgrades: { ...side.upgrades },
+      unlockedVariants: { ...side.unlockedVariants },
       troops: side.troops.filter((troop) => troop.hp > 0).map((troop) => ({
         id: troop.id,
         lane: troop.lane,
         sublane: troop.sublane,
         type: troop.type,
+        variant: troop.variant,
+        alternate: Boolean(troop.alternate),
         hp: troop.hp,
+        maxHp: troop.maxHp,
+        fatigue: troop.fatigue,
+        maxFatigue: troop.maxFatigue,
+        broken: troop.broken,
+        shotSlow: troop.shotSlow,
+        priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
+        radius: troop.radius,
         x: troop.x,
         y: troop.y,
         order: troop.order,
@@ -2160,6 +2759,8 @@ export class GameSim {
   updateSide(side, opponents, enemySide, dt) {
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
+      troop.auraAttack = 1;
+      troop.auraSpeed = 1;
       troop.reformHold = troop.hp > 0 && troop.reformShouldStop(side.troops);
     }
     for (let i = 0; i < side.troops.length; i += 1) {
@@ -2216,13 +2817,13 @@ export class GameSim {
 
   /**
    * One side's push in a lane: each living unit adds progress-from-its
-   * keep times its remaining hit points.
+   * keep times its remaining hit points. Broken units do not count.
    */
   laneValue(side, lane) {
     let total = 0;
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
-      if (troop.hp <= 0 || troop.lane !== lane) {
+      if (troop.hp <= 0 || troop.broken || troop.lane !== lane) {
         continue;
       }
       total += troop.progress * troop.hp;

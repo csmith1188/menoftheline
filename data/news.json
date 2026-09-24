@@ -1,26 +1,12 @@
 [
+
   {
     "date": "2026-09-23",
-    "title": "Reform and unit select",
-    "summary": "Hold a unit to inspect it without giving an order. Reform now forms a line, then walks on together.",
+    "title": "Happy Birthday!",
+    "summary": "Men of the Line is now a game!",
     "items": [
-      "Hold a unit to see its type, line size, health, and bonuses.",
-      "Reform moves at half speed. The front waits until the rear forms a perfect line, then the line walks together.",
-      "A unit joining from behind takes reform unless that line already fills every row.",
-      "A full line keeps its order. A unit walking through it does not halt, reform, or charge that line.",
-      "Charge spreads only into a reforming line that still has an open row.",
-      "You start with 600 gold. Units and banks cost 20% more."
-    ]
-  },
-  {
-    "date": "2026-09-23",
-    "title": "Ranked matchmaking",
-    "summary": "Log in with Formbar to play ranked games, buy tickets, and climb the high scores.",
-    "items": [
-      "Matchmaking pairs the closest MMR and waits up to a minute when the spread is wide.",
-      "Five tickets cost 100 digipogs.",
-      "Creating a listed lobby, joining a specific game, and ranked search each cost one ticket.",
-      "Bot games and random unranked games are free."
+      "Game is live and complete!",
+      "You can not play as a guest, or log into Formbar to play ranked or matched games."
     ]
   }
 ]

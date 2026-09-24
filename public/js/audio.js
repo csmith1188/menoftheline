@@ -1,20 +1,20 @@
 /**
- * Ranged-shot pitches by row, in C minor. Top is C5–Eb5–G5–Ab5–C6
- * south to north; bottom is C6–Eb6–G6 on the outer, middle, and inner rings.
+ * Ranged-shot pitches by row, in F# minor. Top is F#5–A5–C#6–D6–F#6
+ * south to north; bottom is F#6–A6–C#7 on the outer, middle, and inner rings.
  */
 const SHOT_NOTES = {
-  top: ["C6", "Ab5", "G5", "Eb5", "C5"],
-  bottom: ["C6", "Eb6", "G6"],
+  top: ["F#6", "D6", "C#6", "A5", "F#5"],
+  bottom: ["F#6", "A6", "C#7"],
 };
 
 const NOTE_FREQ = {
-  C5: 523.25,
-  Eb5: 622.25,
-  G5: 783.99,
-  Ab5: 830.61,
-  C6: 1046.5,
-  Eb6: 1244.51,
-  G6: 1567.98,
+  "F#5": 739.99,
+  A5: 880.0,
+  "C#6": 1108.73,
+  D6: 1174.66,
+  "F#6": 1479.98,
+  A6: 1760.0,
+  "C#7": 2217.46,
 };
 
 /** Tiny Web Audio bus for the per-sublane shot plucks. */

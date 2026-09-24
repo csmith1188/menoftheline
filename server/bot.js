@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { distance } from "../shared/path.js";
+import { UNIT_STATS } from "../shared/units.js";
 
 /** This side's fraction of a lane. Empty lanes stay at one half. */
 function sideShare(sim, side, lane) {
@@ -26,7 +26,7 @@ export class BotController {
     this.buyUpgrades(self);
     const emptyLane = this.laneMissingTroop(sim, self);
     if (emptyLane) {
-      sim.grantTroop(self, emptyLane, "melee");
+      sim.grantTroop(self, emptyLane, "troop");
       return;
     }
     if (this.shouldSaveForBank(sim, self, foe)) {
@@ -41,11 +41,11 @@ export class BotController {
       self.tryUnlockBank();
       return;
     }
-    if (self.gold < CONFIG.troopCost) {
+    if (self.gold < UNIT_STATS.troop.cost) {
       self.tryUnlockBank();
       return;
     }
-    sim.grantTroop(self, lane, "melee");
+    sim.grantTroop(self, lane, "troop");
     self.tryUnlockBank();
   }
 
@@ -55,7 +55,7 @@ export class BotController {
 
   /** Apply an order if it changed and this bot's lock has expired. */
   setOrder(sim, troop, next) {
-    if (troop.order === next || this.locked(sim, troop)) return false;
+    if (troop.broken || troop.order === next || this.locked(sim, troop)) return false;
     troop.order = next;
     troop.reformNeedsAlign = next === "reform";
     troop.wantedSublane = null;
@@ -64,12 +64,12 @@ export class BotController {
   }
 
   /**
-   * Lane with no living bot melee troop. If both are empty, use the
+   * Lane with no living bot troop. If both are empty, use the
    * weaker center-line share (ties: top).
    */
   laneMissingTroop(sim, self) {
-    const topEmpty = self.countTypeInLane("top", "melee") === 0;
-    const bottomEmpty = self.countTypeInLane("bottom", "melee") === 0;
+    const topEmpty = self.countTypeInLane("top", "troop") === 0;
+    const bottomEmpty = self.countTypeInLane("bottom", "troop") === 0;
     if (!topEmpty && !bottomEmpty) return null;
     if (topEmpty && !bottomEmpty) return "top";
     if (bottomEmpty && !topEmpty) return "bottom";
@@ -107,12 +107,7 @@ export class BotController {
   }
 
   dragoonOrder(dragoon, allies, foes) {
-    const range = CONFIG.dragoonSupportRange;
-    if (hasTroopAhead(dragoon, allies)) return null;
-    if (!hasTroopNear(dragoon, allies, range)) return "fallback";
-    if (hasEnemyNear(dragoon, foes, range)) return "charge";
-    if (hasTroopBehind(dragoon, allies, range)) return "reform";
-    return null;
+    return dragoon.supportOrder(allies, foes);
   }
 
   /**
@@ -186,42 +181,4 @@ export class BotController {
     }
     if (best) self.tryBuyUpgrade(best);
   }
-}
-
-function hasTroopAhead(dragoon, allies) {
-  for (let i = 0; i < allies.length; i += 1) {
-    const ally = allies[i];
-    if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") continue;
-    if (ally.lane !== dragoon.lane) continue;
-    if (dragoon.alongSigned(ally) > 0) return true;
-  }
-  return false;
-}
-
-function hasTroopNear(dragoon, allies, range) {
-  for (let i = 0; i < allies.length; i += 1) {
-    const ally = allies[i];
-    if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") continue;
-    if (distance(dragoon, ally) <= range) return true;
-  }
-  return false;
-}
-
-function hasEnemyNear(dragoon, foes, range) {
-  for (let i = 0; i < foes.length; i += 1) {
-    const foe = foes[i];
-    if (foe.hp <= 0) continue;
-    if (distance(dragoon, foe) <= range) return true;
-  }
-  return false;
-}
-
-function hasTroopBehind(dragoon, allies, range) {
-  for (let i = 0; i < allies.length; i += 1) {
-    const ally = allies[i];
-    if (ally.hp <= 0 || ally === dragoon || ally.type !== "melee") continue;
-    if (dragoon.alongSigned(ally) >= 0) continue;
-    if (distance(dragoon, ally) <= range) return true;
-  }
-  return false;
 }

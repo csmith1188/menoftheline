@@ -1,4 +1,5 @@
 import { CONFIG } from "./config.js";
+import { UNIT_STATS } from "./units.js";
 
 /**
  * Euclidean distance between two points with x/y.
@@ -305,7 +306,7 @@ export function quarterSegments() {
 
 
 export function quarterThickness() {
-    return CONFIG.troopRadius * 2;
+    return UNIT_STATS.troop.radius * 2;
   }
 
 

@@ -1,10 +1,12 @@
-import { BUY_UNITS, CONFIG } from "../shared/config.js";
+import { CONFIG } from "../shared/config.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
 import { Path, distance, quarterSegments, quarterThickness, touchesQuarterLine } from "../shared/path.js";
 
 function drawProjectile(ctx, shot) {
+  const shell = UNIT_STATS.troop;
   ctx.beginPath();
-  ctx.arc(shot.x, shot.y, CONFIG.projectileRadius, 0, Math.PI * 2);
-  ctx.fillStyle = CONFIG.colors.projectile;
+  ctx.arc(shot.x, shot.y, shot.size || shell.projectileSize, 0, Math.PI * 2);
+  ctx.fillStyle = shot.color || shell.projectileColor;
   ctx.fill();
 }
 
@@ -28,17 +30,13 @@ function drawSplat(ctx, splat) {
 
 const viewTroopMethods = {
   bodyRadius() {
-    if (this.type === "cannon") {
-      return CONFIG.cannonRadius;
-    }
-    if (this.type === "skirmisher") {
-      return CONFIG.skirmisherRadius;
-    }
-    return CONFIG.troopRadius;
+    if (this.radius) return this.radius;
+    return unitStats(this.variant || this.type).radius;
   },
 
   maxHP() {
-    return this.type === "skirmisher" ? CONFIG.skirmisherHP : CONFIG.troopHP;
+    if (this.maxHp) return this.maxHp;
+    return unitStats(this.variant || this.type).hp;
   },
 
   /** Direction along this unit's lane, in view space. */
@@ -53,7 +51,8 @@ const viewTroopMethods = {
     const fill = this.flash > 0 ? "#fff4d2" : color;
     ctx.fillStyle = fill;
     const ordered = this.order === "reform" || this.order === "halt"
-      || this.order === "charge" || this.order === "fallback";
+      || this.order === "charge" || this.order === "fallback"
+      || this.order === "retreat";
     ctx.strokeStyle = this.order === "halt"
       ? CONFIG.colors.halt
       : this.order === "reform"
@@ -62,17 +61,24 @@ const viewTroopMethods = {
           ? CONFIG.colors.charge
           : this.order === "fallback"
             ? CONFIG.colors.fallback
-            : "#0d1218";
+            : this.order === "retreat"
+              ? CONFIG.colors.retreat
+              : "#0d1218";
     ctx.lineWidth = ordered ? 3 : 2;
 
+    const r = this.bodyRadius();
+    if (this.alternate) {
+      const pad = r - 1;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(this.x - pad, this.y - pad, pad * 2, pad * 2);
+    }
+    ctx.fillStyle = fill;
     if (this.type === "cannon") {
-      const r = CONFIG.cannonRadius;
       ctx.beginPath();
       ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     } else if (this.type === "skirmisher") {
-      const r = CONFIG.skirmisherRadius;
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
       ctx.lineTo(this.x + r, this.y + r);
@@ -81,7 +87,6 @@ const viewTroopMethods = {
       ctx.fill();
       ctx.stroke();
     } else if (this.type === "dragoon") {
-      const r = CONFIG.troopRadius;
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
       ctx.lineTo(this.x + r, this.y);
@@ -90,11 +95,31 @@ const viewTroopMethods = {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+    } else if (this.type === "officer") {
+      const s = r * 0.75;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineWidth = ordered ? 5 : 4;
+      ctx.beginPath();
+      ctx.moveTo(this.x - s, this.y - s);
+      ctx.lineTo(this.x + s, this.y + s);
+      ctx.moveTo(this.x + s, this.y - s);
+      ctx.lineTo(this.x - s, this.y + s);
+      ctx.stroke();
+      ctx.strokeStyle = fill;
+      ctx.lineWidth = ordered ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(this.x - s, this.y - s);
+      ctx.lineTo(this.x + s, this.y + s);
+      ctx.moveTo(this.x + s, this.y - s);
+      ctx.lineTo(this.x - s, this.y + s);
+      ctx.stroke();
+      ctx.restore();
     } else {
       const tan = this.laneTangent();
       const nx = -tan.y;
       const ny = tan.x;
-      const len = CONFIG.troopRadius * 0.6;
+      const len = r * 0.6;
       ctx.save();
       ctx.lineCap = "round";
       ctx.lineWidth = ordered ? 12 : 10;
@@ -108,27 +133,66 @@ const viewTroopMethods = {
       ctx.restore();
     }
 
+    const board = this.side.board;
     const barW = this.bodyRadius() * 2;
     const barH = 3;
+    const barGap = 1;
+    const selR = 3;
+    const selGap = 2;
+    const stackH = barH + barGap + barH + selGap + selR * 2;
+    // Bottom-lane telescope rotates the camera; keep bars across the unit.
+    const align = Boolean(board && board.telescope && this.lane === "bottom");
+    ctx.save();
+    let ox = this.x;
+    let oy = this.y;
+    if (align) {
+      const tan = this.laneTangent();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(Math.atan2(tan.y, tan.x));
+      ox = 0;
+      oy = 0;
+    }
+    const stackTop = (oy - stackH / 2) + 2;
     const ratio = Math.max(0, this.hp) / this.maxHP();
-    const barX = this.x - barW / 2;
-    const barY = this.y - barH / 2;
+    const barX = ox - barW / 2;
+    const barY = stackTop;
     const fillW = barW * ratio;
     // Southpaw mirrors the board, so fill from the other end and it still
     // grows from the left side of the unit on screen.
-    const fillX = this.side.board && this.side.board.southpaw
+    const fillX = board && board.southpaw
       ? barX + barW - fillW
       : barX;
     ctx.fillStyle = "#1a1510";
     ctx.fillRect(barX, barY, barW, barH);
     ctx.fillStyle = CONFIG.colors.gold;
     ctx.fillRect(fillX, barY, fillW, barH);
-    if (this.side.board && this.side.board.inspectedId === this.id) {
+
+    const maxFatigue = this.maxFatigue || unitStats(this.variant || this.type).fatigue || 100;
+    const fatigueRatio = Math.max(0, Math.min(1, (this.fatigue || 0) / maxFatigue));
+    const fatY = barY + barH + barGap;
+    const fatW = barW * fatigueRatio;
+    const fatX = board && board.southpaw
+      ? barX + barW - fatW
+      : barX;
+    ctx.fillStyle = "#1a1510";
+    ctx.fillRect(barX, fatY, barW, barH);
+    ctx.fillStyle = CONFIG.colors.fatigue;
+    ctx.fillRect(fatX, fatY, fatW, barH);
+
+    if (board && board.inspectedLineIds && board.inspectedLineIds[this.id]) {
+      const selY = fatY + barH + selGap + selR;
       ctx.beginPath();
-      ctx.arc(this.x, this.y + barH / 2 + 5, 3, 0, Math.PI * 2);
-      ctx.fillStyle = "#ff3b30";
-      ctx.fill();
+      ctx.arc(ox, selY, selR, 0, Math.PI * 2);
+      if (board.inspectedId === this.id) {
+        ctx.fillStyle = "#ff3b30";
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = "#ff3b30";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
     }
+    ctx.restore();
   }
 };
 
@@ -368,9 +432,9 @@ const boardMethods = {
     const tap = CONFIG.touchTargetPx / scale;
     const coarse = this.isTouchUi();
     const buyH = (coarse
-      ? Math.min(34, Math.max(CONFIG.buyButtonH, tap * 0.55))
+      ? Math.min(48, Math.max(CONFIG.buyButtonH, tap * 0.9))
       : CONFIG.buyButtonH) * grow;
-    const buyW = (coarse ? Math.max(CONFIG.buyButtonW, 108) : CONFIG.buyButtonW) * grow;
+    const buyW = CONFIG.buyButtonW * grow;
     const bank = (coarse
       ? Math.min(46, Math.max(CONFIG.bankButtonSize, tap * 0.65))
       : CONFIG.bankButtonSize) * grow;
@@ -406,13 +470,49 @@ const boardMethods = {
     return { x, y };
   },
 
+  /** World coordinates under the pointer. Undoes the telescope camera when zoomed. */
+  worldPoint(event) {
+    if (!this.telescope) return this.canvasPoint(event);
+    return this.telescopeWorld(this.screenPoint(event));
+  },
+
+  /** Finger travel in world space so orders still feel right while zoomed. */
+  orderDragMin() {
+    const min = this.uiMetrics().dragMin;
+    if (!this.telescope) return min;
+    return min / this.telescopeScale(this.telescope.lane);
+  },
+
+  laneDragMin() {
+    if (!this.telescope) return CONFIG.laneDragMin;
+    return CONFIG.laneDragMin / this.telescopeScale(this.telescope.lane);
+  },
+
   /** Closest friendly troop under the cursor, or null. */
   hitTroop(event) {
-    const point = this.canvasPoint(event);
+    return this.hitTroopAt(this.worldPoint(event));
+  },
+
+  hitTroopAt(point) {
+    return this.hitSideTroopAt(point, this.player);
+  },
+
+  /** Closest living troop under the cursor on either side. */
+  hitAnyTroopAt(point) {
+    const mine = this.hitSideTroopAt(point, this.player);
+    const theirs = this.hitSideTroopAt(point, this.enemy);
+    if (!mine) return theirs;
+    if (!theirs) return mine;
+    return distance(point, mine) <= distance(point, theirs) ? mine : theirs;
+  },
+
+  hitSideTroopAt(point, side) {
+    if (!side) return null;
     let best = null;
     let bestD = Infinity;
-    for (let i = 0; i < this.player.troops.length; i += 1) {
-      const troop = this.player.troops[i];
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (troop.hp <= 0) continue;
       const reach = troop.bodyRadius() + this.uiMetrics().unitReach;
       const d = distance(point, troop);
       if (d <= reach && d < bestD) {
@@ -454,13 +554,78 @@ const boardMethods = {
     return best;
   },
 
+  /** Unlock button under a buy slot, when land is high enough and the variant is still locked. */
+  hitVariantUnlockAt(point) {
+    if (!this.player || this.player.land < CONFIG.variantUnlockCost) return null;
+    const pad = this.uiMetrics().hitPad;
+    for (let i = 0; i < BUY_UNITS.length; i += 1) {
+      const base = BUY_UNITS[i].type;
+      const variant = UNIT_VARIANTS[base];
+      if (!variant || this.player.unlockedVariants[variant]) continue;
+      const box = this.variantUnlockRect(i);
+      if (this.pointInBox(point, box, pad)) {
+        return { index: i, base, variant };
+      }
+    }
+    return null;
+  },
+
+  /** Spawn key currently shown on this buy button. Unlocked alternates default on. */
+  selectedBuyUnit(base) {
+    const variant = UNIT_VARIANTS[base];
+    const unlocked = Boolean(
+      variant && this.player && this.player.unlockedVariants[variant],
+    );
+    if (!unlocked) return base;
+    const pick = this.buySelection && this.buySelection[base];
+    if (pick === base || pick === variant) return pick;
+    return variant;
+  },
+
+  /** Cycle base ↔ unlocked alternate. dir is -1 left or +1 right. */
+  cycleBuyVariant(base, dir) {
+    const variant = UNIT_VARIANTS[base];
+    if (!variant || !this.player || !this.player.unlockedVariants[variant]) return false;
+    if (!this.buySelection) this.buySelection = {};
+    const options = [base, variant];
+    const cur = this.selectedBuyUnit(base);
+    let idx = options.indexOf(cur);
+    if (idx < 0) idx = 0;
+    this.buySelection[base] = options[(idx + dir + options.length) % options.length];
+    return true;
+  },
+
+  /** When a variant is newly unlocked, switch that buy slot to the alternate. */
+  syncBuySelection(prevUnlocked) {
+    if (!this.buySelection) this.buySelection = {};
+    const unlocked = (this.player && this.player.unlockedVariants) || {};
+    for (let i = 0; i < BUY_UNITS.length; i += 1) {
+      const base = BUY_UNITS[i].type;
+      const variant = UNIT_VARIANTS[base];
+      if (!variant || !unlocked[variant]) continue;
+      if (!(prevUnlocked && prevUnlocked[variant])) {
+        this.buySelection[base] = variant;
+      }
+    }
+  },
+
   /**
-   * One centered row in the open gap under the top lane. Each button
-   * is twice as tall as a single lane button used to be.
+   * One centered row in the open gap under the top lane.
+   * Unlock chips sit under the row without shifting it.
    */
   buyRowLayout() {
     const ui = this.uiMetrics();
-    const h = ui.buyH * 2;
+    const needsUnlockRow = Boolean(
+      this.player
+      && this.player.land >= CONFIG.variantUnlockCost
+      && BUY_UNITS.some((unit) => {
+        const variant = UNIT_VARIANTS[unit.type];
+        return variant && !this.player.unlockedVariants[variant];
+      }),
+    );
+    const unlockH = needsUnlockRow ? Math.round(ui.buyH * 0.42) : 0;
+    const gap = unlockH ? 4 * CONFIG.uiScale : 0;
+    const h = ui.buyH;
     const row = BUY_UNITS.length * ui.buyW + (BUY_UNITS.length - 1) * ui.buyGap;
     const x = CONFIG.canvasWidth / 2 - row / 2;
     const pad = 12;
@@ -472,7 +637,7 @@ const boardMethods = {
     const maxY = ringY - pad - h;
     let y = (minY + maxY) / 2;
     y = Math.max(minY, Math.min(y, maxY));
-    return { x, y, h, ui };
+    return { x, y, h, unlockH, unlockGap: gap, ui };
   },
 
   buyButtonRect(index) {
@@ -486,9 +651,23 @@ const boardMethods = {
     };
   },
 
+  variantUnlockRect(index) {
+    const layout = this.buyRowLayout();
+    const ui = layout.ui;
+    return {
+      x: layout.x + index * (ui.buyW + ui.buyGap),
+      y: layout.y + layout.h + layout.unlockGap,
+      w: ui.buyW,
+      h: layout.unlockH,
+    };
+  },
+
   /** Owned town under the cursor, or null. */
   hitCheckpoint(event) {
-    const point = this.canvasPoint(event);
+    return this.hitCheckpointAt(this.worldPoint(event));
+  },
+
+  hitCheckpointAt(point) {
     let best = null;
     let bestD = Infinity;
     for (let i = 0; i < this.checkpoints.length; i += 1) {
@@ -656,26 +835,257 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
-  render() {
-    if (!this.player) return;
-    if (this.refreshHoldSelect) this.refreshHoldSelect();
-    const ctx = this.ctx;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
-    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
-    ctx.fillStyle = CONFIG.colors.bg;
-    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+  /** Pointer position in logical canvas pixels, before the southpaw flip. */
+  screenPoint(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * (CONFIG.canvasWidth / rect.width),
+      y: (event.clientY - rect.top) * (CONFIG.canvasHeight / rect.height),
+    };
+  },
+
+  /** Any troop under a world point, friendly or enemy. */
+  hitUnitAt(point) {
+    const sides = [this.player, this.enemy];
+    let best = null;
+    let bestD = Infinity;
+    for (let s = 0; s < sides.length; s += 1) {
+      const troops = sides[s] ? sides[s].troops : [];
+      for (let i = 0; i < troops.length; i += 1) {
+        const troop = troops[i];
+        if (troop.hp <= 0) continue;
+        const reach = troop.bodyRadius() + this.uiMetrics().unitReach;
+        const d = distance(point, troop);
+        if (d <= reach && d < bestD) {
+          bestD = d;
+          best = troop;
+        }
+      }
+    }
+    return best;
+  },
+
+  /**
+   * The lane under a world point, and how far it sits from the player keep.
+   * Empty field, towns, and keeps return null.
+   */
+  laneAt(point) {
+    const left = CONFIG.playerCapital;
+    const right = CONFIG.enemyCapital;
+    const top = left.y - CONFIG.topLaneHeight / 2;
+    const bottom = left.y + CONFIG.topLaneHeight / 2;
+    if (point.y >= top && point.y <= bottom && point.x >= left.x && point.x <= right.x) {
+      return { lane: "top", along: Path.stationAt("top", point.x, point.y) };
+    }
+    const c = Path.bottomCenter();
+    const dx = point.x - c.x;
+    const dy = point.y - c.y;
+    if (dy < 0) return null;
+    const dist = Math.hypot(dx, dy);
+    const outer = Path.bottomRadius(0) + CONFIG.bottomSublaneWidth / 2;
+    const inner = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - CONFIG.bottomSublaneWidth / 2;
+    if (dist < inner || dist > outer) return null;
+    const along = (Path.stationAt("bottom", point.x, point.y) / 180) * this.laneLength("bottom");
+    return { lane: "bottom", along };
+  },
+
+  /** Undo the zoom camera. Southpaw is undone first so the point is in view space. */
+  telescopeWorld(screen) {
+    let x = screen.x;
+    const y = screen.y;
+    if (this.southpaw) x = CONFIG.canvasWidth - x;
+    const cam = this.telescopeCamera();
+    const dx = x - CONFIG.canvasWidth / 2;
+    const dy = y - CONFIG.canvasHeight / 2;
+    const cos = Math.cos(cam.angle);
+    const sin = Math.sin(cam.angle);
+    return {
+      x: (dx * cos - dy * sin) / cam.scale + cam.x,
+      y: (dx * sin + dy * cos) / cam.scale + cam.y,
+    };
+  },
+
+  laneLength(lane) {
+    return Path.length(Path.centerline(lane));
+  },
+
+  /**
+   * Top lane fills most of the view, leaving field around it. Bottom uses
+   * that same zoom, adjusted so its row gap matches the top lane.
+   */
+  telescopeScale(lane) {
+    const topScale = (CONFIG.canvasHeight * 0.62) / CONFIG.topLaneHeight;
+    if (lane !== "bottom") return topScale;
+    const topPitch = (CONFIG.topSublaneSpread * 2) / (CONFIG.topSublaneCount - 1);
+    const bottomPitch = (CONFIG.bottomSublaneSpread * 2) / (CONFIG.bottomSublaneCount - 1);
+    return topScale * (topPitch / bottomPitch);
+  },
+
+  telescopeHalf(lane) {
+    return (CONFIG.canvasWidth / this.telescopeScale(lane)) / 2;
+  },
+
+  clampAlong(lane, along) {
+    const len = this.laneLength(lane);
+    const half = Math.min(len / 2, this.telescopeHalf(lane));
+    return Math.max(half, Math.min(len - half, along));
+  },
+
+  /**
+   * The bottom lane is drawn as a true half-circle. Follow that circle
+   * so the view rotates continuously. A polyline tangent holds still on
+   * each chord and then jumps.
+   */
+  bottomCamera(t) {
+    const sub = Math.floor(Path.sublaneCount("bottom") / 2);
+    const c = Path.bottomCenter();
+    const radius = Path.bottomRadius(sub);
+    const theta = Math.PI * (1 - t);
+    const sin = Math.sin(theta);
+    const cos = Math.cos(theta);
+    return {
+      x: c.x + radius * cos,
+      y: c.y + radius * sin,
+      angle: Math.atan2(-cos, sin),
+    };
+  },
+
+  telescopeCamera() {
+    const lane = this.telescope.lane;
+    const len = this.laneLength(lane);
+    const t = len <= 0 ? 0 : this.telescope.along / len;
+    if (lane === "bottom") {
+      const at = this.bottomCamera(t);
+      const scale = this.telescopeScale(lane);
+      // Shift the aim point toward the top of the screen so the arc
+      // sits a little lower, with room above for the scoreboard.
+      const lift = (CONFIG.canvasHeight * 0.15) / scale;
+      const upX = Math.sin(at.angle);
+      const upY = -Math.cos(at.angle);
+      return {
+        x: at.x + upX * lift,
+        y: at.y + upY * lift,
+        angle: at.angle,
+        scale,
+      };
+    }
+    const pts = Path.centerline(lane);
+    const at = Path.pointAt(pts, t);
+    const tan = Path.tangentAt(pts, t);
+    return {
+      x: at.x,
+      y: at.y,
+      angle: Math.atan2(tan.y, tan.x),
+      scale: this.telescopeScale(lane),
+    };
+  },
+
+  openTelescopeAt(lane, along) {
+    if (!this.player || this.winner || this.status !== "playing") return;
+    this.drag = null;
+    this.buyDrag = null;
+    this.lanePress = null;
+    this.telescopeDrag = null;
+    this.telescopeSlide = 0;
+    this.telescope = { lane, along: this.clampAlong(lane, along) };
+    if (this.onTelescopeChange) this.onTelescopeChange();
+  },
+
+  closeTelescope() {
+    if (!this.telescope) return;
+    this.telescope = null;
+    this.telescopeDrag = null;
+    this.telescopeSlide = 0;
+    if (this.onTelescopeChange) this.onTelescopeChange();
+  },
+
+  /** Recent finger motion, so a release can keep sliding. */
+  noteTelescopeSample() {
+    const drag = this.telescopeDrag;
+    if (!drag || !this.telescope) return;
+    const now = performance.now();
+    drag.samples.push({ t: now, along: this.telescope.along });
+    const cutoff = now - 90;
+    while (drag.samples.length > 2 && drag.samples[0].t < cutoff) drag.samples.shift();
+  },
+
+  /** Horizontal drag walks the lane. A vertical drag jumps to the other lane. */
+  moveTelescope(point) {
+    const drag = this.telescopeDrag;
+    if (!drag || !this.telescope) return;
+    const dx = point.x - drag.x;
+    const dy = point.y - drag.y;
+    const min = 36;
+    if (!drag.switched && Math.abs(dy) >= min && Math.abs(dy) > Math.abs(dx)) {
+      drag.switched = true;
+      this.telescopeSlide = 0;
+      const from = this.telescope.lane;
+      const len = this.laneLength(from);
+      const t = len <= 0 ? 0 : this.telescope.along / len;
+      const next = from === "top" ? "bottom" : "top";
+      this.telescope.lane = next;
+      this.telescope.along = this.clampAlong(next, t * this.laneLength(next));
+      drag.samples = [];
+      return;
+    }
+    if (drag.switched) return;
+    const scale = this.telescopeScale(this.telescope.lane);
+    this.telescope.along = this.clampAlong(this.telescope.lane, drag.along - dx / scale);
+    this.noteTelescopeSample();
+  },
+
+  /**
+   * Let go and the view keeps the last flick, then friction slows it.
+   * A lane switch does not coast.
+   */
+  releaseTelescope() {
+    const drag = this.telescopeDrag;
+    this.telescopeDrag = null;
+    if (!drag || drag.switched || !this.telescope) {
+      this.telescopeSlide = 0;
+      return;
+    }
+    const samples = drag.samples;
+    if (samples.length < 2) {
+      this.telescopeSlide = 0;
+      return;
+    }
+    const a = samples[0];
+    const b = samples[samples.length - 1];
+    const dt = (b.t - a.t) / 1000;
+    this.telescopeSlide = dt > 0 ? (b.along - a.along) / dt : 0;
+  },
+
+  /** Coast along the lane until friction, the lane end, or a new touch stops it. */
+  stepTelescope() {
+    if (!this.telescope) return;
+    const now = performance.now();
+    const prev = this.telescopeStepAt || now;
+    this.telescopeStepAt = now;
+    if (this.telescopeDrag) return;
+    let v = this.telescopeSlide || 0;
+    if (v === 0) return;
+    const dt = Math.min(0.05, (now - prev) / 1000);
+    const lane = this.telescope.lane;
+    const next = this.clampAlong(lane, this.telescope.along + v * dt);
+    if (next === this.telescope.along) {
+      this.telescopeSlide = 0;
+      return;
+    }
+    this.telescope.along = next;
+    v *= Math.exp(-2.4 * dt);
+    this.telescopeSlide = Math.abs(v) < 18 ? 0 : v;
+  },
+
+  drawBattlefield(ctx) {
+    this.inspectedTroop();
     this.drawLanes(ctx);
     this.drawLaneHover(ctx);
-
     for (let i = 0; i < this.checkpoints.length; i += 1) {
       this.checkpoints[i].draw(ctx);
     }
     this.player.drawCapital(ctx);
     this.enemy.drawCapital(ctx);
-
     const everyone = this.player.troops.concat(this.enemy.troops);
     for (let i = 0; i < everyone.length; i += 1) {
       everyone[i].draw(ctx);
@@ -686,6 +1096,38 @@ const boardMethods = {
     for (let i = 0; i < this.splats.length; i += 1) {
       drawSplat(ctx, this.splats[i]);
     }
+  },
+
+  /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
+  render() {
+    if (!this.player) return;
+    if (this.refreshHoldSelect) this.refreshHoldSelect();
+    const ctx = this.ctx;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (this.telescope) {
+      this.stepTelescope();
+      ctx.save();
+      applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
+      const cam = this.telescopeCamera();
+      ctx.translate(CONFIG.canvasWidth / 2, CONFIG.canvasHeight / 2);
+      ctx.rotate(-cam.angle);
+      ctx.scale(cam.scale, cam.scale);
+      ctx.translate(-cam.x, -cam.y);
+      ctx.fillStyle = CONFIG.colors.bg;
+      ctx.fillRect(cam.x - 4000, cam.y - 4000, 8000, 8000);
+      this.drawBattlefield(ctx);
+      ctx.restore();
+      applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
+      this.drawScoreboard(ctx);
+      this.drawTelescopeHud(ctx);
+      return;
+    }
+    applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
+    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    ctx.fillStyle = CONFIG.colors.bg;
+    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    this.drawBattlefield(ctx);
     this.drawCanvasUI(ctx);
   },
 
@@ -701,12 +1143,31 @@ const boardMethods = {
 
   /** The selected unit, or null once it is gone. */
   inspectedTroop() {
-    if (this.inspectedId == null || !this.player) return null;
-    const troop = this.player.troops.find((unit) => unit.id === this.inspectedId);
-    if (!troop || troop.hp <= 0) {
-      this.inspectedId = null;
+    if (this.inspectedId == null || !this.player) {
+      this.inspectedLineIds = null;
       return null;
     }
+    const sides = [this.player, this.enemy];
+    let troop = null;
+    for (let s = 0; s < sides.length; s += 1) {
+      if (!sides[s]) continue;
+      const found = sides[s].troops.find((unit) => unit.id === this.inspectedId);
+      if (found && found.hp > 0) {
+        troop = found;
+        break;
+      }
+    }
+    if (!troop) {
+      this.inspectedId = null;
+      this.inspectedSolo = false;
+      this.inspectedLineIds = null;
+      return null;
+    }
+    const allies = troop.side.troops;
+    const group = this.inspectedSolo ? [troop] : lineGroup(troop, allies);
+    const ids = {};
+    for (let i = 0; i < group.length; i += 1) ids[group[i].id] = true;
+    this.inspectedLineIds = ids;
     return troop;
   },
 
@@ -718,10 +1179,13 @@ const boardMethods = {
     const troop = this.inspectedTroop();
     if (!troop) return;
     const layout = this.buyRowLayout();
-    const allies = this.player.troops;
-    const line = lineSize(troop, allies);
+    const allies = troop.side.troops;
+    const line = this.inspectedSolo ? 1 : lineSize(troop, allies);
     const hp = Math.max(0, Math.round(troop.hp));
-    const main = `${unitTypeLabel(troop.type)}   Line x ${line}   ${hp}/${troop.maxHP()}`;
+    const fatigue = Math.max(0, Math.round(troop.fatigue || 0));
+    const maxFatigue = troop.maxFatigue || unitStats(troop.variant || troop.type).fatigue;
+    const status = troop.broken ? "   Broken" : "";
+    const main = `${unitTypeLabel(troop.variant || troop.type)}   Line x ${line}   ${hp}/${troop.maxHP()}   ${fatigue}/${maxFatigue}${status}`;
     const bonuses = activeBonuses(this, troop, allies);
     const gap = 6 * CONFIG.uiScale;
     const yBonus = layout.y - gap;
@@ -745,7 +1209,10 @@ const boardMethods = {
   },
 
   announceOrder(troop, action) {
-    if (troop) this.inspectedId = troop.id;
+    if (troop) {
+      this.inspectedId = troop.id;
+      this.inspectedTroop();
+    }
     const shown = orderAnnouncement(troop, action);
     if (!shown) return;
     this.orderCallout = {
@@ -755,7 +1222,67 @@ const boardMethods = {
     };
   },
 
+  /**
+   * While zoomed: selected unit on the left, order on the right,
+   * pinned to the bottom of the screen.
+   */
+  drawTelescopeHud(ctx) {
+    const troop = this.inspectedTroop();
+    const call = this.orderCallout;
+    let callFade = 0;
+    if (call) {
+      const left = call.until - performance.now();
+      if (left <= 0) this.orderCallout = null;
+      else callFade = left < 280 ? left / 280 : 1;
+    }
+    if (!troop && !this.orderCallout) return;
+    const bottom = CONFIG.canvasHeight - 18 * CONFIG.uiScale;
+    const leftX = CONFIG.canvasWidth * 0.28;
+    const rightX = CONFIG.canvasWidth * 0.72;
+    ctx.save();
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#0d1218";
+    if (troop) {
+      const allies = troop.side.troops;
+      const line = this.inspectedSolo ? 1 : lineSize(troop, allies);
+      const hp = Math.max(0, Math.round(troop.hp));
+      const fatigue = Math.max(0, Math.round(troop.fatigue || 0));
+      const maxFatigue = troop.maxFatigue || unitStats(troop.variant || troop.type).fatigue;
+      const status = troop.broken ? "   Broken" : "";
+      const main = `${unitTypeLabel(troop.variant || troop.type)}   Line x ${line}   ${hp}/${troop.maxHP()}   ${fatigue}/${maxFatigue}${status}`;
+      const bonuses = activeBonuses(this, troop, allies);
+      const yMain = bonuses ? bottom - 20 * CONFIG.uiScale : bottom;
+      ctx.textAlign = "center";
+      ctx.font = this.uiFont(16);
+      ctx.strokeText(main, leftX, yMain);
+      ctx.fillStyle = CONFIG.colors.text;
+      ctx.fillText(main, leftX, yMain);
+      if (bonuses) {
+        ctx.font = this.uiFont(13);
+        ctx.strokeText(bonuses, leftX, bottom);
+        ctx.fillStyle = CONFIG.colors.gold;
+        ctx.fillText(bonuses, leftX, bottom);
+      }
+    }
+    const flash = this.orderCallout;
+    const order = flash
+      ? { text: flash.text, color: flash.color, fade: callFade }
+      : troop
+        ? { ...orderStatus(troop.order, troop.broken), fade: 1 }
+        : null;
+    if (order) {
+      ctx.globalAlpha = order.fade;
+      ctx.font = this.uiFont(18);
+      ctx.strokeText(order.text, rightX, bottom);
+      ctx.fillStyle = order.color;
+      ctx.fillText(order.text, rightX, bottom);
+    }
+    ctx.restore();
+  },
+
   drawOrderCallout(ctx) {
+    if (this.telescope) return;
     const call = this.orderCallout;
     if (!call) return;
     const left = call.until - performance.now();
@@ -826,19 +1353,31 @@ const boardMethods = {
     const hover = this.hover;
     const over = Boolean(this.winner) || this.status !== "playing";
     const drag = this.buyDrag;
+    const showUnlock = this.player && this.player.land >= CONFIG.variantUnlockCost;
     for (let i = 0; i < BUY_UNITS.length; i += 1) {
       const unit = BUY_UNITS[i];
+      const variant = UNIT_VARIANTS[unit.type];
+      const spawn = this.selectedBuyUnit(unit.type);
+      const stats = unitStats(spawn);
       const box = this.buyButtonRect(i);
-      const cost = CONFIG[unit.costKey];
+      const cost = stats.cost;
       const can = !over && this.player.gold >= cost;
       const lit = hover
         && hover.x >= box.x && hover.x <= box.x + box.w
         && hover.y >= box.y && hover.y <= box.y + box.h;
       const lane = drag && drag.index === i ? drag.lane : null;
       const mid = box.y + box.h / 2;
+      const cx = box.x + box.w / 2;
       ctx.globalAlpha = can ? 1 : 0.45;
       ctx.fillStyle = unit.fill;
       ctx.fillRect(box.x, box.y, box.w, box.h);
+      if (spawn !== unit.type) {
+        const pad = 5 * CONFIG.uiScale;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, box.h - pad * 2);
+        ctx.fillStyle = unit.fill;
+        ctx.fillRect(box.x + pad + 2, box.y + pad + 2, box.w - pad * 2 - 4, box.h - pad * 2 - 4);
+      }
       if (lane) {
         ctx.fillStyle = "rgba(255,255,255,0.22)";
         ctx.fillRect(box.x, lane === "top" ? box.y : mid, box.w, box.h / 2);
@@ -846,25 +1385,51 @@ const boardMethods = {
       ctx.strokeStyle = can && (lit || lane) ? "#ffffff" : unit.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(box.x, box.y, box.w, box.h);
-      const cx = box.x + box.w / 2;
       ctx.fillStyle = lane === "top" ? "#ffffff" : "#9ee8c8";
-      fillChevron(ctx, cx, box.y + box.h * 0.16, true);
+      fillChevron(ctx, cx, box.y + box.h * 0.14, true);
       ctx.fillStyle = lane === "bottom" ? "#ffffff" : "#e8c36a";
-      fillChevron(ctx, cx, box.y + box.h * 0.84, false);
-      ctx.fillStyle = CONFIG.colors.text;
-      ctx.font = this.uiFont(13);
+      fillChevron(ctx, cx, box.y + box.h * 0.86, false);
+      if (variant && this.player.unlockedVariants[variant]) {
+        const edge = 7 * CONFIG.uiScale;
+        ctx.fillStyle = "#ffffff";
+        fillSideArrow(ctx, box.x + edge, mid, false);
+        fillSideArrow(ctx, box.x + box.w - edge, mid, true);
+      }
+      ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      ctx.fillText(unit.label, box.x + 6 * CONFIG.uiScale, mid);
+      ctx.font = this.uiFont(12);
+      ctx.fillStyle = CONFIG.colors.text;
+      ctx.fillText(UNIT_LABELS[spawn] || unit.label, cx, mid - 8 * CONFIG.uiScale);
       ctx.fillStyle = CONFIG.colors.gold;
-      ctx.textAlign = "right";
-      ctx.fillText(`${cost}💰`, box.x + box.w - 6 * CONFIG.uiScale, mid);
+      ctx.font = this.uiFont(11);
+      ctx.fillText(`${cost}💰`, cx, mid + 9 * CONFIG.uiScale);
       ctx.globalAlpha = 1;
+
+      if (showUnlock && variant && !this.player.unlockedVariants[variant]) {
+        const ubox = this.variantUnlockRect(i);
+        const canUnlock = !over && this.player.land >= CONFIG.variantUnlockCost;
+        const uLit = hover
+          && hover.x >= ubox.x && hover.x <= ubox.x + ubox.w
+          && hover.y >= ubox.y && hover.y <= ubox.y + ubox.h;
+        ctx.globalAlpha = canUnlock ? 1 : 0.45;
+        ctx.fillStyle = "#2a3340";
+        ctx.fillRect(ubox.x, ubox.y, ubox.w, ubox.h);
+        ctx.strokeStyle = canUnlock && uLit ? "#ffffff" : unit.stroke;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(ubox.x, ubox.y, ubox.w, ubox.h);
+        ctx.fillStyle = CONFIG.colors.gold;
+        ctx.font = this.uiFont(10);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${CONFIG.variantUnlockCost}🌿`, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
+        ctx.globalAlpha = 1;
+      }
     }
   },
 };
 
 function unitTypeLabel(type) {
+  if (UNIT_LABELS[type]) return UNIT_LABELS[type];
   for (let i = 0; i < BUY_UNITS.length; i += 1) {
     if (BUY_UNITS[i].type === type) return BUY_UNITS[i].label;
   }
@@ -887,7 +1452,7 @@ function inLineWith(member, ally) {
 }
 
 /** Same adjacent-row grouping the sim uses for line damage. */
-function lineSize(troop, allies) {
+function lineGroup(troop, allies) {
   const cap = Path.sublaneCount(troop.lane);
   const group = [troop];
   const seen = {};
@@ -919,7 +1484,15 @@ function lineSize(troop, allies) {
       added = true;
     }
   }
-  return group.length;
+  return group;
+}
+
+function lineSize(troop, allies) {
+  return lineGroup(troop, allies).length;
+}
+
+function troopKindStats(troop) {
+  return unitStats(troop.variant || troop.type);
 }
 
 function flankSlack(troop) {
@@ -933,16 +1506,63 @@ function isFlanking(troop, target) {
   return Math.abs(troopStation(troop) - troopStation(target)) <= flankSlack(troop);
 }
 
-function hasChargeSpeed(troop, board) {
-  if (troop.order !== "charge") return false;
-  if (troop.type === "cannon" || troop.type === "dragoon") return false;
-  const enemies = board.enemy ? board.enemy.troops : [];
+function hasChargeSpeed(troop) {
+  const stats = troopKindStats(troop);
+  if (troop.order !== "charge" && troop.order !== "retreat") return false;
+  if (!stats.chargeSpeed || stats.chargeSpeed === 1) return false;
+  return true;
+}
+
+function inMeleeContact(troop, enemies) {
+  const stats = troopKindStats(troop);
+  if (!stats.fightsMelee) return false;
+  const reach = troop.bodyRadius() + CONFIG.meleeSlack;
   for (let i = 0; i < enemies.length; i += 1) {
     const foe = enemies[i];
-    if (foe.hp <= 0) continue;
-    if (distance(foe, troop) <= CONFIG.chargeSpeedRange) return true;
+    if (foe.hp <= 0 || foe.lane !== troop.lane) continue;
+    if (!troopKindStats(foe).fightsMelee) continue;
+    if (distance(troop, foe) <= reach + foe.bodyRadius()) return true;
   }
   return false;
+}
+
+function inCapitalRange(troop) {
+  const capital = troop.side && troop.side.capital;
+  if (!capital) return false;
+  return distance(troop, capital) <= CONFIG.capitalCannonRange;
+}
+
+/** Color-guard attack/speed auras currently affecting this unit. */
+function auraBonuses(troop, allies) {
+  let attack = 1;
+  let speed = 1;
+  for (let i = 0; i < allies.length; i += 1) {
+    const ally = allies[i];
+    if (ally === troop || ally.hp <= 0) continue;
+    const stats = troopKindStats(ally);
+    if (!(stats.buffRange > 0)) continue;
+    if (distance(troop, ally) > stats.buffRange) continue;
+    if (stats.attackBuff > 0) attack = Math.max(attack, 1 + stats.attackBuff);
+    if (stats.speedBuff > 0) speed = Math.max(speed, 1 + stats.speedBuff);
+  }
+  return { attack, speed };
+}
+
+/** True while an officer (or color guard) is restoring this unit's fatigue. */
+function underOfficerRestore(troop, allies) {
+  for (let i = 0; i < allies.length; i += 1) {
+    const ally = allies[i];
+    if (ally === troop || ally.hp <= 0) continue;
+    const stats = troopKindStats(ally);
+    if (!(stats.restoreRate > 0) || !(stats.restoreRange > 0)) continue;
+    if (distance(troop, ally) <= stats.restoreRange) return true;
+  }
+  return false;
+}
+
+function shotSlowActive(troop) {
+  if (!(troop.shotSlow > 0)) return false;
+  return troop.order == null || troop.order === "charge";
 }
 
 function multText(n) {
@@ -950,20 +1570,27 @@ function multText(n) {
   return `×${rounded}`;
 }
 
-/** Bonuses that currently change this unit's damage, speed, or armor. */
+/** Bonuses and live statuses that change this unit's damage, speed, armor, or fatigue. */
 function activeBonuses(board, troop, allies) {
+  const stats = troopKindStats(troop);
+  const side = troop.side;
+  const foes = side && side.id === "player" ? board.enemy : board.player;
+  const enemies = foes ? foes.troops : [];
   const labels = [];
+
   const mates = lineSize(troop, allies) - 1;
-  if (troop.type === "melee" && mates > 0) {
-    labels.push(`Line +${Math.round(mates * CONFIG.lineDamageBonus * 100)}%`);
+  if (stats.lineBonus && mates > 0) {
+    labels.push(`Line +${Math.round(mates * stats.lineBonus * 100)}%`);
   }
-  if (troop.order === "charge") {
-    labels.push(`Charge ${multText(CONFIG.doubleDamageMultiplier)}`);
+
+  if (troop.order === "charge" && stats.chargeMultiplier && stats.chargeMultiplier !== 1) {
+    labels.push(`Charge ${multText(stats.chargeMultiplier)}`);
   }
-  if (hasChargeSpeed(troop, board)) {
-    labels.push(`Speed ${multText(CONFIG.chargeSpeedFactor)}`);
+  if (hasChargeSpeed(troop)) {
+    const label = troop.order === "retreat" ? "Retreat speed" : "Charge speed";
+    labels.push(`${label} ${multText(troopKindStats(troop).chargeSpeed)}`);
   }
-  const enemies = board.enemy ? board.enemy.troops : [];
+
   let flanking = false;
   for (let i = 0; i < enemies.length; i += 1) {
     if (isFlanking(troop, enemies[i])) {
@@ -971,19 +1598,108 @@ function activeBonuses(board, troop, allies) {
       break;
     }
   }
-  if (flanking) {
-    let flank = CONFIG.doubleDamageMultiplier;
-    if (troop.type === "dragoon") flank *= CONFIG.dragoonFlankBonus;
-    labels.push(`Flank ${multText(flank)}`);
+  if (flanking && stats.flankMultiplier && stats.flankMultiplier !== 1) {
+    labels.push(`Flank ${multText(stats.flankMultiplier)}`);
   }
+
   if (touchesQuarterLine(troop)) {
     labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
   }
-  if (troop.type === "dragoon") labels.push(`Speed ${multText(CONFIG.dragoonOpenSpeed)}`);
+
+  if (side) {
+    if (side.speedMultiplier && side.speedMultiplier !== 1) {
+      labels.push(`Upgrade speed ${multText(side.speedMultiplier)}`);
+    }
+    const armorRanks = side.upgrades ? side.upgrades.armor : 0;
+    if (armorRanks > 0) {
+      const armor = Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * armorRanks);
+      labels.push(`Armor +${Math.round(armor * 100)}%`);
+    }
+    const dmgRanks = side.upgrades ? side.upgrades.damage : 0;
+    if (dmgRanks > 0) {
+      labels.push(`Upgrade dmg ${multText(1 + CONFIG.damageUpgradeAmount * dmgRanks)}`);
+    }
+  }
+
+  const aura = auraBonuses(troop, allies);
+  if (aura.attack > 1) labels.push(`Aura attack ${multText(aura.attack)}`);
+  if (aura.speed > 1) labels.push(`Aura speed ${multText(aura.speed)}`);
+
+  if (shotSlowActive(troop) && stats.slowFactor && stats.slowFactor !== 1) {
+    labels.push(`Slowed ${multText(stats.slowFactor)}`);
+  }
+
+  if (troop.order === "reform") {
+    labels.push(`Reform speed ${multText(CONFIG.reformSpeedFactor)}`);
+  } else if (troop.order === "fallback" && !troop.broken) {
+    labels.push(`Fallback speed ${multText(CONFIG.reformSpeedFactor)}`);
+  }
+
+  if (troop.lane === "bottom") {
+    const outer = Path.bottomRadius(0);
+    if (outer > 0) {
+      const ring = Path.bottomRadius(troop.sublane) / outer;
+      if (Math.abs(ring - 1) > 0.01) {
+        labels.push(`Ring speed ${multText(ring)}`);
+      }
+    }
+  }
+
+  if (troop.broken) {
+    labels.push("Rallying");
+  } else if (troop.order === "charge" || troop.order === "retreat"
+      || inMeleeContact(troop, enemies)) {
+    labels.push("Fatigue rising");
+  } else if (underOfficerRestore(troop, allies)) {
+    labels.push("Officer restore");
+  } else if (inCapitalRange(troop)) {
+    labels.push("Recovering");
+  } else if (troop.order === "halt") {
+    labels.push("Recovering");
+  }
+
+  if (stats.speed && stats.speed !== UNIT_STATS.troop.speed) {
+    labels.push(`Walk ${multText(stats.speed / UNIT_STATS.troop.speed)}`);
+  }
+
   return labels.join("   ");
 }
 
+function orderStatus(order, broken) {
+  if (broken) return { text: "Broken", color: CONFIG.colors.fallback };
+  if (order === "halt") return { text: "Halt", color: CONFIG.colors.halt };
+  if (order === "reform") return { text: "Reform", color: CONFIG.colors.reform };
+  if (order === "charge") return { text: "Charge", color: CONFIG.colors.charge };
+  if (order === "fallback") return { text: "Fallback", color: CONFIG.colors.fallback };
+  if (order === "retreat") return { text: "Retreat", color: CONFIG.colors.retreat };
+  return { text: "Advance", color: CONFIG.colors.text };
+}
+
 function orderAnnouncement(troop, action) {
+  if (action === "reform") {
+    return { text: "Reform", color: CONFIG.colors.reform };
+  }
+  if (action === "restore") {
+    let want = troop && troop.priorOrder;
+    if (want === "reform") want = null;
+    if (want !== "halt" && want !== "charge" && want !== "fallback"
+        && want !== "retreat" && want !== null) {
+      want = null;
+    }
+    return orderStatus(want, false);
+  }
+  if (action === "speedUp" || action === "speedDown") {
+    const ladder = ["retreat", "fallback", "halt", null, "charge"];
+    let idx = 3;
+    if (troop.order === "retreat") idx = 0;
+    else if (troop.order === "fallback") idx = 1;
+    else if (troop.order === "halt") idx = 2;
+    else if (troop.order === "charge") idx = 4;
+    const next = action === "speedUp"
+      ? Math.min(ladder.length - 1, idx + 1)
+      : Math.max(0, idx - 1);
+    return orderStatus(ladder[next], false);
+  }
   if (action === "cycle") {
     if (troop.order === "halt") return { text: "Reform", color: CONFIG.colors.reform };
     if (troop.order === "reform") return { text: "Advance", color: CONFIG.colors.text };
@@ -1074,13 +1790,38 @@ function fillChevron(ctx, cx, cy, up) {
   ctx.fill();
 }
 
+function fillSideArrow(ctx, cx, cy, right) {
+  const s = 3.5 * CONFIG.uiScale;
+  ctx.beginPath();
+  if (right) {
+    ctx.moveTo(cx + s * 0.55, cy);
+    ctx.lineTo(cx - s * 0.45, cy - s);
+    ctx.lineTo(cx - s * 0.45, cy + s);
+  } else {
+    ctx.moveTo(cx - s * 0.55, cy);
+    ctx.lineTo(cx + s * 0.45, cy - s);
+    ctx.lineTo(cx + s * 0.45, cy + s);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
 function makeTroop(data, side, mx) {
   const troop = Object.create(viewTroopMethods);
   troop.id = data.id;
   troop.lane = data.lane;
   troop.sublane = data.sublane;
   troop.type = data.type;
+  troop.variant = data.variant || null;
+  troop.alternate = Boolean(data.alternate);
   troop.hp = data.hp;
+  troop.maxHp = data.maxHp;
+  troop.fatigue = data.fatigue;
+  troop.maxFatigue = data.maxFatigue;
+  troop.broken = Boolean(data.broken);
+  troop.shotSlow = data.shotSlow || 0;
+  troop.priorOrder = data.priorOrder === undefined ? null : data.priorOrder;
+  troop.radius = data.radius;
   troop.x = mx(data.x);
   troop.y = data.y;
   troop.order = data.order;
@@ -1103,6 +1844,7 @@ function makeSide(data, viewId, board, mx) {
   side.banks = data.banks;
   side.speedMultiplier = data.speedMultiplier;
   side.upgrades = { ...data.upgrades };
+  side.unlockedVariants = { ...(data.unlockedVariants || {}) };
   side.troops = data.troops.map((troop) => makeTroop(troop, side, mx));
   return side;
 }
@@ -1135,6 +1877,9 @@ export function applySnapshot(board, snap, seat) {
   board.bottomCenter = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
   board.player = makeSide(snap.sides[mine], "player", board, mx);
   board.enemy = makeSide(snap.sides[mine === "player" ? "enemy" : "player"], "enemy", board, mx);
+  const prevUnlocked = board.unlockedVariantsSeen || {};
+  board.syncBuySelection(prevUnlocked);
+  board.unlockedVariantsSeen = { ...(board.player.unlockedVariants || {}) };
   board.checkpoints = snap.checkpoints.map((town) => makeCheckpoint({
     index: town.index,
     x: mx(town.x),
@@ -1171,8 +1916,15 @@ export function createBoard(canvas) {
     splats: [],
     drag: null,
     buyDrag: null,
+    buySelection: {},
+    telescope: null,
+    telescopeDrag: null,
+    telescopeSlide: 0,
+    lanePress: null,
     orderCallout: null,
     inspectedId: null,
+    inspectedSolo: false,
+    inspectedLineIds: null,
     hover: null,
     winner: null,
     winReason: null,

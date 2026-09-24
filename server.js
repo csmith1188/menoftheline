@@ -293,6 +293,15 @@ app.post("/play/join/:id", (req, res, next) => {
   startPlay(req, res, next, { mode: "join", roomId: req.params.id });
 });
 
+app.get("/rules", async (req, res, next) => {
+  try {
+    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+    res.render("rules", { viewer, notice: null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get("/play", async (req, res, next) => {
   try {
     const player = await playerFromSession(req.session, { createGuest: false });

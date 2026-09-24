@@ -1039,7 +1039,7 @@ const pages = [
     artHeight: 240,
     blocks: [
       { kind: "p", text: "The blue bar is fatigue. Charging, retreating, fighting in melee, and getting hit increase it. Halting, being near an officer, or standing in your keep decrease it." },
-      { kind: "p", text: "When your fatigue is fuller than your health, hits can break the unit. Broken units fall back, stop fighting, and ignore orders until they rally. Rally by reducing your fatigue to half your health." },
+      { kind: "p", text: "When your fatigue is fuller than your health, hits can break the unit. Broken units retreat until fatigue is full, then fall back. They stop fighting and ignore orders until they rally. Rally by reducing your fatigue to half your health." },
     ],
     draw: drawFatigue,
   },

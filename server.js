@@ -60,6 +60,7 @@ app.set("views", path.join(root, "views"));
 app.use(express.urlencoded({ extended: false }));
 app.use(sessionMiddleware);
 app.use("/shared", express.static(path.join(root, "shared")));
+app.use("/vendor/three", express.static(path.join(root, "node_modules", "three")));
 app.use(express.static(path.join(root, "public")));
 
 function adminId() {
@@ -310,7 +311,13 @@ app.get("/play", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    res.render("index");
+    const intent = req.session.intent;
+    const room = matchmaker.roomForUser(player.id);
+    const adminBot = isAdmin(req.session) && (
+      (intent && intent.mode === "bot")
+      || (room && room.mode === "bot")
+    );
+    res.render(adminBot ? "play3d" : "index");
   } catch (err) {
     next(err);
   }

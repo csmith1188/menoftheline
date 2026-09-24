@@ -1,5 +1,14 @@
 [
-
+  {
+    "date": "2026-09-24",
+    "title": "Charge Through & Stack Resolve",
+    "summary": "Cavalry can charge through friendlies, and stacked units peel apart instead of fighting through each other.",
+    "items": [
+      "Dragoons and Lancers no longer collide with friendly units while charging.",
+      "When units that were passing through each other start colliding again (for example after leaving fallback), they step forward or back — whichever is shorter — until they no longer overlap.",
+      "Units cannot fire or melee while overlapping a friendly they collide with."
+    ]
+  },
   {
     "date": "2026-09-23",
     "title": "Happy Birthday!",

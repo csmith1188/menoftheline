@@ -1511,12 +1511,17 @@ class Unit {
 
   /**
    * Same type always blocks, and so does every other type. A unit
-   * falling back passes through anyone. Skirmishers pass through every
-   * type but their own. Officers walk through every friendly.
+   * falling back or retreating passes through anyone. Charging
+   * dragoons (and lancers) ride through friendlies. Skirmishers pass
+   * through every type but their own. Officers walk through every friendly.
    */
   blocksAlly(ally) {
     if (this.order === "fallback" || ally.order === "fallback"
         || this.order === "retreat" || ally.order === "retreat") {
+      return false;
+    }
+    if ((this.type === "dragoon" && this.order === "charge")
+        || (ally.type === "dragoon" && ally.order === "charge")) {
       return false;
     }
     if (this.type === "officer" || ally.type === "officer") {
@@ -1524,6 +1529,85 @@ class Unit {
     }
     if (this.type !== ally.type && (this.type === "skirmisher" || ally.type === "skirmisher")) {
       return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when this unit and ally share a row and sit inside the block gap,
+   * under the same type/order rules as blocksAlly.
+   */
+  overlapsCollidingAlly(ally) {
+    if (ally === this || ally.hp <= 0) {
+      return false;
+    }
+    if (ally.lane !== this.lane || ally.sublane !== this.sublane) {
+      return false;
+    }
+    if (!this.blocksAlly(ally)) {
+      return false;
+    }
+    return Math.abs(ally.station() - this.station()) < this.stationSlack("block");
+  }
+
+  /** Closest same-row friendly we currently collide with, or null. */
+  collidingAlly(allies) {
+    let best = null;
+    let bestAbs = Infinity;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (!this.overlapsCollidingAlly(ally)) {
+        continue;
+      }
+      const abs = Math.abs(this.alongSigned(ally));
+      if (abs < bestAbs) {
+        bestAbs = abs;
+        best = ally;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * When stacked on a friendly we now collide with (e.g. after leaving
+   * fallback), step the short way — ahead or back — until clear. Uses
+   * walk speed even while halted so units can peel apart. True while
+   * still overlapping.
+   */
+  resolveAllyCollision(dt, allies, enemies) {
+    const other = this.collidingAlly(allies);
+    if (!other) {
+      return false;
+    }
+    const along = this.alongSigned(other);
+    // Away from the other is always the shortest clear; on a dead tie,
+    // lower id steps back so the pair peels apart instead of staying glued.
+    let dir;
+    if (along > 0) {
+      dir = -1;
+    } else if (along < 0) {
+      dir = 1;
+    } else {
+      dir = this.id < other.id ? -1 : 1;
+    }
+    const scale = this.ringSpeedScale() * this.shotSlowScale();
+    const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
+    const delta = (speed * dt) / this.pathLength;
+    const tryStep = (stepDir) => {
+      const nextProgress = Math.max(0, Math.min(1, this.progress + stepDir * delta));
+      if (nextProgress === this.progress) {
+        return false;
+      }
+      const next = Path.pointAt(this.points, nextProgress);
+      if (this.overlapsEnemyAt(next.x, next.y, enemies)) {
+        return false;
+      }
+      this.progress = nextProgress;
+      this.syncPosition();
+      return true;
+    };
+    if (!tryStep(dir)) {
+      tryStep(-dir);
     }
     return true;
   }
@@ -1746,6 +1830,9 @@ class Unit {
   /** Fire a shell that ignores bodies between this unit and its target. */
   fire(target, allies, projectiles, kind) {
     const strike = kind || "shoot";
+    if (allies && this.collidingAlly(allies)) {
+      return;
+    }
     if (strike !== "melee" && allies && target.isInMelee && target.isInMelee(allies)) {
       return;
     }
@@ -1805,6 +1892,9 @@ class Unit {
       if (this.strafing && this.strafe(dt, enemies, allies)) {
         return;
       }
+      if (this.resolveAllyCollision(dt, allies, enemies)) {
+        return;
+      }
       this.marchAlong(dt, allies, enemies, -1);
       return;
     }
@@ -1819,6 +1909,11 @@ class Unit {
 
     const laneMove = this.followLaneOrder(dt, allies, enemies);
     if (laneMove === "stepping") {
+      return;
+    }
+
+    // Stacked on a colliding friendly: peel apart, no fire or melee.
+    if (this.resolveAllyCollision(dt, allies, enemies)) {
       return;
     }
 

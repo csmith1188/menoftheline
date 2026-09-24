@@ -19,10 +19,12 @@ const pointerMethods = {
     if (this.telescope) {
       event.preventDefault();
       this.telescopeSlide = 0;
+      let enemyTap = null;
       if (!(this.winner || this.status !== "playing")) {
         const world = this.worldPoint(event);
         const troop = this.hitAnyTroopAt(world);
-        if (troop) {
+        const friendly = troop && troop.side && troop.side.id === "player";
+        if (troop && friendly) {
           this.drag = {
             troop,
             x: world.x,
@@ -35,6 +37,7 @@ const pointerMethods = {
           this.canvas.setPointerCapture(event.pointerId);
           return;
         }
+        if (troop) enemyTap = troop.id;
       }
       const point = this.screenPoint(event);
       this.telescopeDrag = {
@@ -43,6 +46,7 @@ const pointerMethods = {
         along: this.telescope.along,
         switched: false,
         samples: [{ t: performance.now(), along: this.telescope.along }],
+        enemyTap,
       };
       this.canvas.setPointerCapture(event.pointerId);
       return;
@@ -52,6 +56,13 @@ const pointerMethods = {
     }
     event.preventDefault();
     const point = this.canvasPoint(event);
+    const unlock = this.hitVariantUnlockAt(point);
+    if (unlock) {
+      if (!this.buySelection) this.buySelection = {};
+      this.buySelection[unlock.base] = unlock.variant;
+      this.onCommand({ type: "unlockVariant", base: unlock.base });
+      return;
+    }
     const buy = this.hitBuyAt(point);
     if (buy) {
       this.buyDrag = {
@@ -67,13 +78,6 @@ const pointerMethods = {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
-    const unlock = this.hitVariantUnlockAt(point);
-    if (unlock) {
-      if (!this.buySelection) this.buySelection = {};
-      this.buySelection[unlock.base] = unlock.variant;
-      this.onCommand({ type: "unlockVariant", base: unlock.base });
-      return;
-    }
     if (this.hitBankAt(point, this.player)) {
       this.onCommand({ type: "bank" });
       return;
@@ -85,6 +89,23 @@ const pointerMethods = {
         this.lanePress = { x: point.x, y: point.y, lane: spot.lane, along: spot.along };
         this.canvas.setPointerCapture(event.pointerId);
       }
+      return;
+    }
+    const friendly = troop.side && troop.side.id === "player";
+    if (!friendly) {
+      const spot = this.laneAt(point);
+      if (spot) {
+        this.lanePress = {
+          x: point.x,
+          y: point.y,
+          lane: spot.lane,
+          along: spot.along,
+          enemyTap: troop.id,
+        };
+      } else {
+        this.enemyPress = { x: point.x, y: point.y, enemyTap: troop.id };
+      }
+      this.canvas.setPointerCapture(event.pointerId);
       return;
     }
     this.drag = {
@@ -137,7 +158,9 @@ const pointerMethods = {
       this.drag.hx = point.x;
       this.drag.hy = point.y;
     }
-    const overUI = this.hitBuyAt(point) || this.hitBankAt(point, this.player);
+    const overUI = this.hitVariantUnlockAt(point)
+      || this.hitBuyAt(point)
+      || this.hitBankAt(point, this.player);
     this.canvas.style.cursor = overUI ? "pointer" : "default";
   },
 
@@ -166,6 +189,11 @@ const pointerMethods = {
             this.onCommand({ type: "upgrade", checkpointId: town.index });
             return;
           }
+          const enemy = this.enemyTapTroop(start.enemyTap);
+          if (enemy) {
+            this.selectTroop(enemy, false);
+            return;
+          }
         }
         if (!this.laneAt(world)) this.closeTelescope();
         return;
@@ -178,8 +206,26 @@ const pointerMethods = {
       this.lanePress = null;
       if (this.winner || this.status !== "playing") return;
       const point = this.canvasPoint(event);
-      if (distance(start, point) < this.uiMetrics().dragMin && !this.hitUnitAt(point)) {
-        this.openTelescopeAt(start.lane, start.along);
+      if (distance(start, point) < this.uiMetrics().dragMin) {
+        const enemy = this.enemyTapTroop(start.enemyTap);
+        if (enemy) {
+          this.selectTroop(enemy, false);
+          return;
+        }
+        if (!this.hitUnitAt(point)) {
+          this.openTelescopeAt(start.lane, start.along);
+        }
+      }
+      return;
+    }
+    if (this.enemyPress) {
+      const start = this.enemyPress;
+      this.enemyPress = null;
+      if (this.winner || this.status !== "playing") return;
+      const point = this.canvasPoint(event);
+      if (distance(start, point) < this.uiMetrics().dragMin) {
+        const enemy = this.enemyTapTroop(start.enemyTap);
+        if (enemy) this.selectTroop(enemy, false);
       }
       return;
     }
@@ -254,6 +300,16 @@ const pointerMethods = {
     if (pulled < orderMin) {
       this.handleUnitTap(troop);
     }
+  },
+
+  /** Living enemy captured at the start of a telescope press, if any. */
+  enemyTapTroop(id) {
+    if (id == null || !this.enemy) return null;
+    for (let i = 0; i < this.enemy.troops.length; i += 1) {
+      const troop = this.enemy.troops[i];
+      if (troop.id === id && troop.hp > 0) return troop;
+    }
+    return null;
   },
 
   /** True when this unit is in the current selection (solo or line). */
@@ -380,6 +436,7 @@ export function bindInput(board) {
     board.telescopeDrag = null;
     board.telescopeSlide = 0;
     board.lanePress = null;
+    board.enemyPress = null;
   });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 }

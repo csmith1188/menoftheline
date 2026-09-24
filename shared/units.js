@@ -19,7 +19,7 @@ const SHOT = {
   projectileSize: 4,
   projectileSpeed: 220,
   projectileColor: "#f3d27a",
-  meleeReach: 200,
+  meleeReach: 30,
   radius: 10,
   fatigue: 100,
   splashWholeLine: false,

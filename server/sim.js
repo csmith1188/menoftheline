@@ -1107,36 +1107,55 @@ class Unit {
     return distance(this, this.side.capital) <= CONFIG.capitalCannonRange;
   }
 
+  /** True when this body overlaps this side's keep circle. */
+  overlapsOwnCapital() {
+    const capital = this.side && this.side.capital;
+    if (!capital) return false;
+    const reach = CONFIG.capitalRadius + this.bodyRadius();
+    return distance(this, capital) <= reach;
+  }
+
   /**
    * Raise or lower fatigue for this step. Charge and melee contact gain
-   * at combat rate (even inside the keep). Otherwise halt recovers at
-   * idle rate, and own capital recovers faster. A broken unit rallies
-   * once fatigue % falls below half of hp %.
+   * at combat rate (even inside the keep). Broken units also gain while
+   * retreating until fatigue is full, then switch to fallback. Otherwise
+   * halt recovers at idle rate, and own capital recovers faster.
+   * Overlapping the keep also restores health at that same recovery rate.
+   * A broken unit rallies once fatigue % falls below half of hp %.
    */
   tickFatigue(dt, enemies) {
     const inMelee = Boolean(this.collidingEnemy(enemies));
-    const gaining = !this.broken
-      && (this.order === "charge" || this.order === "retreat" || inMelee);
+    const gaining = this.order === "retreat"
+      || (!this.broken && (this.order === "charge" || inMelee));
     if (gaining) {
       this.fatigue = Math.min(
         this.maxFatigue,
         this.fatigue + CONFIG.fatigueCombatRate * dt,
       );
     } else if (this.inCapitalRange()) {
-      this.fatigue = Math.max(0, this.fatigue - CONFIG.fatigueRecoverRate * dt);
+      const recovered = CONFIG.fatigueRecoverRate * dt;
+      this.fatigue = Math.max(0, this.fatigue - recovered);
+      if (this.hp > 0 && this.overlapsOwnCapital()) {
+        this.hp = Math.min(this.maxHp, this.hp + recovered);
+      }
     } else if (this.order === "halt") {
       this.fatigue = Math.max(0, this.fatigue - CONFIG.fatigueIdleRate * dt);
     }
-    if (this.broken && this.fatiguePct() < this.hpPct() * 0.5) {
-      this.broken = false;
-      this.order = null;
+    if (this.broken) {
+      if (this.order === "retreat" && this.fatigue >= this.maxFatigue) {
+        this.order = "fallback";
+      }
+      if (this.fatiguePct() < this.hpPct() * 0.5) {
+        this.broken = false;
+        this.order = null;
+      }
     }
   }
 
-  /** Force a rout: fall back with no combat or orders until rallied. */
+  /** Force a rout: retreat until fatigue is full, then fall back. */
   breakUnit() {
     this.broken = true;
-    this.order = "fallback";
+    this.order = this.fatigue >= this.maxFatigue ? "fallback" : "retreat";
     this.priorOrder = null;
     this.reformNeedsAlign = false;
     this.wantedSublane = null;

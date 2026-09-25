@@ -975,7 +975,7 @@ const pages = [
           "Officers: Holds discipline by restoring nearby fatigue. Lead better from the front of the line.",
         ],
       },
-      { kind: "p", text: "Units block each other. Skirmishers pass through other types. Officers pass through friendlies. Falling back passes through anyone. Most units ignore officers while another enemy is in range." },
+      { kind: "p", text: "Units block each other on the same row. When blocked ahead they look for any row they can enter without overlapping a friendly, prefer the one with the most open space ahead, and step one adjacent row at a time toward it — easing back only when the next step is occupied. That lets them move around formed lines instead of bouncing between rows. Fall back and retreat pass through friendlies; charging cavalry do too. When a unit stops passing through while stacked (for example cavalry halting after a charge), it eases away from the closest overlapping friendly until clear before it acts on its order. Skirmishers and officers on advance pass through other types, but not through each other. Most units ignore officers while another enemy is in range." },
     ],
     draw: drawUnits,
   },
@@ -1006,10 +1006,10 @@ const pages = [
       {
         kind: "ul",
         items: [
-          "Halt: Stay in place. Recover fatigue and shoot full distance.",
-          "Reform: Slow down to form a line.",
-          "Advance: Walk and shoot.",
-          "Charge: Swipe forward. Stop shooting, run faster, and do bonus melee damage, but fatigue rises. A forward swipe while halted advances instead.",
+          "Halt: Stay in place. Recover fatigue and shoot full distance. Still collides with friendlies.",
+          "Reform: Slow down to form a line. Sidesteps blockers like an advance.",
+          "Advance: Walk and shoot. When blocked, pick the clearest open row ahead and step toward it; ease back only if the next step is occupied.",
+          "Charge: Swipe forward. Stop shooting, run faster, and do bonus melee damage, but fatigue rises. A forward swipe while halted advances instead. Cavalry pass through friendlies while charging.",
           "Fall back: Swipe back. Disengage and withdraw through friendlies while firing. A back swipe while charging advances instead.",
           "Retreat: Broken units only. They run back until fatigue is full, then fall back until fatigue is half their current health. You cannot order a retreat.",
         ],

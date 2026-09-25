@@ -189,6 +189,12 @@ class Unit {
     this.orderHeld = false;
     this.heldOrder = null;
     this.fallbackLeavesMelee = false;
+    /** Prior tick order; used to detect ending a pass-through while stacked. */
+    this.prevCollisionOrder = null;
+    /** Ease after pass-through ends while overlapping a collidable. */
+    this.peelingFromPassThrough = false;
+    /** Committed peel direction (+1 forward / -1 back) until clear. */
+    this.peelDir = 0;
     this.applyPath();
     const spawn = Path.pointAt(this.points, 0);
     this.x = spawn.x;
@@ -1424,13 +1430,13 @@ class Unit {
     this.strafing = true;
   }
 
-  /** True when this row is free of friends and the landing point is empty. */
+  /** True when this row has no blockGap-collidable friend and the landing is empty. */
   canEnterSublane(sublane, allies, enemies) {
     const count = Path.sublaneCount(this.lane);
     if (sublane === this.sublane || sublane < 0 || sublane >= count) {
       return false;
     }
-    if (this.sublaneOccupied(sublane, allies)) {
+    if (this.sublaneHasCollidableInBlockGap(sublane, allies)) {
       return false;
     }
     const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, sublane), this.progress);
@@ -1460,8 +1466,10 @@ class Unit {
   }
 
   /**
-   * Step toward a hidden switch. Returns "stepping", "waiting" if blocked,
-   * or "none" when there is no pending row change. Melee does not cancel it.
+   * Step toward a hidden switch. Returns "stepping" while sliding or
+   * easing back to clear a blocker ahead in the next row, "waiting" if
+   * blocked with no room to clear, or "none" when there is no pending
+   * row change. Melee does not cancel it.
    */
   followLaneOrder(dt, allies, enemies) {
     if (this.switch == null) {
@@ -1482,8 +1490,7 @@ class Unit {
       }
       return "none";
     }
-    if (this.stepTowardSublane(this.switch, allies, enemies)) {
-      this.strafe(dt, enemies, allies);
+    if (this.pursueSublaneChange(dt, allies, enemies, this.switch)) {
       return "stepping";
     }
     return "waiting";
@@ -1516,33 +1523,14 @@ class Unit {
   }
 
   /**
-   * Step toward a preferred row, or the nearest free neighbor, when a
-   * charger cannot keep walking forward.
+   * Step toward a preferred row, or the nearest free (or clearable)
+   * neighbor, when a charger cannot keep walking forward.
    */
   tryChargeSidestep(dt, allies, enemies, prefer) {
-    if (prefer !== undefined && this.stepTowardSublane(prefer, allies, enemies)) {
-      this.strafe(dt, enemies, allies);
+    if (prefer !== undefined && this.pursueSublaneChange(dt, allies, enemies, prefer)) {
       return true;
     }
-    const count = Path.sublaneCount(this.lane);
-    let best = null;
-    let bestDist = Infinity;
-    for (let s = 0; s < count; s += 1) {
-      if (!this.canEnterSublane(s, allies, enemies)) {
-        continue;
-      }
-      const d = Math.abs(s - this.sublane);
-      if (d < bestDist) {
-        bestDist = d;
-        best = s;
-      }
-    }
-    if (best === null) {
-      return false;
-    }
-    this.stepTowardSublane(best, allies, enemies);
-    this.strafe(dt, enemies, allies);
-    return true;
+    return this.pursueSublaneChange(dt, allies, enemies);
   }
 
   /**
@@ -1639,24 +1627,51 @@ class Unit {
   }
 
   /**
-   * Same type always blocks, and so does every other type. A unit
-   * falling back or retreating passes through anyone. Charging
-   * dragoons (and lancers) ride through friendlies. Skirmishers pass
-   * through every type but their own. Officers walk through every friendly.
+   * Friendly collision rules. Fall back / retreat disable collision.
+   * Charging cavalry ride through friendlies. Advancing skirmishers and
+   * officers pass through non-skirmish-like friendlies.
+   */
+  collisionEnabled() {
+    return this.order !== "fallback" && this.order !== "retreat";
+  }
+
+  /** Skirmishers and officers share the same pass-through rules. */
+  isSkirmishLike() {
+    return this.type === "skirmisher" || this.type === "officer";
+  }
+
+  /** Dragoons and lancer variants. */
+  isCavalry() {
+    return this.type === "dragoon" || this.variant === "lancer";
+  }
+
+  /**
+   * True when this unit and ally may not occupy the same stretch.
+   * Fall back / retreat either side: no block. Charging cavalry either
+   * side: no block. Skirmish-like on advance pass through anyone who is
+   * not skirmish-like.
    */
   blocksAlly(ally) {
-    if (this.order === "fallback" || ally.order === "fallback"
-      || this.order === "retreat" || ally.order === "retreat") {
+    return this.blocksAllyWithOrders(ally, this.order, ally.order);
+  }
+
+  /**
+   * blocksAlly using explicit orders so we can detect ending a
+   * pass-through (e.g. cavalry charge → halt while still overlapping).
+   */
+  blocksAllyWithOrders(ally, myOrder, theirOrder) {
+    if (myOrder === "fallback" || myOrder === "retreat"
+      || theirOrder === "fallback" || theirOrder === "retreat") {
       return false;
     }
-    if ((this.type === "dragoon" && this.order === "charge")
-      || (ally.type === "dragoon" && ally.order === "charge")) {
+    if ((this.isCavalry() && myOrder === "charge")
+      || (ally.isCavalry() && theirOrder === "charge")) {
       return false;
     }
-    if (this.type === "officer" || ally.type === "officer") {
+    if (this.isSkirmishLike() && myOrder === null && !ally.isSkirmishLike()) {
       return false;
     }
-    if (this.type !== ally.type && (this.type === "skirmisher" || ally.type === "skirmisher")) {
+    if (ally.isSkirmishLike() && theirOrder === null && !this.isSkirmishLike()) {
       return false;
     }
     return true;
@@ -1679,18 +1694,52 @@ class Unit {
     return Math.abs(ally.station() - this.station()) < this.stationSlack("block");
   }
 
+  /**
+   * True when we now block a same-row ally inside the block gap, but would
+   * not have under prevCollisionOrder (left fall back / retreat, ended a
+   * cavalry charge, left skirmish-like advance, etc.).
+   */
+  gainedCollisionWhileOverlapping(allies) {
+    const gap = this.stationSlack("block");
+    const prev = this.prevCollisionOrder;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (ally.sublane !== this.sublane) {
+        continue;
+      }
+      if (Math.abs(ally.station() - this.station()) >= gap) {
+        continue;
+      }
+      if (!this.blocksAllyWithOrders(ally, this.order, ally.order)) {
+        continue;
+      }
+      if (this.blocksAllyWithOrders(ally, prev, ally.order)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
   /** Closest same-row friendly we currently collide with, or null. */
   collidingAlly(allies) {
     let best = null;
-    let bestAbs = Infinity;
+    let bestDist = Infinity;
+    let bestAlong = 0;
     for (let i = 0; i < allies.length; i += 1) {
       const ally = allies[i];
       if (!this.overlapsCollidingAlly(ally)) {
         continue;
       }
-      const abs = Math.abs(this.alongSigned(ally));
-      if (abs < bestAbs) {
-        bestAbs = abs;
+      const along = this.alongSigned(ally);
+      const dist = Math.abs(ally.station() - this.station());
+      // Closer station wins; on a tie prefer the one ahead so direction is stable.
+      if (dist < bestDist || (dist === bestDist && along > bestAlong)) {
+        bestDist = dist;
+        bestAlong = along;
         best = ally;
       }
     }
@@ -1698,61 +1747,60 @@ class Unit {
   }
 
   /**
-   * When stacked on a friendly we now collide with (e.g. after leaving
-   * fallback, or catching a blocker), clear without shoving anyone
-   * forward. A unit with a friendly ahead stops and tries an open
-   * sublane; if none is free it holds. A unit with someone only behind
-   * holds still so advancing bodies cannot push it. On a dead tie the
-   * lower id eases back so a true stack can peel. True while still
-   * overlapping.
+   * Same-row friendly overlap while collision is already on. Does not
+   * handle collision re-enable peel (that runs first in update). Halt
+   * does not move here. True while holding a stack so advance does not
+   * shove anyone.
    */
   resolveAllyCollision(dt, allies, enemies) {
     const other = this.collidingAlly(allies);
     if (!other) {
       return false;
     }
-    const along = this.alongSigned(other);
 
-    // Friendly ahead: switch to an open row, otherwise stop in place.
-    if (along > 0) {
-      const open = this.openSublane(allies);
-      if (open !== null) {
-        const before = this.sublane;
-        this.enterSublane(open, enemies);
-        if (this.sublane !== before || this.strafing) {
-          this.strafe(dt, enemies, allies);
-        }
-      }
-      return true;
+    // Halt: collide but do not move here. Shooting still runs; marchSpeed is 0.
+    if (this.order === "halt") {
+      return false;
     }
-
-    // Friendly only behind: hold. They must switch or stop.
+    const along = this.alongSigned(other);
     if (along < 0) {
       return true;
     }
-
-    // Dead tie after pass-through: prefer a free row, else lower id eases back.
-    const open = this.openSublane(allies);
-    if (open !== null) {
-      const before = this.sublane;
-      this.enterSublane(open, enemies);
-      if (this.sublane !== before || this.strafing) {
-        this.strafe(dt, enemies, allies);
-        return true;
-      }
+    if (along === 0) {
+      this.easeBack(dt, allies, enemies);
+      return true;
     }
-    if (this.id < other.id) {
-      const scale = this.ringSpeedScale() * this.shotSlowScale();
-      const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
-      const delta = (speed * dt) / this.pathLength;
-      const nextProgress = Math.max(0, Math.min(1, this.progress - delta));
-      if (nextProgress !== this.progress) {
-        const next = Path.pointAt(this.points, nextProgress);
-        if (!this.overlapsEnemyAt(next.x, next.y, enemies)) {
-          this.progress = nextProgress;
-          this.syncPosition();
-        }
-      }
+    return false;
+  }
+
+  /**
+   * After ending a pass-through while stacked: ease toward the closest
+   * overlapping collidable by station (forward if they are ahead, back
+   * if they are behind). Once a direction is chosen, keep easing that
+   * way until clear of every collidable — avoids thrashing when
+   * sandwiched. True while still peeling so the unit must not act on
+   * its order yet.
+   */
+  peelAfterCollisionEnable(dt, allies, enemies) {
+    if (!this.peelingFromPassThrough) {
+      return false;
+    }
+    const other = this.collidingAlly(allies);
+    if (!other) {
+      this.peelingFromPassThrough = false;
+      this.peelDir = 0;
+      return false;
+    }
+    if (this.peelDir === 0) {
+      const along = this.alongSigned(other);
+      // Toward the closer unit: ahead → forward, behind → back, tie → back.
+      this.peelDir = along > 0 ? 1 : -1;
+    }
+    this.easeAlong(dt, allies, enemies, this.peelDir, true);
+    if (!this.collidingAlly(allies)) {
+      this.peelingFromPassThrough = false;
+      this.peelDir = 0;
+      return false;
     }
     return true;
   }
@@ -1784,45 +1832,257 @@ class Unit {
     return this.isBlockedToward(ally, 1);
   }
 
+  /** True when a collidable ally in this sublane sits inside the line window. */
+  sublaneHasCollidableInLine(sublane, allies) {
+    return Boolean(this.inLineCollidableInSublane(sublane, allies));
+  }
+
+  /** True when a collidable ally in this sublane sits inside the block gap. */
+  sublaneHasCollidableInBlockGap(sublane, allies) {
+    return Boolean(this.blockGapCollidableInSublane(sublane, allies));
+  }
+
   /**
-   * True if a friendly already occupies this row near our station, or is
-   * currently sliding into that same stretch of the sublane.
+   * Collidable ally in sublane inside the line window that we are furthest
+   * behind (largest positive along), or the closest in-line if none are ahead.
    */
-  sublaneOccupied(sublane, allies) {
+  inLineCollidableInSublane(sublane, allies) {
+    return this.nearestCollidableInSublane(sublane, allies, this.stationSlack("line"));
+  }
+
+  /** Closest collidable in sublane within the block gap of our station. */
+  blockGapCollidableInSublane(sublane, allies) {
+    return this.nearestCollidableInSublane(sublane, allies, this.stationSlack("block"));
+  }
+
+  /**
+   * Among collidables in sublane within slack of our station, the one with
+   * the largest along (furthest ahead / least behind).
+   */
+  nearestCollidableInSublane(sublane, allies, slack) {
+    let best = null;
+    let bestAlong = -Infinity;
     for (let i = 0; i < allies.length; i += 1) {
       const ally = allies[i];
       if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
         continue;
       }
-      if (ally.sublane !== sublane) {
+      if (ally.sublane !== sublane || !this.blocksAlly(ally)) {
         continue;
       }
-      if (!this.blocksAlly(ally)) {
+      if (Math.abs(ally.station() - this.station()) >= slack) {
         continue;
       }
-      if (Math.abs(ally.station() - this.station()) < this.stationSlack("block")) {
-        return true;
+      const along = this.alongSigned(ally);
+      if (along > bestAlong) {
+        bestAlong = along;
+        best = ally;
       }
     }
-    return false;
+    return best;
   }
 
-  /** Nearest open row, or null when every sublane is stacked. */
-  openSublane(allies) {
-    const count = Path.sublaneCount(this.lane);
+  /**
+   * Next collidable ahead in this sublane (along > 0), or null.
+   * Used to score how open a row is beyond the immediate station.
+   */
+  nextCollidableAhead(sublane, allies) {
     let best = null;
-    let bestDist = Infinity;
-    for (let s = 0; s < count; s += 1) {
-      if (s === this.sublane || this.sublaneOccupied(s, allies)) {
+    let bestAlong = Infinity;
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
         continue;
       }
-      const d = Math.abs(s - this.sublane);
-      if (d < bestDist) {
-        bestDist = d;
+      if (ally.sublane !== sublane || !this.blocksAlly(ally)) {
+        continue;
+      }
+      const along = this.alongSigned(ally);
+      if (along <= 0) {
+        continue;
+      }
+      if (along < bestAlong) {
+        bestAlong = along;
+        best = ally;
+      }
+    }
+    return best ? { ally: best, along: bestAlong } : null;
+  }
+
+  /**
+   * True if a friendly already occupies this row near our station (block
+   * gap). Used for dense same-station checks such as parallel enemy slides.
+   */
+  sublaneOccupied(sublane, allies) {
+    return this.sublaneHasCollidableInBlockGap(sublane, allies);
+  }
+
+  /**
+   * Best sublane to move around a line: any other row with no blockGap
+   * collidable at our station, scored by how far ahead the next blocker
+   * is (empty ahead wins). Closer rows win ties. Null if every row is
+   * stacked on us.
+   */
+  pickBestSwitchSublane(allies) {
+    const count = Path.sublaneCount(this.lane);
+    let best = null;
+    let bestAlong = -Infinity;
+    let bestDist = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      if (s === this.sublane) {
+        continue;
+      }
+      if (this.sublaneHasCollidableInBlockGap(s, allies)) {
+        continue;
+      }
+      const ahead = this.nextCollidableAhead(s, allies);
+      const along = ahead ? ahead.along : Infinity;
+      const dist = Math.abs(s - this.sublane);
+      if (along > bestAlong || (along === bestAlong && dist < bestDist)) {
+        bestAlong = along;
+        bestDist = dist;
         best = s;
       }
     }
     return best;
+  }
+
+  /**
+   * When every row is stacked at our station, pick an adjacent whose
+   * blockGap neighbor we are furthest behind so easing back can open it.
+   */
+  pickEaseAdjacent(allies) {
+    const count = Path.sublaneCount(this.lane);
+    const adj = [];
+    if (this.sublane - 1 >= 0) adj.push(this.sublane - 1);
+    if (this.sublane + 1 < count) adj.push(this.sublane + 1);
+    let best = null;
+    let bestAlong = -Infinity;
+    for (let i = 0; i < adj.length; i += 1) {
+      const blocker = this.blockGapCollidableInSublane(adj[i], allies);
+      if (!blocker) {
+        continue;
+      }
+      const along = this.alongSigned(blocker);
+      if (along > bestAlong) {
+        bestAlong = along;
+        best = adj[i];
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Ease along the path (dir +1 forward, -1 back). Stops short of enemy
+   * bodies. Unless ignoreFriendlies, also stops for friendlies in that
+   * direction. Uses walk speed even while halted. True if it moved.
+   */
+  easeAlong(dt, allies, enemies, dir, ignoreFriendlies) {
+    const sign = dir < 0 ? -1 : 1;
+    if (!ignoreFriendlies) {
+      for (let i = 0; i < allies.length; i += 1) {
+        if (this.isBlockedToward(allies[i], sign)) {
+          return false;
+        }
+      }
+    }
+    const scale = this.ringSpeedScale() * this.shotSlowScale();
+    const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
+    const delta = (speed * dt) / this.pathLength;
+    const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    if (nextProgress === this.progress) {
+      return false;
+    }
+    const next = Path.pointAt(this.points, nextProgress);
+    if (this.overlapsEnemyAt(next.x, next.y, enemies)) {
+      return false;
+    }
+    this.progress = nextProgress;
+    this.syncPosition();
+    return true;
+  }
+
+  /** Ease backward along the path. Stops short of friendlies behind and enemies. */
+  easeBack(dt, allies, enemies) {
+    return this.easeAlong(dt, allies, enemies, -1, false);
+  }
+
+  /** Ease forward along the path. Stops short of friendlies ahead and enemies. */
+  easeForward(dt, allies, enemies) {
+    return this.easeAlong(dt, allies, enemies, 1, false);
+  }
+
+  /**
+   * Enter next (one adjacent step), or ease until next is clear of
+   * blockGap collidables. If this unit is ahead of the blocker, ease
+   * forward; otherwise ease back. Commits this.switch so we keep
+   * pursuing the goal instead of thrashing. Never eases when next is
+   * already clear.
+   */
+  tryEnterOrEaseAdjacent(dt, allies, enemies, next, commitGoal) {
+    if (next === this.sublane) {
+      return false;
+    }
+    if (commitGoal != null && this.switch !== commitGoal) {
+      this.switch = commitGoal;
+      this.switchEscape = Math.abs(commitGoal - this.sublane) > 1;
+    }
+    if (this.canEnterSublane(next, allies, enemies)) {
+      this.enterSublane(next, enemies);
+      this.strafe(dt, enemies, allies);
+      return true;
+    }
+    const blocker = this.blockGapCollidableInSublane(next, allies);
+    if (blocker) {
+      // Ahead of the blocker → ease forward; else ease back.
+      const dir = this.alongSigned(blocker) < 0 ? 1 : -1;
+      return this.easeAlong(dt, allies, enemies, dir, false);
+    }
+    return false;
+  }
+
+  /**
+   * True when a committed auto-switch goal is still a valid gap (no
+   * blockGap collidable at our station on that row).
+   */
+  switchGoalStillValid(goal, allies) {
+    if (goal == null || goal === this.sublane) {
+      return false;
+    }
+    const count = Path.sublaneCount(this.lane);
+    if (goal < 0 || goal >= count) {
+      return false;
+    }
+    return !this.sublaneHasCollidableInBlockGap(goal, allies);
+  }
+
+  /**
+   * Step one sublane toward prefer / a committed switch, or pick the best
+   * open row around a line (look-ahead). Stick to the committed goal so
+   * units do not bounce between rows.
+   */
+  pursueSublaneChange(dt, allies, enemies, prefer) {
+    let goal = prefer;
+    if (goal === undefined || goal === null) {
+      if (this.switch != null && this.switch !== this.sublane
+        && this.switchGoalStillValid(this.switch, allies)) {
+        goal = this.switch;
+      } else {
+        goal = this.pickBestSwitchSublane(allies);
+      }
+    }
+
+    if (goal != null && goal !== this.sublane) {
+      const next = this.sublane + Math.sign(goal - this.sublane);
+      return this.tryEnterOrEaseAdjacent(dt, allies, enemies, next, goal);
+    }
+
+    // Every row stacked at our station: ease back to open an adjacent gap.
+    const easeTarget = this.pickEaseAdjacent(allies);
+    if (easeTarget == null) {
+      return false;
+    }
+    return this.tryEnterOrEaseAdjacent(dt, allies, enemies, easeTarget, easeTarget);
   }
 
   /**
@@ -2034,6 +2294,25 @@ class Unit {
     this.tickFatigue(dt, enemies);
     this.releaseHeldOrder(enemies);
 
+    // Ended pass-through (fall back/retreat, cavalry charge, skirmish
+    // advance, …) while stacked: peel before acting on the new order.
+    if (!this.peelingFromPassThrough && this.gainedCollisionWhileOverlapping(allies)) {
+      this.peelingFromPassThrough = true;
+      this.peelDir = 0;
+    }
+    // Back in a full pass-through: no need to peel.
+    if (this.order === "fallback" || this.order === "retreat"
+      || (this.isCavalry() && this.order === "charge")) {
+      this.peelingFromPassThrough = false;
+      this.peelDir = 0;
+    }
+    this.prevCollisionOrder = this.order;
+
+    // Gained collision while stacked: ease back until clear before any order.
+    if (this.peelAfterCollisionEnable(dt, allies, enemies)) {
+      return;
+    }
+
     if (this.broken) {
       if (this.strafing && this.strafe(dt, enemies, allies)) {
         return;
@@ -2059,7 +2338,7 @@ class Unit {
       return;
     }
 
-    // Stacked on a colliding friendly: peel apart, no fire or melee.
+    // Stacked on a colliding friendly: peel or hold — no fire or melee.
     if (this.resolveAllyCollision(dt, allies, enemies)) {
       return;
     }
@@ -2070,6 +2349,7 @@ class Unit {
     const charging = this.order === "charge";
     const fallingBack = this.order === "fallback";
     const retreating = this.order === "retreat";
+    const halted = this.order === "halt";
 
     if (retreating) {
       this.marchAlong(dt, allies, enemies, -1);
@@ -2125,6 +2405,17 @@ class Unit {
         || this.reformSquaredInRange(allies, enemies, enemySide)) {
         return;
       }
+      let reformBlocked = false;
+      for (let i = 0; i < allies.length; i += 1) {
+        if (this.isBlockedBy(allies[i])) {
+          reformBlocked = true;
+          break;
+        }
+      }
+      if (reformBlocked) {
+        this.pursueSublaneChange(dt, allies, enemies);
+        return;
+      }
       const reformSpeed = this.marchSpeed(allies);
       const reformProgress = Math.min(1, this.progress + (reformSpeed * dt) / this.pathLength);
       const reformNext = Path.pointAt(this.points, reformProgress);
@@ -2148,10 +2439,14 @@ class Unit {
       return;
     }
 
+    if (halted) {
+      return;
+    }
+
     const sideEnemy = this.nearestParallel(enemies);
     if (sideEnemy) {
       if (sideEnemy.sublane !== this.sublane
-        && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
+        && !this.sublaneHasCollidableInLine(sideEnemy.sublane, allies)) {
         this.enterSublane(sideEnemy.sublane, enemies);
       }
       this.strafe(dt, enemies, allies);
@@ -2166,11 +2461,7 @@ class Unit {
       }
     }
     if (blocked) {
-      const open = this.openSublane(allies);
-      if (open !== null) {
-        this.enterSublane(open, enemies);
-        this.strafe(dt, enemies, allies);
-      }
+      this.pursueSublaneChange(dt, allies, enemies);
       return;
     }
 
@@ -2201,8 +2492,8 @@ class Troop extends Unit {
 }
 
 /**
- * Light infantry. Long range, light hits, and they walk through other types.
- * Same click orders as a troop.
+ * Light infantry. Long range, light hits. While advancing they walk
+ * through non-skirmish-like friendlies. Same click orders as a troop.
  */
 class Skirmisher extends Unit {
   constructor(id, side, lane, sublane) {

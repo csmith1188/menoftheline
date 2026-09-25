@@ -1001,7 +1001,8 @@ const pages = [
     title: "Orders",
     artHeight: 320,
     blocks: [
-      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone, then swipe it up or down onto a row. Swipe a line up or down to shift every row together." },
+      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone, then swipe it up or down onto a row. Swipe a line up or down and each unit switches one row that way. Broken and retreating units cannot switch." },
+      { kind: "p", text: "Units in melee can be given orders, but those orders wait until the fight breaks. Reform and fall back start at once. They can leave by falling back, or by switching to a row that is not next to theirs. A fall back that leaves the fight becomes a retreat, and the unit is not broken. A charging unit still does charge damage while it is in melee, and swiping back then falls back instead of advancing." },
       {
         kind: "ul",
         items: [
@@ -1029,7 +1030,7 @@ const pages = [
     title: "Fighting",
     artHeight: 250,
     blocks: [
-      { kind: "p", text: "Units open fire partway out, or sooner if a lined mate already has. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
+      { kind: "p", text: "Units shoot only inside engagement range, or at full range while halted. A lined mate who has opened fire lets the rest of the line shoot at that same range. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
       { kind: "p", text: "Charge and flank raise melee damage. Shots briefly slow advancing or charging units. Halt and reform ignore the slow. Units in melee are not targeted until they leave it." },
     ],
     draw: drawFighting,

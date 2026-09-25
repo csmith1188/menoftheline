@@ -519,11 +519,12 @@ export function createScene(canvas) {
       : troop.side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
     mesh.userData.mat.color.set(troop.broken ? "#8d97a3" : color);
     mesh.userData.plate.visible = Boolean(troop.alternate);
-    const ordered = troop.order === "halt" || troop.order === "reform"
-      || troop.order === "charge" || troop.order === "fallback"
-      || troop.order === "retreat";
+    const shown = troop.givenOrder === undefined ? troop.order : troop.givenOrder;
+    const ordered = shown === "halt" || shown === "reform"
+      || shown === "charge" || shown === "fallback"
+      || shown === "retreat";
     const shellScale = ordered ? 1.28 : 1.12;
-    const stroke = orderColor(troop.order);
+    const stroke = orderColor(shown);
     const shells = mesh.userData.outlines;
     for (let i = 0; i < shells.length; i += 1) {
       shells[i].material.color.set(stroke);

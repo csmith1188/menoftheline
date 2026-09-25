@@ -644,6 +644,9 @@ export const boardStateMethods = {
       this.inspectedId = troop.id;
       this.inspectedTroop();
     }
+    if (action === "back" && troop && this.enemy) {
+      troop.inMelee = inMeleeContact(troop, this.enemy.troops);
+    }
     const shown = orderAnnouncement(troop, action);
     if (!shown) return;
     this.orderCallout = {
@@ -938,13 +941,13 @@ function orderAnnouncement(troop, action) {
     return { text: "Charge", color: CONFIG.colors.charge };
   }
   if (action === "fallback" || action === "back") {
-    if (action === "back" && troop && troop.order === "charge") {
+    if (action === "back" && troop && troop.order === "charge" && !troop.inMelee) {
       return { text: "Advance", color: CONFIG.colors.text };
     }
     return { text: "Fallback", color: CONFIG.colors.fallback };
   }
-  if (action === "shift") return { text: "Shift", color: CONFIG.colors.laneHover };
-  if (action === "lane") return { text: "Lane", color: CONFIG.colors.laneHover };
+  if (action === "switch" || action === "shift") return { text: "Switch", color: CONFIG.colors.laneHover };
+  if (action === "lane") return { text: "Switch", color: CONFIG.colors.laneHover };
   return null;
 }
 

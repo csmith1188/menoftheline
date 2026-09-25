@@ -332,11 +332,11 @@ const pointerMethods = {
     if (shifting) {
       if (alone && intent.kind === "lane") {
         this.selectTroop(troop, true);
-        this.announceOrder(troop, "lane");
+        this.announceOrder(troop, "switch");
         this.onCommand({
           type: "order",
           troopId: troop.id,
-          action: "lane",
+          action: "switch",
           sublane: intent.row,
           solo: true,
         });
@@ -346,11 +346,11 @@ const pointerMethods = {
       const dir = intent.dir || this.nudgeDir(troop, start, point);
       if (dir === 0) return;
       this.selectTroop(troop, false);
-      this.announceOrder(troop, "shift");
+      this.announceOrder(troop, "switch");
       this.onCommand({
         type: "order",
         troopId: troop.id,
-        action: "shift",
+        action: "switch",
         dir,
         solo: false,
       });

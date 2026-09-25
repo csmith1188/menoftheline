@@ -58,7 +58,7 @@ export class BotController {
     if (troop.broken || troop.order === next || this.locked(sim, troop)) return false;
     troop.order = next;
     troop.reformNeedsAlign = next === "reform";
-    troop.wantedSublane = null;
+    troop.switch = null;
     this.locks.set(troop.id, sim.elapsed + CONFIG.botOrderCooldown);
     return true;
   }

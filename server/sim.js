@@ -184,7 +184,11 @@ class Unit {
     this.broken = false;
     this.reformNeedsAlign = false;
     this.shotSlow = 0;
-    this.wantedSublane = null;
+    this.switch = null;
+    this.switchEscape = false;
+    this.orderHeld = false;
+    this.heldOrder = null;
+    this.fallbackLeavesMelee = false;
     this.applyPath();
     const spawn = Path.pointAt(this.points, 0);
     this.x = spawn.x;
@@ -257,26 +261,55 @@ class Unit {
     return [null, "halt", "reform"];
   }
 
-  /** Next order from a click. Anything outside the cycle (charge, fallback) returns to halt. */
+  /** Next order from a click. A held melee order counts, so the cycle can keep moving. */
   nextClickOrder() {
-    if (this.order === "halt") return "reform";
-    if (this.order === "reform") return null;
+    const current = this.orderHeld ? this.heldOrder : this.order;
+    if (current === "halt") return "reform";
+    if (current === "reform") return null;
     return "halt";
   }
 
+  /**
+   * Accept an order. Reform and fallback start immediately. Any other
+   * order given in melee is held until this unit is out of contact.
+   */
+  commitOrder(next, enemies) {
+    if (this.broken) return;
+    const immediate = next === "reform" || next === "fallback";
+    if (!immediate && enemies && this.isInMelee(enemies)) {
+      this.heldOrder = next;
+      this.orderHeld = true;
+      return;
+    }
+    this.orderHeld = false;
+    this.heldOrder = null;
+    this.order = next;
+    this.reformNeedsAlign = next === "reform";
+    if (next !== "reform") this.priorOrder = null;
+    if (next === "retreat") {
+      this.switch = null;
+      this.switchEscape = false;
+    }
+    this.fallbackLeavesMelee = next === "fallback" && Boolean(enemies && this.isInMelee(enemies));
+  }
+
   /** Apply an order to this troop's order group. */
-  applyGroupOrder(allies, next, solo) {
+  applyGroupOrder(allies, next, solo, enemies) {
     const group = this.orderGroup(allies, solo);
     for (let i = 0; i < group.length; i += 1) {
-      if (group[i].broken) continue;
-      group[i].order = next;
-      group[i].reformNeedsAlign = next === "reform";
-      if (next !== "reform") group[i].priorOrder = null;
-      if (next === "charge" || next === "fallback" || next === "retreat"
-          || next === null || next === "halt") {
-        group[i].wantedSublane = null;
-      }
+      group[i].commitOrder(next, enemies);
     }
+  }
+
+  /** Start a held order once this unit is no longer in melee. */
+  releaseHeldOrder(enemies) {
+    if (!this.orderHeld || this.isInMelee(enemies)) return;
+    const next = this.heldOrder;
+    this.orderHeld = false;
+    this.heldOrder = null;
+    this.order = next;
+    this.reformNeedsAlign = next === "reform";
+    if (next !== "reform") this.priorOrder = null;
   }
 
   /**
@@ -284,16 +317,16 @@ class Unit {
    * Locked while the line is in melee or broken.
    */
   issueReform(allies, enemies, solo) {
-    if (this.broken || this.lineInMelee(allies, enemies)) {
+    if (this.broken) {
       return;
     }
     if (this.order === "reform") return;
     const group = this.orderGroup(allies, solo);
     for (let i = 0; i < group.length; i += 1) {
-      if (group[i].broken) continue;
-      group[i].priorOrder = group[i].order;
-      group[i].order = "reform";
-      group[i].reformNeedsAlign = true;
+      if (group[i].broken || group[i].order === "reform") continue;
+      group[i].priorOrder = group[i].orderHeld ? group[i].heldOrder : group[i].order;
+      group[i].commitOrder("reform", enemies);
+      group[i].priorOrder = group[i].priorOrder;
     }
   }
 
@@ -302,29 +335,27 @@ class Unit {
    * still legal, otherwise advance.
    */
   issueRestore(allies, enemies, solo) {
-    if (this.broken || this.lineInMelee(allies, enemies)) {
+    if (this.broken) {
       return;
     }
     let want = this.priorOrder;
     if (want === "reform") want = null;
     if (want === "charge" && this.lineInMelee(allies, enemies)) want = null;
     if (want !== "halt" && want !== "charge" && want !== "fallback"
-        && want !== "retreat" && want !== null) {
+      && want !== "retreat" && want !== null) {
       want = null;
     }
-    this.applyGroupOrder(allies, want, solo);
+    this.applyGroupOrder(allies, want, solo, enemies);
   }
 
   /**
    * Left-click: halt, or reform if already halted, or resume a normal
-   * advance if reforming. Locked while the line is in melee or broken.
+   * advance if reforming. In melee the order is held unless it is reform.
    */
   issueOrder(allies, enemies, solo) {
-    if (this.broken || this.lineInMelee(allies, enemies)) {
-      return;
-    }
+    if (this.broken) return;
     const next = this.nextClickOrder();
-    this.applyGroupOrder(allies, next, solo);
+    this.applyGroupOrder(allies, next, solo, enemies);
   }
 
   /**
@@ -337,8 +368,7 @@ class Unit {
     const next = Math.min(ladder.length - 1, this.speedIndex() + 1);
     const order = ladder[next];
     if (order === this.order) return;
-    if (order === "charge" && this.lineInMelee(allies, enemies)) return;
-    this.applyGroupOrder(allies, order, solo);
+    this.applyGroupOrder(allies, order, solo, enemies);
   }
 
   /**
@@ -353,32 +383,29 @@ class Unit {
     const next = Math.max(0, this.speedIndex() - 1);
     const order = ladder[next];
     if (order === this.order) return;
-    this.applyGroupOrder(allies, order, solo);
+    this.applyGroupOrder(allies, order, solo, enemies);
   }
 
   /**
    * Drag forward: charge (seek melee, no shooting until contact).
-   * Cannons push forward without firing. A second drag keeps charging.
-   * Locked while in melee or broken.
+   * A charge given in melee waits until contact ends.
    */
   issueCharge(allies, enemies, solo) {
-    if (this.broken || this.lineInMelee(allies, enemies) || this.order === "charge") {
+    if (this.broken || this.order === "charge") {
       return;
     }
-    this.applyGroupOrder(allies, "charge", solo);
+    this.applyGroupOrder(allies, "charge", solo, enemies);
   }
 
   /**
-   * Drag back: walk backward at reform speed. Allowed in melee so a
-   * line can disengage. A second drag keeps falling back. Broken units
-   * already fall back and ignore further orders. Players cannot order
-   * a retreat; only a break does that.
+   * Fall back at reform speed. Starts even in melee. A fallback that
+   * then leaves melee becomes a retreat, without breaking the unit.
    */
-  issueFallback(allies, solo) {
+  issueFallback(allies, enemies, solo) {
     if (this.broken || this.order === "fallback") {
       return;
     }
-    this.applyGroupOrder(allies, "fallback", solo);
+    this.applyGroupOrder(allies, "fallback", solo, enemies);
   }
 
   /**
@@ -386,41 +413,75 @@ class Unit {
    */
   issueForward(allies, enemies, solo) {
     if (this.broken) return;
-    if (this.order === "halt") {
-      this.applyGroupOrder(allies, null, solo);
+    const current = this.orderHeld ? this.heldOrder : this.order;
+    if (current === "halt") {
+      this.applyGroupOrder(allies, null, solo, enemies);
       return;
     }
     this.issueCharge(allies, enemies, solo);
   }
 
   /**
-   * Swipe back: fall back, or resume a normal advance when charging.
+   * Swipe back: fall back, or advance when charging outside melee.
+   * A charging unit that is in melee falls back instead.
    */
   issueBack(allies, enemies, solo) {
     if (this.broken) return;
-    if (this.order === "charge") {
-      this.applyGroupOrder(allies, null, solo);
-      return;
+    const group = this.orderGroup(allies, solo);
+    for (let i = 0; i < group.length; i += 1) {
+      const member = group[i];
+      if (member.broken) continue;
+      const current = member.orderHeld ? member.heldOrder : member.order;
+      const inMelee = member.isInMelee(enemies);
+      if (current === "charge" && inMelee) {
+        member.commitOrder("fallback", enemies);
+      } else if (current === "charge") {
+        member.commitOrder(null, enemies);
+      } else {
+        member.commitOrder("fallback", enemies);
+      }
     }
-    this.issueFallback(allies, solo);
+  }
+
+  /** True when this body may not be given a sublane switch. */
+  switchBlocked() {
+    return this.broken || this.order === "retreat";
   }
 
   /**
-   * Shift every member of this line one sublane in dir (+1 or -1).
-   * The whole line stays put when anyone would leave the lane.
+   * Hidden switch: slide this unit to an exact sublane. Allowed in melee.
+   * Broken and retreating units ignore it.
    */
-  issueLineShift(dir, allies, enemies) {
-    if (this.broken || dir === 0) return;
-    if (allies && enemies && this.lineInMelee(allies, enemies)) return;
+  issueSwitch(sublane) {
+    if (this.switchBlocked()) return;
+    const count = Path.sublaneCount(this.lane);
+    if (!Number.isInteger(sublane) || sublane < 0 || sublane >= count || sublane === this.sublane) {
+      this.switch = null;
+      return;
+    }
+    this.switch = sublane;
+    this.switchEscape = Math.abs(sublane - this.sublane) > 1;
+  }
+
+  /**
+   * Hidden switch for a line: each member steps one sublane in dir.
+   * The line stays put when any member who can switch would leave the lane.
+   */
+  issueLineSwitch(dir, allies) {
+    if (this.switchBlocked() || (dir !== 1 && dir !== -1)) return;
     const group = this.lineGroup(allies);
     const count = Path.sublaneCount(this.lane);
+    const movers = [];
     for (let i = 0; i < group.length; i += 1) {
-      const next = group[i].sublane + dir;
+      const member = group[i];
+      if (member.switchBlocked()) continue;
+      const next = member.sublane + dir;
       if (next < 0 || next >= count) return;
+      movers.push(member);
     }
-    for (let i = 0; i < group.length; i += 1) {
-      if (group[i].broken) continue;
-      group[i].wantedSublane = group[i].sublane + dir;
+    for (let i = 0; i < movers.length; i += 1) {
+      movers[i].switch = movers[i].sublane + dir;
+      movers[i].switchEscape = false;
     }
   }
 
@@ -747,12 +808,13 @@ class Unit {
    */
   tryJoinAhead(allies) {
     if (this.broken || this.order === "charge" || this.order === "fallback"
-        || this.order === "retreat") {
+      || this.order === "retreat" || this.isInMelee(this.enemyTroops())) {
       return;
     }
+    const foes = this.enemyTroops();
     for (let i = 0; i < allies.length; i += 1) {
       const ally = allies[i];
-      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane || ally.isInMelee(foes)) {
         continue;
       }
       if (!this.adjacentRow(ally)) {
@@ -791,7 +853,7 @@ class Unit {
       const group = this.lineGroup(allies);
       for (let g = 0; g < group.length; g += 1) {
         const member = group[g];
-        if (member.broken) continue;
+        if (member.broken || member.isInMelee(foes)) continue;
         if (member !== this && member.rankIsFull(allies, ally)) {
           continue;
         }
@@ -852,7 +914,7 @@ class Unit {
    */
   takeReformFromBehind(allies) {
     if (this.broken || this.order === "charge" || this.order === "fallback"
-        || this.order === "retreat" || this.order === "reform") {
+      || this.order === "retreat" || this.order === "reform") {
       return;
     }
     const beside = this.stationSlack("parallel");
@@ -969,13 +1031,13 @@ class Unit {
    */
   lineIsHolding(allies, enemies, enemySide) {
     if (this.order === "charge" || this.order === "fallback" || this.order === "retreat"
-        || this.order === "reform") {
+      || this.order === "reform") {
       return false;
     }
     const line = this.lineGroup(allies);
     for (let i = 0; i < line.length; i += 1) {
       const mate = line[i];
-      if (mate === this || !this.isParallelTo(mate)) {
+      if (mate === this || mate.isInMelee(enemies) || !this.isParallelTo(mate)) {
         continue;
       }
       if (mate.isOpeningFire(enemies, allies, enemySide)) {
@@ -1033,7 +1095,8 @@ class Unit {
     if (this.order !== "reform") {
       return false;
     }
-    const formation = this.reformFormation(allies);
+    const foes = this.enemyTroops();
+    const formation = this.reformFormation(allies).filter((unit) => !unit.isInMelee(foes));
     if (formation.length < 2) {
       return false;
     }
@@ -1054,7 +1117,10 @@ class Unit {
     if (this.order !== "reform") {
       return false;
     }
-    const formation = this.reformFormation(allies);
+    const formation = this.reformFormation(allies).filter((unit) => !unit.isInMelee(enemies));
+    if (formation.length < 2) {
+      return false;
+    }
     const front = this.sortRearToFront(formation)[formation.length - 1];
     for (let i = 0; i < formation.length; i += 1) {
       if (!formation[i].isParallelTo(front)) {
@@ -1202,7 +1268,11 @@ class Unit {
     this.order = this.fatigue >= this.maxFatigue ? "fallback" : "retreat";
     this.priorOrder = null;
     this.reformNeedsAlign = false;
-    this.wantedSublane = null;
+    this.switch = null;
+    this.switchEscape = false;
+    this.orderHeld = false;
+    this.heldOrder = null;
+    this.fallbackLeavesMelee = false;
   }
 
   /**
@@ -1255,15 +1325,16 @@ class Unit {
     return distance(this, pos) <= this.meleeReach;
   }
 
-  /** Distance at which this troop may open fire on its own. */
+  /** Distance at which this troop may shoot. Halt uses full range. */
   openFireRange() {
+    if (this.order === "halt") return this.attackRange();
     return this.attackRange() * this.engageRange;
   }
 
   /**
-   * True when this troop has already committed to shooting: half-range,
-   * melee contact, or standing on the enemy keep. Chargers only count
-   * once they are in contact.
+   * True when this troop has already committed to shooting: engagement
+   * range, full range while halted, melee contact, or the enemy keep.
+   * Chargers only count once they are in contact.
    */
   isOpeningFire(enemies, allies, enemySide) {
     if (this.fightsMelee && this.collidingEnemy(enemies)) {
@@ -1277,13 +1348,14 @@ class Unit {
 
   /**
    * True when this troop may shoot: it opened on its own, or it is in
-   * line with someone who did and still has a full-range target.
+   * line with someone who did and still has a target inside its own
+   * shooting range. Only a halt reaches past engagement range.
    */
   mayShoot(allies, enemies, enemySide) {
     if (this.isOpeningFire(enemies, allies, enemySide)) {
       return true;
     }
-    if (!this.nearestTarget(enemies, undefined, allies, enemySide)) {
+    if (!this.nearestTarget(enemies, this.openFireRange(), allies, enemySide)) {
       return false;
     }
     const line = this.lineGroup(allies);
@@ -1383,40 +1455,34 @@ class Unit {
   }
 
   /** Remember a row to slide into; waits if that stretch is blocked. */
-  issueLaneChange(sublane, allies, enemies) {
-    if (this.broken) {
-      return;
-    }
-    if (allies && enemies && this.lineInMelee(allies, enemies)) {
-      return;
-    }
-    const count = Path.sublaneCount(this.lane);
-    if (sublane < 0 || sublane >= count || sublane === this.sublane) {
-      this.wantedSublane = null;
-      return;
-    }
-    this.wantedSublane = sublane;
+  issueLaneChange(sublane) {
+    this.issueSwitch(sublane);
   }
 
   /**
-   * Step toward wantedSublane. Returns "stepping", "waiting" if blocked,
-   * or "none" when there is no pending row change.
+   * Step toward a hidden switch. Returns "stepping", "waiting" if blocked,
+   * or "none" when there is no pending row change. Melee does not cancel it.
    */
   followLaneOrder(dt, allies, enemies) {
-    if (this.wantedSublane === null) {
+    if (this.switch == null) {
       return "none";
     }
-    if (this.lineInMelee(allies, enemies)) {
-      this.wantedSublane = null;
+    if (this.switchBlocked()) {
+      this.switch = null;
+      this.switchEscape = false;
       return "none";
     }
-    if (this.wantedSublane === this.sublane) {
+    if (this.isInMelee(enemies) && !this.switchEscape) {
+      return "none";
+    }
+    if (this.switch === this.sublane) {
       if (!this.strafing) {
-        this.wantedSublane = null;
+        this.switch = null;
+        this.switchEscape = false;
       }
       return "none";
     }
-    if (this.stepTowardSublane(this.wantedSublane, allies, enemies)) {
+    if (this.stepTowardSublane(this.switch, allies, enemies)) {
       this.strafe(dt, enemies, allies);
       return "stepping";
     }
@@ -1562,7 +1628,7 @@ class Unit {
     }
     const past = along < -slack;
     if ((this.withinLine(prey) || past)
-        && this.stepTowardSublane(prey.sublane, allies, enemies)) {
+      && this.stepTowardSublane(prey.sublane, allies, enemies)) {
       this.strafe(dt, enemies, allies);
       return true;
     }
@@ -1580,11 +1646,11 @@ class Unit {
    */
   blocksAlly(ally) {
     if (this.order === "fallback" || ally.order === "fallback"
-        || this.order === "retreat" || ally.order === "retreat") {
+      || this.order === "retreat" || ally.order === "retreat") {
       return false;
     }
     if ((this.type === "dragoon" && this.order === "charge")
-        || (ally.type === "dragoon" && ally.order === "charge")) {
+      || (ally.type === "dragoon" && ally.order === "charge")) {
       return false;
     }
     if (this.type === "officer" || ally.type === "officer") {
@@ -1950,6 +2016,7 @@ class Unit {
     }
 
     this.tickFatigue(dt, enemies);
+    this.releaseHeldOrder(enemies);
 
     if (this.broken) {
       if (this.strafing && this.strafe(dt, enemies, allies)) {
@@ -1965,12 +2032,13 @@ class Unit {
     this.takeReformFromBehind(allies);
     this.tryJoinAhead(allies);
 
-    // A sidestep must finish on the new row before the unit is allowed to halt and fight.
-    if (this.strafing && this.strafe(dt, enemies, allies)) {
+    // In melee a unit holds still, unless it is sliding to a non-adjacent row.
+    const meleeLock = this.isInMelee(enemies) && !this.switchEscape;
+    if (this.strafing && !meleeLock && this.strafe(dt, enemies, allies)) {
       return;
     }
 
-    const laneMove = this.followLaneOrder(dt, allies, enemies);
+    const laneMove = meleeLock ? "none" : this.followLaneOrder(dt, allies, enemies);
     if (laneMove === "stepping") {
       return;
     }
@@ -1981,7 +2049,7 @@ class Unit {
     }
 
     const contact = this.collidingEnemy(enemies);
-    const target = this.nearestTarget(enemies, undefined, allies, enemySide);
+    const target = this.nearestTarget(enemies, this.openFireRange(), allies, enemySide);
     const atKeep = this.progress >= 1;
     const charging = this.order === "charge";
     const fallingBack = this.order === "fallback";
@@ -1993,6 +2061,7 @@ class Unit {
     }
 
     if (fallingBack) {
+      const wasMelee = this.isInMelee(enemies);
       if (contact && this.fightsMelee) {
         if (this.cooldown <= 0) {
           this.fire(contact, allies, projectiles, "melee");
@@ -2003,6 +2072,13 @@ class Unit {
         }
       }
       this.marchAlong(dt, allies, enemies, -1);
+      if (wasMelee && !this.isInMelee(enemies)) {
+        this.order = "retreat";
+        this.broken = false;
+        this.fallbackLeavesMelee = false;
+        this.orderHeld = false;
+        this.heldOrder = null;
+      }
       return;
     }
 
@@ -2030,7 +2106,7 @@ class Unit {
         this.fire(target, allies, projectiles, "shoot");
       }
       if (laneMove === "waiting" || this.reformHold
-          || this.reformSquaredInRange(allies, enemies, enemySide)) {
+        || this.reformSquaredInRange(allies, enemies, enemySide)) {
         return;
       }
       const reformSpeed = this.marchSpeed(allies);
@@ -2059,7 +2135,7 @@ class Unit {
     const sideEnemy = this.nearestParallel(enemies);
     if (sideEnemy) {
       if (sideEnemy.sublane !== this.sublane
-          && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
+        && !this.sublaneOccupied(sideEnemy.sublane, allies)) {
         this.enterSublane(sideEnemy.sublane, enemies);
       }
       this.strafe(dt, enemies, allies);
@@ -2514,8 +2590,8 @@ class Side {
     const portion = share === undefined ? 0.5 : share;
     this.income = Math.round(
       CONFIG.baseIncome
-        + CONFIG.centerIncome * portion
-        + this.bankIncome(),
+      + CONFIG.centerIncome * portion
+      + this.bankIncome(),
     );
   }
 
@@ -2776,18 +2852,24 @@ export class GameSim {
       else if (cmd.action === "speedDown") troop.issueSpeedDown(side.troops, foe.troops, solo);
       else if (cmd.action === "cycle") troop.issueOrder(side.troops, foe.troops, solo);
       else if (cmd.action === "charge") troop.issueCharge(side.troops, foe.troops, solo);
-      else if (cmd.action === "fallback") troop.issueFallback(side.troops, solo);
+      else if (cmd.action === "fallback") troop.issueFallback(side.troops, foe.troops, solo);
       else if (cmd.action === "forward") troop.issueForward(side.troops, foe.troops, solo);
       else if (cmd.action === "back") troop.issueBack(side.troops, foe.troops, solo);
       else if (cmd.action === "shift") {
         const dir = Number(cmd.dir);
         if (dir !== 1 && dir !== -1) return false;
-        troop.issueLineShift(dir, side.troops, foe.troops);
+        troop.issueLineSwitch(dir, side.troops);
       }
-      else if (cmd.action === "lane") {
-        const sublane = Number(cmd.sublane);
-        if (!Number.isInteger(sublane)) return false;
-        troop.issueLaneChange(sublane, side.troops, foe.troops);
+      else if (cmd.action === "lane" || cmd.action === "switch") {
+        if (cmd.sublane != null && cmd.sublane !== "") {
+          const sublane = Number(cmd.sublane);
+          if (!Number.isInteger(sublane)) return false;
+          troop.issueSwitch(sublane);
+        } else {
+          const dir = Number(cmd.dir);
+          if (dir !== 1 && dir !== -1) return false;
+          troop.issueLineSwitch(dir, side.troops);
+        }
       } else return false;
       return true;
     }

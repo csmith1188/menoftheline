@@ -146,7 +146,7 @@ export const CONFIG = {
    * Max along-centerline error (px) still treated as perfectly parallel
    * on the top lane.
    */
-  parallelEpsilon: 3,
+  parallelEpsilon: 1,
   /**
    * How close along the centerline two top-lane rows must be to share
    * a click order. On the bottom this is the same gap as an angle about

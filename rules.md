@@ -109,14 +109,18 @@ using the same clear-vs-ease rules for the next step only.
 
 
 # Issuing orders
-
 -	orders are issued to the touched unit and all units in line with it
-
+-	long press a unit: select only that unit (pull it out of the line)
+-	while that unit stays selected, consecutive clicks and swipes apply
+	only to it
+-	a solo-ordered unit keeps its order and does not take halt/reform/advance
+	from adjacent line-mates until it receives a line order again
+-	charging units never pass charge to units they come into line with
+	(and do not absorb others' orders by lining up). Charge only spreads
+	when the player issues charge to a selected unit/line.
+-	click another unit to select that unit’s line (this leaves solo mode)
 -	click/touch: halt -> reform -> advance
-
 -	swipe left: fallback, or advance if charging
-
 -	swipe right: charge, or advance if halted
-
 -	swipe up/down: switch to the row you stop swiping on
 

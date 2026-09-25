@@ -1,4 +1,4 @@
-import { CONFIG } from "../shared/config.js";
+import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
 import { UNIT_STATS, unitStats, UNIT_VARIANTS } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
@@ -45,7 +45,7 @@ class Projectile {
     const step = this.speed * dt;
     if (d <= step + this.size) {
       if (this.target.capitalHP !== undefined) {
-        const hit = this.target.mitigate(this.damage);
+        const hit = truncateDamage(this.target.mitigate(this.damage));
         this.target.capitalHP -= hit;
         const keep = this.target.capital;
         this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
@@ -70,7 +70,7 @@ class Projectile {
     if (!(this.splash > 0) || !this.target.side) {
       return;
     }
-    const splash = Math.round(this.damage * this.splash);
+    const splash = this.damage * this.splash;
     if (splash <= 0) {
       return;
     }
@@ -195,6 +195,11 @@ class Unit {
     this.peelingFromPassThrough = false;
     /** Committed peel direction (+1 forward / -1 back) until clear. */
     this.peelDir = 0;
+    /**
+     * When true, this unit keeps a solo-issued order and does not absorb
+     * halt/reform/advance from adjacent line-mates.
+     */
+    this.ignoreLineOrders = false;
     this.applyPath();
     const spawn = Path.pointAt(this.points, 0);
     this.x = spawn.x;
@@ -302,8 +307,10 @@ class Unit {
   /** Apply an order to this troop's order group. */
   applyGroupOrder(allies, next, solo, enemies) {
     const group = this.orderGroup(allies, solo);
+    const lock = Boolean(solo);
     for (let i = 0; i < group.length; i += 1) {
       group[i].commitOrder(next, enemies);
+      group[i].ignoreLineOrders = lock;
     }
   }
 
@@ -328,11 +335,13 @@ class Unit {
     }
     if (this.order === "reform") return;
     const group = this.orderGroup(allies, solo);
+    const lock = Boolean(solo);
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken || group[i].order === "reform") continue;
       group[i].priorOrder = group[i].orderHeld ? group[i].heldOrder : group[i].order;
       group[i].commitOrder("reform", enemies);
       group[i].priorOrder = group[i].priorOrder;
+      group[i].ignoreLineOrders = lock;
     }
   }
 
@@ -434,6 +443,7 @@ class Unit {
   issueBack(allies, enemies, solo) {
     if (this.broken) return;
     const group = this.orderGroup(allies, solo);
+    const lock = Boolean(solo);
     for (let i = 0; i < group.length; i += 1) {
       const member = group[i];
       if (member.broken) continue;
@@ -446,6 +456,7 @@ class Unit {
       } else {
         member.commitOrder("fallback", enemies);
       }
+      member.ignoreLineOrders = lock;
     }
   }
 
@@ -494,11 +505,13 @@ class Unit {
   /** Put this line on reform without cycling through halt. */
   startReform(allies, solo) {
     const group = this.orderGroup(allies, solo);
+    const lock = Boolean(solo);
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken) continue;
       group[i].priorOrder = group[i].order;
       group[i].order = "reform";
       group[i].reformNeedsAlign = true;
+      group[i].ignoreLineOrders = lock;
     }
   }
 
@@ -807,12 +820,15 @@ class Unit {
   /**
    * An advancing troop that becomes perfectly parallel with another
    * absorbs that troop or line's order, if that line still has an open
-   * row. Chargers keep going to flank. They put a line onto charge only
-   * when that line is reforming and still has an open row. A retreat
-   * stays with the unit that was given it. A full line neither takes
-   * an outsider's order nor hands its own order on.
+   * row. Chargers do not pass charge to anyone they line up with, and
+   * they do not absorb others' orders. A retreat stays with the unit
+   * that was given it. A full line neither takes an outsider's order
+   * nor hands its own order on.
    */
   tryJoinAhead(allies) {
+    if (this.ignoreLineOrders) {
+      return;
+    }
     if (this.broken || this.order === "charge" || this.order === "fallback"
       || this.order === "retreat" || this.isInMelee(this.enemyTroops())) {
       return;
@@ -829,7 +845,9 @@ class Unit {
       if (!this.sameLineType(ally)) {
         continue;
       }
-      if (!ally.order || ally.order === "fallback" || ally.order === "retreat") {
+      // Charge never spreads by lining up.
+      if (!ally.order || ally.order === "fallback" || ally.order === "retreat"
+        || ally.order === "charge") {
         continue;
       }
       if (this.order === ally.order) {
@@ -847,19 +865,13 @@ class Unit {
       if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this)) {
         continue;
       }
-      if (ally.order === "charge") {
-        if (this.order === "reform") {
-          this.issueChargeToReformLine(allies);
-        }
-        continue;
-      }
       if (!this.canTakeLineOrder(ally, allies)) {
         continue;
       }
       const group = this.lineGroup(allies);
       for (let g = 0; g < group.length; g += 1) {
         const member = group[g];
-        if (member.broken || member.isInMelee(foes)) continue;
+        if (member.broken || member.isInMelee(foes) || member.ignoreLineOrders) continue;
         if (member !== this && member.rankIsFull(allies, ally)) {
           continue;
         }
@@ -871,54 +883,14 @@ class Unit {
   }
 
   /**
-   * The reforming line this unit belongs to, chained through the line
-   * window. Stops at anyone who is not reforming, so a charger beside
-   * the rank does not pull in the next line over.
-   */
-  issueChargeToReformLine(allies) {
-    const group = [this];
-    const seen = {};
-    seen[this.id] = true;
-    let added = true;
-    while (added) {
-      added = false;
-      for (let i = 0; i < group.length; i += 1) {
-        const member = group[i];
-        for (let j = 0; j < allies.length; j += 1) {
-          const other = allies[j];
-          if (seen[other.id] || other.hp <= 0 || other.order !== "reform") {
-            continue;
-          }
-          if (!member.inLineWith(other)) {
-            continue;
-          }
-          seen[other.id] = true;
-          group.push(other);
-          added = true;
-        }
-      }
-    }
-    const cap = Path.sublaneCount(this.lane);
-    const rows = {};
-    for (let g = 0; g < group.length; g += 1) {
-      rows[group[g].sublane] = true;
-    }
-    if (Object.keys(rows).length >= cap) {
-      return;
-    }
-    for (let g = 0; g < group.length; g += 1) {
-      if (group[g].broken) continue;
-      group[g].order = "charge";
-      group[g].reformNeedsAlign = false;
-    }
-  }
-
-  /**
    * A unit that reaches a reforming line from behind takes that order,
    * unless that line is already full. Charge and fallback are left alone.
    * Perfectly beside an open line is handled by tryJoinAhead.
    */
   takeReformFromBehind(allies) {
+    if (this.ignoreLineOrders) {
+      return;
+    }
     if (this.broken || this.order === "charge" || this.order === "fallback"
       || this.order === "retreat" || this.order === "reform") {
       return;
@@ -2167,7 +2139,7 @@ class Unit {
 
   /** Apply incoming damage and spawn a hit splat over this troop. */
   takeDamage(amount, kind) {
-    const hit = this.side.mitigate(amount, this.onQuarterLine());
+    const hit = truncateDamage(this.side.mitigate(amount, this.onQuarterLine()));
     this.hp -= hit;
     this.flash = 0.12;
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
@@ -2199,6 +2171,7 @@ class Unit {
   /**
    * Outgoing damage: ranged uses falloff; melee uses its own base.
    * Charge, flanking, and formed-line bonuses still multiply after that.
+   * Returns the full float; armor + truncateDamage apply on the hit.
    */
   attackDamage(target, kind, allies) {
     const strike = kind || "shoot";
@@ -2224,7 +2197,7 @@ class Unit {
     damage *= this.auraAttack;
     const roll = 1 + (Math.random() * 2 - 1) * CONFIG.damageVariance;
     damage *= roll;
-    return Math.round(damage);
+    return damage;
   }
 
   /** Ranged or melee base from this unit's own stats. */
@@ -2803,13 +2776,13 @@ class Side {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
 
-  /** Apply armor (plus cover on this side's fort line), then round. */
+  /** Apply armor (plus cover on this side's fort line). Caller truncates. */
   mitigate(amount, cover) {
     let reduction = this.armorReduction();
     if (cover) {
       reduction = Math.min(CONFIG.armorCap, reduction + CONFIG.quarterArmor);
     }
-    return Math.round(amount * (1 - reduction));
+    return amount * (1 - reduction);
   }
 
   /** Outgoing damage multiplier from damage ranks. */
@@ -3032,7 +3005,7 @@ class Side {
       this.capital.x,
       this.capital.y,
       target,
-      Math.round(damage),
+      damage,
       allies,
       "shoot",
       "cannon",
@@ -3337,7 +3310,7 @@ export class GameSim {
 
   /** Create a floating damage number at a world point. */
   spawnSplat(x, y, amount, kind) {
-    this.splats.push(new HitSplat(x, y, amount, kind));
+    this.splats.push(new HitSplat(x, y, splatDamage(amount), kind));
   }
 
   /** Rise and drop expired hit splats. */

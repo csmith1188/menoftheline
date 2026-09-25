@@ -176,7 +176,7 @@ function meleeHit(type, flags) {
   if (stats.lineBonus) {
     damage *= 1 + (flags.lineMates || 0) * stats.lineBonus;
   }
-  return Math.round(damage);
+  return Math.round(Math.trunc(damage * 100) / 100);
 }
 
 function orderStroke(order) {
@@ -1001,7 +1001,7 @@ const pages = [
     title: "Orders",
     artHeight: 320,
     blocks: [
-      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone, then swipe it up or down onto a row. Swipe a line up or down and each unit switches one row that way. Broken and retreating units cannot switch." },
+      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone — further clicks and swipes stay on that unit until you click another unit (which selects that unit's line). Swipe a solo unit up or down onto a row; swipe a line up or down and each unit switches one row that way. Broken and retreating units cannot switch." },
       { kind: "p", text: "Units in melee can be given orders, but those orders wait until the fight breaks. Reform and fall back start at once. They can leave by falling back, or by switching to a row that is not next to theirs. A fall back that leaves the fight becomes a retreat, and the unit is not broken. A charging unit still does charge damage while it is in melee, and swiping back then falls back instead of advancing." },
       {
         kind: "ul",

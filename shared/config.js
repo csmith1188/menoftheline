@@ -116,7 +116,7 @@ export const CONFIG = {
   meleeSlack: 6,
   /** Floor for ranged falloff (1 at point-blank, this at max range). */
   minDamageFactor: 0.25,
-  /** Random extra or less damage applied before rounding. */
+  /** Random extra or less damage applied before truncating to two decimals. */
   damageVariance: 0.1,
   /**
    * Fatigue lost per second while halted (outside own keep range).
@@ -231,3 +231,13 @@ export const CONFIG = {
     laneCenter: "#e8c36a",
   },
 };
+
+/** Keep the full damage calc, then chop to two decimal places for HP. */
+export function truncateDamage(amount) {
+  return Math.trunc(amount * 100) / 100;
+}
+
+/** Hit-splat display: round the truncated applied damage. */
+export function splatDamage(amount) {
+  return Math.round(amount);
+}

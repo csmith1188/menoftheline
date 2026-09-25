@@ -1699,9 +1699,12 @@ class Unit {
 
   /**
    * When stacked on a friendly we now collide with (e.g. after leaving
-   * fallback), step the short way — ahead or back — until clear. Uses
-   * walk speed even while halted so units can peel apart. True while
-   * still overlapping.
+   * fallback, or catching a blocker), clear without shoving anyone
+   * forward. A unit with a friendly ahead stops and tries an open
+   * sublane; if none is free it holds. A unit with someone only behind
+   * holds still so advancing bodies cannot push it. On a dead tie the
+   * lower id eases back so a true stack can peel. True while still
+   * overlapping.
    */
   resolveAllyCollision(dt, allies, enemies) {
     const other = this.collidingAlly(allies);
@@ -1709,34 +1712,47 @@ class Unit {
       return false;
     }
     const along = this.alongSigned(other);
-    // Away from the other is always the shortest clear; on a dead tie,
-    // lower id steps back so the pair peels apart instead of staying glued.
-    let dir;
+
+    // Friendly ahead: switch to an open row, otherwise stop in place.
     if (along > 0) {
-      dir = -1;
-    } else if (along < 0) {
-      dir = 1;
-    } else {
-      dir = this.id < other.id ? -1 : 1;
-    }
-    const scale = this.ringSpeedScale() * this.shotSlowScale();
-    const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
-    const delta = (speed * dt) / this.pathLength;
-    const tryStep = (stepDir) => {
-      const nextProgress = Math.max(0, Math.min(1, this.progress + stepDir * delta));
-      if (nextProgress === this.progress) {
-        return false;
+      const open = this.openSublane(allies);
+      if (open !== null) {
+        const before = this.sublane;
+        this.enterSublane(open, enemies);
+        if (this.sublane !== before || this.strafing) {
+          this.strafe(dt, enemies, allies);
+        }
       }
-      const next = Path.pointAt(this.points, nextProgress);
-      if (this.overlapsEnemyAt(next.x, next.y, enemies)) {
-        return false;
-      }
-      this.progress = nextProgress;
-      this.syncPosition();
       return true;
-    };
-    if (!tryStep(dir)) {
-      tryStep(-dir);
+    }
+
+    // Friendly only behind: hold. They must switch or stop.
+    if (along < 0) {
+      return true;
+    }
+
+    // Dead tie after pass-through: prefer a free row, else lower id eases back.
+    const open = this.openSublane(allies);
+    if (open !== null) {
+      const before = this.sublane;
+      this.enterSublane(open, enemies);
+      if (this.sublane !== before || this.strafing) {
+        this.strafe(dt, enemies, allies);
+        return true;
+      }
+    }
+    if (this.id < other.id) {
+      const scale = this.ringSpeedScale() * this.shotSlowScale();
+      const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
+      const delta = (speed * dt) / this.pathLength;
+      const nextProgress = Math.max(0, Math.min(1, this.progress - delta));
+      if (nextProgress !== this.progress) {
+        const next = Path.pointAt(this.points, nextProgress);
+        if (!this.overlapsEnemyAt(next.x, next.y, enemies)) {
+          this.progress = nextProgress;
+          this.syncPosition();
+        }
+      }
     }
     return true;
   }

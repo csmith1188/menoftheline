@@ -11,7 +11,6 @@
  * chargeMultiplier and flankMultiplier apply to outgoing damage.
  * officerDamageMultiplier scales damage when hitting an officer.
  */
-
 const SHOT = {
   shotSlowSpeed: 0.6,
   slowFactor: 0.4,
@@ -27,7 +26,6 @@ const SHOT = {
   speedBuff: 0,
   buffRange: 0,
 };
-
 export const UNIT_STATS = {
   troop: {
     ...SHOT,
@@ -44,8 +42,7 @@ export const UNIT_STATS = {
     cost: 120,
     lineBonus: 0.2,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -65,8 +62,7 @@ export const UNIT_STATS = {
     cost: 120,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
@@ -86,8 +82,7 @@ export const UNIT_STATS = {
     cost: 240,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -108,7 +103,6 @@ export const UNIT_STATS = {
     lineBonus: 0,
     fightsMelee: false,
     splash: 0.5,
-    avoidMeleeBand: true,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -128,15 +122,12 @@ export const UNIT_STATS = {
     cost: 180,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 100,
     restoreRate: 1,
     officerDamageMultiplier: 1,
   },
-
   // Alternates (same base type in play; white square behind the icon)
-
   /** Troop with more hit points and shorter musket range. */
   grenadier: {
     ...SHOT,
@@ -153,8 +144,7 @@ export const UNIT_STATS = {
     cost: 120,
     lineBonus: 0.2,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -175,8 +165,7 @@ export const UNIT_STATS = {
     cost: 120,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
@@ -198,8 +187,7 @@ export const UNIT_STATS = {
     cost: 240,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -221,8 +209,7 @@ export const UNIT_STATS = {
     lineBonus: 0,
     fightsMelee: false,
     splash: 1,
-    splashWholeLine: true,
-    avoidMeleeBand: true,
+    splashWholeLine: true,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -243,8 +230,7 @@ export const UNIT_STATS = {
     cost: 180,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
-    avoidMeleeBand: false,
+    splash: 0,
     restoreRange: 100,
     restoreRate: 1,
     officerDamageMultiplier: 1,
@@ -253,11 +239,9 @@ export const UNIT_STATS = {
     speedBuff: 0.15,
   },
 };
-
 export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
 }
-
 /** Base buy type → unlocked alternate spawn key. */
 export const UNIT_VARIANTS = {
   troop: "grenadier",
@@ -266,7 +250,6 @@ export const UNIT_VARIANTS = {
   cannon: "howitzer",
   officer: "colorGuard",
 };
-
 /** Short labels for buy buttons and inspect text. */
 export const UNIT_LABELS = {
   troop: "Troop",
@@ -280,7 +263,6 @@ export const UNIT_LABELS = {
   howitzer: "Howitzer",
   colorGuard: "Color",
 };
-
 /** Lane-buy catalog drawn on the canvas (base units only). */
 export const BUY_UNITS = [
   { type: "troop", label: "Troop", fill: "#2a4158", stroke: "#3d5a7a" },

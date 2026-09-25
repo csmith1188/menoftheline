@@ -971,7 +971,7 @@ const pages = [
           "Troops: Are more durable, and do more damage when in a line.",
           "Skirmishers: Harass, slow, and break enemy lines. Snipe officers.",
           "Dragoons: Fast units that do bonus flank damage, but have poor shooting.",
-          "Cannons: Long-range splash damage, but no close fighting.",
+          "Cannons: Long-range splash damage.",
           "Officers: Holds discipline by restoring nearby fatigue. Lead better from the front of the line.",
         ],
       },
@@ -1007,7 +1007,7 @@ const pages = [
         kind: "ul",
         items: [
           "Halt: Stay in place. Recover fatigue and shoot full distance. Still collides with friendlies.",
-          "Reform: Slow down to form a line. Sidesteps blockers like an advance.",
+          "Reform: Slow down to form a line. Do not shoot. Sidesteps blockers like an advance.",
           "Advance: Walk and shoot. When blocked, pick the clearest open row ahead and step toward it; ease back only if the next step is occupied.",
           "Charge: Swipe forward. Stop shooting, run faster, and do bonus melee damage, but fatigue rises. A forward swipe while halted advances instead. Cavalry pass through friendlies while charging.",
           "Fall back: Swipe back. Disengage and withdraw through friendlies while firing. A back swipe while charging advances instead.",
@@ -1030,7 +1030,7 @@ const pages = [
     title: "Fighting",
     artHeight: 250,
     blocks: [
-      { kind: "p", text: "Units shoot only inside engagement range, or at full range while halted. A lined mate who has opened fire lets the rest of the line shoot at that same range. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
+      { kind: "p", text: "Units open fire inside engagement range, or at full range while halted. An advancing line that holds to shoot together then uses full range. A lined mate who has opened fire lets the rest of the line join that volley. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
       { kind: "p", text: "Charge and flank raise melee damage. Shots briefly slow advancing or charging units. Halt and reform ignore the slow. Units in melee are not targeted until they leave it." },
     ],
     draw: drawFighting,

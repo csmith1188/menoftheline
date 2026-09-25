@@ -1281,6 +1281,31 @@ class Troop {
   }
 
   /**
+   * Advancing in a squared line that has opened fire: full shoot range.
+   * Opening fire itself still uses engage range (see openFireRange).
+   */
+  lineVolleyRange(allies, enemies, enemySide) {
+    if (this.order != null) {
+      return false;
+    }
+    if (this.lineIsHolding(allies, enemies, enemySide)) {
+      return true;
+    }
+    if (!this.isOpeningFire(enemies, allies, enemySide)) {
+      return false;
+    }
+    const line = this.lineGroup(allies);
+    for (let i = 0; i < line.length; i += 1) {
+      const mate = line[i];
+      if (mate === this || !this.isParallelTo(mate)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Reforming troops ahead of a still-forming line wait. The rearmost
    * never waits. An already-square line does not wait — it walks slowly
    * together.
@@ -1514,9 +1539,21 @@ class Troop {
     return CONFIG.troopRange;
   }
 
-  /** Distance at which this troop may open fire on its own. */
+  /** Range used to open fire on your own. */
   openFireRange() {
+    if (this.order === "halt") return this.attackRange();
     return this.attackRange() * CONFIG.openFireFactor;
+  }
+
+  /**
+   * Range used to pick a shoot target. Halt and advancing lined volleys
+   * use full attack range; solo advance still opens at engage range.
+   */
+  shootRange(allies, enemies, enemySide) {
+    if (this.order === "halt" || this.lineVolleyRange(allies, enemies, enemySide)) {
+      return this.attackRange();
+    }
+    return this.openFireRange();
   }
 
   /**
@@ -1528,7 +1565,7 @@ class Troop {
     if (this.type !== "cannon" && this.collidingEnemy(enemies)) {
       return true;
     }
-    if (this.order === "charge") {
+    if (this.order === "charge" || this.order === "reform") {
       return false;
     }
     return Boolean(this.nearestTarget(enemies, this.openFireRange(), allies, enemySide));
@@ -1536,13 +1573,17 @@ class Troop {
 
   /**
    * True when this troop may shoot: it opened on its own, or it is in
-   * line with someone who did and still has a full-range target.
+   * line with someone who did and still has a target inside shoot range.
+   * Reforming units do not shoot.
    */
   mayShoot(allies, enemies, enemySide) {
+    if (this.order === "reform") {
+      return false;
+    }
     if (this.isOpeningFire(enemies, allies, enemySide)) {
       return true;
     }
-    if (!this.nearestTarget(enemies, undefined, allies, enemySide)) {
+    if (!this.nearestTarget(enemies, this.shootRange(allies, enemies, enemySide), allies, enemySide)) {
       return false;
     }
     const line = this.lineGroup(allies);
@@ -2098,7 +2139,12 @@ class Troop {
     }
 
     const contact = this.collidingEnemy(enemies);
-    const target = this.nearestTarget(enemies, undefined, allies, enemySide);
+    const target = this.nearestTarget(
+      enemies,
+      this.shootRange(allies, enemies, enemySide),
+      allies,
+      enemySide,
+    );
     const atKeep = this.progress >= 1;
     const charging = this.order === "charge";
     const fallingBack = this.order === "fallback";

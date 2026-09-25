@@ -233,7 +233,6 @@ class Unit {
     this.fightsMelee = stats.fightsMelee;
     this.splash = stats.splash;
     this.splashWholeLine = Boolean(stats.splashWholeLine);
-    this.avoidMeleeBand = stats.avoidMeleeBand;
     this.restoreRange = stats.restoreRange || 0;
     this.restoreRate = stats.restoreRate || 0;
     this.officerDamageMultiplier = stats.officerDamageMultiplier || 1;
@@ -1026,6 +1025,31 @@ class Unit {
   }
 
   /**
+   * Advancing in a squared line that has opened fire: full shoot range.
+   * Opening fire itself still uses engage range (see openFireRange).
+   */
+  lineVolleyRange(allies, enemies, enemySide) {
+    if (this.order != null) {
+      return false;
+    }
+    if (this.lineIsHolding(allies, enemies, enemySide)) {
+      return true;
+    }
+    if (!this.isOpeningFire(enemies, allies, enemySide)) {
+      return false;
+    }
+    const line = this.lineGroup(allies);
+    for (let i = 0; i < line.length; i += 1) {
+      const mate = line[i];
+      if (mate === this || mate.isInMelee(enemies) || !this.isParallelTo(mate)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Same-type reforming neighbors on adjacent rows, even when a stagger
    * is wider than the combat line window. An empty row still splits them.
    */
@@ -1297,16 +1321,21 @@ class Unit {
     return this.range;
   }
 
-  /** True when other, or a keep's capital, is inside melee reach. */
-  insideMeleeRange(other) {
-    const pos = other && other.capital ? other.capital : other;
-    return distance(this, pos) <= this.meleeReach;
-  }
-
-  /** Distance at which this troop may shoot. Halt uses full range. */
+  /** Range used to open fire on your own. Halt uses full range. */
   openFireRange() {
     if (this.order === "halt") return this.attackRange();
     return this.attackRange() * this.engageRange;
+  }
+
+  /**
+   * Range used to pick a shoot target. Halt and advancing lined volleys
+   * use full attack range; solo advance still opens at engage range.
+   */
+  shootRange(allies, enemies, enemySide) {
+    if (this.order === "halt" || this.lineVolleyRange(allies, enemies, enemySide)) {
+      return this.attackRange();
+    }
+    return this.openFireRange();
   }
 
   /**
@@ -1318,7 +1347,7 @@ class Unit {
     if (this.fightsMelee && this.collidingEnemy(enemies)) {
       return true;
     }
-    if (this.order === "charge") {
+    if (this.order === "charge" || this.order === "reform") {
       return false;
     }
     return Boolean(this.nearestTarget(enemies, this.openFireRange(), allies, enemySide));
@@ -1326,14 +1355,17 @@ class Unit {
 
   /**
    * True when this troop may shoot: it opened on its own, or it is in
-   * line with someone who did and still has a target inside its own
-   * shooting range. Only a halt reaches past engagement range.
+   * line with someone who did and still has a target inside shoot range.
+   * Reforming units do not shoot.
    */
   mayShoot(allies, enemies, enemySide) {
+    if (this.order === "reform") {
+      return false;
+    }
     if (this.isOpeningFire(enemies, allies, enemySide)) {
       return true;
     }
-    if (!this.nearestTarget(enemies, this.openFireRange(), allies, enemySide)) {
+    if (!this.nearestTarget(enemies, this.shootRange(allies, enemies, enemySide), allies, enemySide)) {
       return false;
     }
     const line = this.lineGroup(allies);
@@ -2060,9 +2092,8 @@ class Unit {
   /**
    * Closest living enemy inside a world-space circle. Lane and sublane
    * do not matter. Units locked in melee are not targeted until they
-   * leave it. Cannons also skip anyone inside melee range. Non-skirmishers
-   * ignore officers while any other enemy is in range. The enemy keep is
-   * a valid target when no unit is closer.
+   * leave it. Non-skirmishers ignore officers while any other enemy is
+   * in range. The enemy keep is a valid target when no unit is closer.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.attackRange() : maxRange;
@@ -2083,9 +2114,6 @@ class Unit {
       if (d > range) {
         continue;
       }
-      if (this.avoidMeleeBand && this.insideMeleeRange(other)) {
-        continue;
-      }
       if (other.type === "officer" && shyOfOfficers) {
         if (d < bestOfficerD) {
           bestOfficerD = d;
@@ -2103,7 +2131,7 @@ class Unit {
     }
     if (!best && enemySide && enemySide.capitalHP > 0) {
       const d = distance(this, enemySide.capital);
-      if (d <= range && !(this.avoidMeleeBand && this.insideMeleeRange(enemySide))) {
+      if (d <= range) {
         return enemySide;
       }
     }
@@ -2214,9 +2242,6 @@ class Unit {
     if (strike !== "melee" && allies && target.isInMelee && target.isInMelee(allies)) {
       return;
     }
-    if (this.avoidMeleeBand && this.insideMeleeRange(target)) {
-      return;
-    }
     if (strike === "melee") {
       this.side.sim.emitSound({ type: "melee" });
     } else {
@@ -2317,7 +2342,12 @@ class Unit {
     }
 
     const contact = this.collidingEnemy(enemies);
-    const target = this.nearestTarget(enemies, this.openFireRange(), allies, enemySide);
+    const target = this.nearestTarget(
+      enemies,
+      this.shootRange(allies, enemies, enemySide),
+      allies,
+      enemySide,
+    );
     const atKeep = this.progress >= 1;
     const charging = this.order === "charge";
     const fallingBack = this.order === "fallback";
@@ -2371,9 +2401,6 @@ class Unit {
     }
 
     if (this.order === "reform") {
-      if (target && this.mayShoot(allies, enemies, enemySide) && this.cooldown <= 0) {
-        this.fire(target, allies, projectiles, "shoot");
-      }
       if (laneMove === "waiting" || this.reformHold
         || this.reformSquaredInRange(allies, enemies, enemySide)) {
         return;
@@ -2541,8 +2568,8 @@ class Dragoon extends Unit {
 }
 
 /**
- * Field gun. Fires over the line, splashes the next row, and will not
- * shoot inside melee reach. Charge is a push: no firing and no melee.
+ * Field gun. Fires over the line and splashes the next row.
+ * Charge is a push: no firing and no melee.
  */
 class Cannon extends Unit {
   constructor(id, side, lane, sublane) {

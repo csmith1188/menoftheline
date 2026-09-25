@@ -371,13 +371,57 @@ class Unit {
   /**
    * Drag back: walk backward at reform speed. Allowed in melee so a
    * line can disengage. A second drag keeps falling back. Broken units
-   * already fall back and ignore further orders.
+   * already fall back and ignore further orders. Players cannot order
+   * a retreat; only a break does that.
    */
   issueFallback(allies, solo) {
     if (this.broken || this.order === "fallback") {
       return;
     }
     this.applyGroupOrder(allies, "fallback", solo);
+  }
+
+  /**
+   * Swipe forward: charge, or resume a normal advance when halted.
+   */
+  issueForward(allies, enemies, solo) {
+    if (this.broken) return;
+    if (this.order === "halt") {
+      this.applyGroupOrder(allies, null, solo);
+      return;
+    }
+    this.issueCharge(allies, enemies, solo);
+  }
+
+  /**
+   * Swipe back: fall back, or resume a normal advance when charging.
+   */
+  issueBack(allies, enemies, solo) {
+    if (this.broken) return;
+    if (this.order === "charge") {
+      this.applyGroupOrder(allies, null, solo);
+      return;
+    }
+    this.issueFallback(allies, solo);
+  }
+
+  /**
+   * Shift every member of this line one sublane in dir (+1 or -1).
+   * The whole line stays put when anyone would leave the lane.
+   */
+  issueLineShift(dir, allies, enemies) {
+    if (this.broken || dir === 0) return;
+    if (allies && enemies && this.lineInMelee(allies, enemies)) return;
+    const group = this.lineGroup(allies);
+    const count = Path.sublaneCount(this.lane);
+    for (let i = 0; i < group.length; i += 1) {
+      const next = group[i].sublane + dir;
+      if (next < 0 || next >= count) return;
+    }
+    for (let i = 0; i < group.length; i += 1) {
+      if (group[i].broken) continue;
+      group[i].wantedSublane = group[i].sublane + dir;
+    }
   }
 
   /** Put this line on reform without cycling through halt. */
@@ -1121,7 +1165,7 @@ class Unit {
    * retreating until fatigue is full, then switch to fallback. Otherwise
    * halt recovers at idle rate, and own capital recovers faster.
    * Overlapping the keep also restores health at that same recovery rate.
-   * A broken unit rallies once fatigue % falls below half of hp %.
+   * A broken unit rallies once fatigue is at or below half its current hp.
    */
   tickFatigue(dt, enemies) {
     const inMelee = Boolean(this.collidingEnemy(enemies));
@@ -1145,14 +1189,14 @@ class Unit {
       if (this.order === "retreat" && this.fatigue >= this.maxFatigue) {
         this.order = "fallback";
       }
-      if (this.fatiguePct() < this.hpPct() * 0.5) {
+      if (this.fatigue <= this.hp * 0.5) {
         this.broken = false;
         this.order = null;
       }
     }
   }
 
-  /** Force a rout: retreat until fatigue is full, then fall back. */
+  /** Force a rout: retreat until fatigue is full, then fall back until fatigue is half current hp. */
   breakUnit() {
     this.broken = true;
     this.order = this.fatigue >= this.maxFatigue ? "fallback" : "retreat";
@@ -2733,6 +2777,13 @@ export class GameSim {
       else if (cmd.action === "cycle") troop.issueOrder(side.troops, foe.troops, solo);
       else if (cmd.action === "charge") troop.issueCharge(side.troops, foe.troops, solo);
       else if (cmd.action === "fallback") troop.issueFallback(side.troops, solo);
+      else if (cmd.action === "forward") troop.issueForward(side.troops, foe.troops, solo);
+      else if (cmd.action === "back") troop.issueBack(side.troops, foe.troops, solo);
+      else if (cmd.action === "shift") {
+        const dir = Number(cmd.dir);
+        if (dir !== 1 && dir !== -1) return false;
+        troop.issueLineShift(dir, side.troops, foe.troops);
+      }
       else if (cmd.action === "lane") {
         const sublane = Number(cmd.sublane);
         if (!Number.isInteger(sublane)) return false;

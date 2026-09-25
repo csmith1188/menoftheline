@@ -660,7 +660,7 @@ function drawSpeedLadder(ctx, rect) {
       worldArrow(ctx, x1, cy, x2, cy, "#8aa0b8");
     }
   }
-  inkFit(ctx, "← drag back          drag forward →", rect.x + rect.w / 2, rect.y + rect.h - 12, CONFIG.colors.gold, 12, rect.w - 16);
+  inkFit(ctx, "back: fall back · forward: charge", rect.x + rect.w / 2, rect.y + rect.h - 12, CONFIG.colors.gold, 12, rect.w - 16);
 }
 
 function drawOrders(ctx, w, h) {
@@ -669,7 +669,7 @@ function drawOrders(ctx, w, h) {
   drawSpeedLadder(ctx, panels[0]);
 
   const reforming = placeX("player", 2, 500, "troop", "reform");
-  vignette(ctx, panels[1], around([reforming], 70, 36), "Click again · Reform", () => {
+  vignette(ctx, panels[1], around([reforming], 70, 36), "Click · Halt, reform, advance", () => {
     drawGround(ctx);
     ctx.save();
     ctx.strokeStyle = "#ffffff";
@@ -683,7 +683,7 @@ function drawOrders(ctx, w, h) {
 
   const charger = placeX("player", 2, 470, "troop", "charge");
   const chargeFoe = placeX("enemy", 2, 560, "troop");
-  vignette(ctx, panels[2], around([charger, chargeFoe], 70, 36), "Drag forward · faster", () => {
+  vignette(ctx, panels[2], around([charger, chargeFoe], 70, 36), "Swipe forward · charge", () => {
     drawGround(ctx);
     worldArrow(ctx, charger.x - 36, charger.y - 28, chargeFoe.x - 16, charger.y - 28, CONFIG.colors.charge);
     drawUnit(ctx, charger);
@@ -691,7 +691,7 @@ function drawOrders(ctx, w, h) {
   });
 
   const slider = placeX("player", 2, 500, "troop");
-  vignette(ctx, panels[3], around([slider], 80, 20), "Drag across · change row", () => {
+  vignette(ctx, panels[3], around([slider], 80, 20), "Swipe up or down · shift row", () => {
     drawGround(ctx);
     highlightSublane(ctx, 1, slider.x - 90, slider.x + 90);
     worldArrow(ctx, slider.x + 26, slider.y - 4, slider.x + 26, slider.y - 28, CONFIG.colors.laneHover);
@@ -1001,16 +1001,16 @@ const pages = [
     title: "Orders",
     artHeight: 320,
     blocks: [
-      { kind: "p", text: "Click a unit to select it's line. Click again to reform. Click again to return to previous order. Long press a unit to select it from the line." },
+      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone, then swipe it up or down onto a row. Swipe a line up or down to shift every row together." },
       {
         kind: "ul",
         items: [
+          "Halt: Stay in place. Recover fatigue and shoot full distance.",
           "Reform: Slow down to form a line.",
-          "Charge: Stop shooting, run faster, and do bonus melee damage, but increases fatigue.",
           "Advance: Walk and shoot.",
-          "Halt: Stay place. Recover fatigue and shoot full distance.",
-          "Fall back: Disengage from melee, withdraw through friendly units while firing.",
-          "Retreat: Run back at charge speed through friendlies. No shooting or melee, and fatigue rises.",
+          "Charge: Swipe forward. Stop shooting, run faster, and do bonus melee damage, but fatigue rises. A forward swipe while halted advances instead.",
+          "Fall back: Swipe back. Disengage and withdraw through friendlies while firing. A back swipe while charging advances instead.",
+          "Retreat: Broken units only. They run back until fatigue is full, then fall back until fatigue is half their current health. You cannot order a retreat.",
         ],
       },
     ],
@@ -1039,7 +1039,7 @@ const pages = [
     artHeight: 240,
     blocks: [
       { kind: "p", text: "The blue bar is fatigue. Charging, retreating, fighting in melee, and getting hit increase it. Halting, being near an officer, or standing in your keep decrease it." },
-      { kind: "p", text: "When your fatigue is fuller than your health, hits can break the unit. Broken units retreat until fatigue is full, then fall back. They stop fighting and ignore orders until they rally. Rally by reducing your fatigue to half your health." },
+      { kind: "p", text: "When your fatigue is fuller than your health, hits can break the unit. Broken units retreat until fatigue is full, then fall back until fatigue is half their current health. They stop fighting and ignore orders until they rally." },
     ],
     draw: drawFatigue,
   },

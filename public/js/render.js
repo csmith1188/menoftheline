@@ -875,6 +875,7 @@ useDrawPrototypes({
 
 export function createBoard(canvas) {
   const board = createBoardState(canvas);
+  board.directOrders = true;
   board.ctx = canvas.getContext("2d");
   Object.setPrototypeOf(board, boardMethods);
   board.fitCanvas();

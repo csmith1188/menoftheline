@@ -931,12 +931,19 @@ function orderAnnouncement(troop, action) {
     if (troop.order === "reform") return { text: "Advance", color: CONFIG.colors.text };
     return { text: "Halt", color: CONFIG.colors.halt };
   }
-  if (action === "charge") {
+  if (action === "charge" || action === "forward") {
+    if (action === "forward" && troop && troop.order === "halt") {
+      return { text: "Advance", color: CONFIG.colors.text };
+    }
     return { text: "Charge", color: CONFIG.colors.charge };
   }
-  if (action === "fallback") {
+  if (action === "fallback" || action === "back") {
+    if (action === "back" && troop && troop.order === "charge") {
+      return { text: "Advance", color: CONFIG.colors.text };
+    }
     return { text: "Fallback", color: CONFIG.colors.fallback };
   }
+  if (action === "shift") return { text: "Shift", color: CONFIG.colors.laneHover };
   if (action === "lane") return { text: "Lane", color: CONFIG.colors.laneHover };
   return null;
 }

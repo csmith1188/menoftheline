@@ -25,6 +25,7 @@ const pointerMethods = {
         const troop = this.hitAnyTroopAt(world);
         const friendly = troop && troop.side && troop.side.id === "player";
         if (troop && friendly) {
+          const wasSelected = this.isInspected(troop);
           this.drag = {
             troop,
             x: world.x,
@@ -33,6 +34,7 @@ const pointerMethods = {
             hy: world.y,
             downAt: performance.now(),
             soloPick: false,
+            wasSelected,
           };
           this.canvas.setPointerCapture(event.pointerId);
           return;
@@ -108,6 +110,7 @@ const pointerMethods = {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    const wasSelected = this.isInspected(troop);
     this.drag = {
       troop,
       x: point.x,
@@ -116,6 +119,7 @@ const pointerMethods = {
       hy: point.y,
       downAt: performance.now(),
       soloPick: false,
+      wasSelected,
     };
     this.canvas.setPointerCapture(event.pointerId);
   },
@@ -271,8 +275,14 @@ const pointerMethods = {
       return;
     }
 
-    // Across: change sublane (friendlies only).
     const intent = this.dragIntent(troop, start, point);
+
+    if (this.directOrders && friendly) {
+      this.releaseDirectOrder(troop, start, point, pulled, intent);
+      return;
+    }
+
+    // Across: change sublane (friendlies only).
     if (friendly && intent.kind === "lane" && pulled >= this.laneDragMin()) {
       this.selectTroop(troop, this.inspectedSolo);
       this.announceOrder(troop, "lane");
@@ -302,6 +312,64 @@ const pointerMethods = {
     }
   },
 
+  /**
+   * 2D release: a tap goes straight to halt, then reform, then advance.
+   * Issuing an order selects that line. Forward charges, or advances
+   * when halted. Back falls back, or advances when charging. A lone
+   * selected unit slides to the row the swipe ends on; a line steps
+   * one row together.
+   */
+  releaseDirectOrder(troop, start, point, pulled, intent) {
+    const orderMin = this.orderDragMin();
+    if (start.soloPick && pulled < orderMin) {
+      return;
+    }
+    const soloUnit = Boolean(this.inspectedSolo && this.inspectedId === troop.id);
+    const shifting = (intent.kind === "lane" || intent.kind === "nudge")
+      && pulled >= this.laneDragMin();
+    const lineCount = this.lineSizeOf(troop);
+    const alone = soloUnit || lineCount < 2;
+    if (shifting) {
+      if (alone && intent.kind === "lane") {
+        this.selectTroop(troop, true);
+        this.announceOrder(troop, "lane");
+        this.onCommand({
+          type: "order",
+          troopId: troop.id,
+          action: "lane",
+          sublane: intent.row,
+          solo: true,
+        });
+        return;
+      }
+      if (alone) return;
+      const dir = intent.dir || this.nudgeDir(troop, start, point);
+      if (dir === 0) return;
+      this.selectTroop(troop, false);
+      this.announceOrder(troop, "shift");
+      this.onCommand({
+        type: "order",
+        troopId: troop.id,
+        action: "shift",
+        dir,
+        solo: false,
+      });
+      return;
+    }
+    if (pulled >= orderMin && (intent.kind === "charge" || intent.kind === "fallback")) {
+      const action = intent.kind === "charge" ? "forward" : "back";
+      this.selectTroop(troop, false);
+      this.announceOrder(troop, action);
+      this.onCommand({ type: "order", troopId: troop.id, action, solo: false });
+      return;
+    }
+    if (pulled < orderMin) {
+      this.selectTroop(troop, false);
+      this.announceOrder(troop, "cycle");
+      this.onCommand({ type: "order", troopId: troop.id, action: "cycle", solo: false });
+    }
+  },
+
   /** Living enemy captured at the start of a telescope press, if any. */
   enemyTapTroop(id) {
     if (id == null || !this.enemy) return null;
@@ -315,6 +383,18 @@ const pointerMethods = {
   /** True when this unit is in the current selection (solo or line). */
   isInspected(troop) {
     return Boolean(this.inspectedLineIds && this.inspectedLineIds[troop.id]);
+  },
+
+  /** How many units share this troop's line, without changing the selection. */
+  lineSizeOf(troop) {
+    const savedId = this.inspectedId;
+    const savedSolo = this.inspectedSolo;
+    this.selectTroop(troop, false);
+    const count = this.inspectedLineIds ? Object.keys(this.inspectedLineIds).length : 1;
+    this.inspectedId = savedId;
+    this.inspectedSolo = savedSolo;
+    this.inspectedTroop();
+    return count;
   },
 
   selectTroop(troop, solo) {
@@ -364,6 +444,20 @@ const pointerMethods = {
     this.selectTroop(drag.troop, true);
   },
 
+  /** Which neighboring row a short across-swipe is heading toward. */
+  nudgeDir(troop, from, to) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const reach = Math.max(len, 36);
+    const probe = {
+      x: from.x + (dx / len) * reach,
+      y: from.y + (dy / len) * reach,
+    };
+    const row = Path.closestSublane(troop.side.id, troop.lane, troop.progress, probe);
+    return Math.sign(row - troop.sublane);
+  },
+
   /**
    * Classify a drag as a row change, a forward speed-up, or a speed-down.
    * Along-the-path wins over a slight sideways drift.
@@ -376,7 +470,10 @@ const pointerMethods = {
     const across = dx * -tan.y + dy * tan.x;
     const row = Path.closestSublane(troop.side.id, troop.lane, troop.progress, to);
     if (Math.abs(across) > Math.abs(along) && row !== troop.sublane) {
-      return { kind: "lane", row };
+      return { kind: "lane", row, dir: Math.sign(row - troop.sublane) };
+    }
+    if (this.directOrders && Math.abs(across) > Math.abs(along)) {
+      return { kind: "nudge", dir: this.nudgeDir(troop, from, to) };
     }
     if (along > 0) {
       return { kind: "charge" };

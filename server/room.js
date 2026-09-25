@@ -48,6 +48,7 @@ export class GameRoom {
     this.charged = false;
     this.recorded = false;
     this.closing = false;
+    this.view3d = false;
     this.seat = {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),

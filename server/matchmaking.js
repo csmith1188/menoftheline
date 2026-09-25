@@ -142,7 +142,7 @@ export class Matchmaker {
       return;
     }
     if (intent.mode === "bot") {
-      await this.startBot(socket);
+      await this.startBot(socket, { view: intent.view });
       return;
     }
     if (intent.mode === "casual") {
@@ -164,8 +164,11 @@ export class Matchmaker {
     this.failHome(socket, "Could not start that game.");
   }
 
-  async startBot(socket) {
+  async startBot(socket, options = {}) {
     const room = new GameRoom(this, this.io, "bot");
+    if (options.view === "3d") {
+      room.view3d = true;
+    }
     this.rooms.set(room.id, room);
     room.seatHuman("a", socket);
     room.seatBot("b");

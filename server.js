@@ -279,7 +279,11 @@ async function startPlay(req, res, next, intent) {
         return;
       }
     }
-    req.session.intent = { mode: intent.mode, roomId: intent.roomId || null };
+    req.session.intent = {
+      mode: intent.mode,
+      roomId: intent.roomId || null,
+      view: intent.view || null,
+    };
     req.session.save(() => res.redirect("/play"));
   } catch (err) {
     next(err);
@@ -287,6 +291,13 @@ async function startPlay(req, res, next, intent) {
 }
 
 app.post("/play/bot", (req, res, next) => startPlay(req, res, next, { mode: "bot" }));
+app.post("/play/bot3d", (req, res, next) => {
+  if (!isAdmin(req.session)) {
+    res.redirect("/");
+    return;
+  }
+  startPlay(req, res, next, { mode: "bot", view: "3d" });
+});
 app.post("/play/casual", (req, res, next) => startPlay(req, res, next, { mode: "casual" }));
 app.post("/play/lobby", (req, res, next) => startPlay(req, res, next, { mode: "listed" }));
 app.post("/play/ranked", (req, res, next) => startPlay(req, res, next, { mode: "ranked" }));
@@ -313,11 +324,11 @@ app.get("/play", async (req, res, next) => {
     }
     const intent = req.session.intent;
     const room = matchmaker.roomForUser(player.id);
-    const adminBot = isAdmin(req.session) && (
-      (intent && intent.mode === "bot")
-      || (room && room.mode === "bot")
+    const use3d = isAdmin(req.session) && (
+      (intent && intent.view === "3d")
+      || (room && room.view3d)
     );
-    res.render(adminBot ? "play3d" : "index");
+    res.render(use3d ? "play3d" : "index");
   } catch (err) {
     next(err);
   }

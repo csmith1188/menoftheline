@@ -24,6 +24,11 @@
         <form method="post" action="/play/bot">
           <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
         </form>
+        <% if (admin) { %>
+          <form method="post" action="/play/bot3d">
+            <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot (3D)</button>
+          </form>
+        <% } %>
         <form method="post" action="/play/casual">
           <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
         </form>

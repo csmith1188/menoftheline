@@ -39,6 +39,7 @@ const rulesUi = bindRules({
 
 const scene = createScene(canvas);
 const board = createBoardState(canvas);
+board.directOrders = true;
 function mapPointer(event) {
   const point = scene.pointerToGame(event);
   board.pickedTroopId = scene.lastPickedTroopId();
@@ -53,32 +54,16 @@ board.telescopeWorld = (screen) => {
 };
 const hitBuyAt = board.hitBuyAt.bind(board);
 const hitUnlockAt = board.hitVariantUnlockAt.bind(board);
-function troopById(id) {
-  if (id == null) return null;
-  const sides = [board.player, board.enemy];
-  for (let s = 0; s < sides.length; s += 1) {
-    const side = sides[s];
-    if (!side) continue;
-    for (let i = 0; i < side.troops.length; i += 1) {
-      const troop = side.troops[i];
-      if (troop.id === id && troop.hp > 0) return troop;
-    }
-  }
-  return null;
-}
 board.hitBuyAt = (point) => (board.telescope ? null : hitBuyAt(point));
 board.hitVariantUnlockAt = (point) => (board.telescope ? null : hitUnlockAt(point));
 board.hitBankAt = () => false;
-// Only mesh picks count. Ground near a unit must not start an order drag.
-board.hitAnyTroopAt = () => troopById(board.pickedTroopId);
-board.hitUnitAt = () => troopById(board.pickedTroopId);
-board.hitTroopAt = () => {
-  const troop = troopById(board.pickedTroopId);
-  return troop && troop.side && troop.side.id === "player" ? troop : null;
+// Ground-plane pointers are already in world space; do not shrink thresholds
+// by the 2D telescope screen scale.
+board.orderDragMin = function orderDragMin3d() {
+  return this.uiMetrics().dragMin;
 };
-board.hitSideTroopAt = (point, side) => {
-  const troop = troopById(board.pickedTroopId);
-  return troop && troop.side === side ? troop : null;
+board.laneDragMin = function laneDragMin3d() {
+  return CONFIG.laneDragMin;
 };
 
 southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");

@@ -1,6 +1,6 @@
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
-import { Path, distance, touchesQuarterLine } from "../shared/path.js";
+import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
 
 export const troopStateMethods = {
   bodyRadius() {
@@ -415,6 +415,33 @@ export const boardStateMethods = {
     const outer = Path.bottomRadius(0) + CONFIG.bottomSublaneWidth / 2;
     const inner = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - CONFIG.bottomSublaneWidth / 2;
     if (dist < inner || dist > outer) return null;
+    const along = (Path.stationAt("bottom", point.x, point.y) / 180) * this.laneLength("bottom");
+    return { lane: "bottom", along };
+  },
+
+  /** Shortest distance from a world point to a lane centerline. */
+  laneDistance(lane, point) {
+    const pts = Path.centerline(lane);
+    let best = Infinity;
+    for (let i = 1; i < pts.length; i += 1) {
+      const from = pts[i - 1];
+      const to = pts[i];
+      const d = pointToSegment(point, from.x, from.y, to.x, to.y);
+      if (d < best) best = d;
+    }
+    return best;
+  },
+
+  /**
+   * Closest lane to a world point (even off the road), for wheel / pinch zoom.
+   * Along is measured from the player keep, matching openTelescopeAt.
+   */
+  nearestLaneAt(point) {
+    const topDist = this.laneDistance("top", point);
+    const botDist = this.laneDistance("bottom", point);
+    if (topDist <= botDist) {
+      return { lane: "top", along: Path.stationAt("top", point.x, point.y) };
+    }
     const along = (Path.stationAt("bottom", point.x, point.y) / 180) * this.laneLength("bottom");
     return { lane: "bottom", along };
   },

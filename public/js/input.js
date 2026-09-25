@@ -5,6 +5,9 @@ import { unlockAudio } from "./audio.js";
 
 /** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
+/** Two-finger spread / squeeze past this ratio counts as zoom in / out. */
+const PINCH_OUT = 1.12;
+const PINCH_IN = 0.88;
 
 const pointerMethods = {
   /**
@@ -596,19 +599,116 @@ export function bindInput(board) {
   Object.assign(board, pointerMethods);
   const canvas = board.canvas;
   const opts = { passive: false };
-  canvas.addEventListener("pointerdown", (event) => {
-    unlockAudio();
-    board.onPointerDown(event);
-  }, opts);
-  canvas.addEventListener("pointermove", (event) => board.onPointerMove(event), opts);
-  canvas.addEventListener("pointerup", (event) => board.onPointerUp(event), opts);
-  canvas.addEventListener("pointercancel", () => {
+  const pointers = new Map();
+  const pinchIds = new Set();
+  let pinch = null;
+
+  function clearTransientPress() {
     board.drag = null;
     board.buyDrag = null;
     board.telescopeDrag = null;
     board.telescopeSlide = 0;
     board.lanePress = null;
     board.enemyPress = null;
+  }
+
+  function pinchCenterEvent() {
+    const pts = [...pointers.values()];
+    if (pts.length < 2) return null;
+    return {
+      clientX: (pts[0].x + pts[1].x) / 2,
+      clientY: (pts[0].y + pts[1].y) / 2,
+    };
+  }
+
+  function pinchDistance() {
+    const pts = [...pointers.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+
+  function beginPinch() {
+    clearTransientPress();
+    for (const id of pointers.keys()) pinchIds.add(id);
+    const dist = Math.max(1, pinchDistance());
+    const center = pinchCenterEvent();
+    pinch = {
+      startDist: dist,
+      // World under the midpoint when the second finger landed.
+      spot: center ? board.nearestLaneAt(board.canvasPoint(center)) : null,
+      acted: false,
+    };
+  }
+
+  function stepPinch() {
+    if (!pinch || pinch.acted || pointers.size !== 2) return;
+    const ratio = pinchDistance() / pinch.startDist;
+    if (ratio >= PINCH_OUT) {
+      pinch.acted = true;
+      if (!board.telescope && pinch.spot) {
+        board.openTelescopeAt(pinch.spot.lane, pinch.spot.along);
+      }
+    } else if (ratio <= PINCH_IN) {
+      pinch.acted = true;
+      board.closeTelescope();
+    }
+  }
+
+  function zoomToward(event, into) {
+    if (board.winner || board.status !== "playing" || !board.player) return;
+    if (into) {
+      if (board.telescope) return;
+      const spot = board.nearestLaneAt(board.canvasPoint(event));
+      if (spot) board.openTelescopeAt(spot.lane, spot.along);
+      return;
+    }
+    board.closeTelescope();
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    unlockAudio();
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size >= 2) {
+      event.preventDefault();
+      pinchIds.add(event.pointerId);
+      if (!pinch) beginPinch();
+      return;
+    }
+    board.onPointerDown(event);
+  }, opts);
+  canvas.addEventListener("pointermove", (event) => {
+    if (pointers.has(event.pointerId)) {
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (pinch && pointers.size >= 2) {
+      event.preventDefault();
+      stepPinch();
+      return;
+    }
+    board.onPointerMove(event);
+  }, opts);
+  canvas.addEventListener("pointerup", (event) => {
+    const fromPinch = pinchIds.has(event.pointerId);
+    pointers.delete(event.pointerId);
+    pinchIds.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (fromPinch || pointers.size >= 2) {
+      event.preventDefault();
+      return;
+    }
+    board.onPointerUp(event);
+  }, opts);
+  canvas.addEventListener("pointercancel", (event) => {
+    pointers.delete(event.pointerId);
+    pinchIds.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    clearTransientPress();
   });
+  canvas.addEventListener("wheel", (event) => {
+    if (event.deltaY === 0) return;
+    event.preventDefault();
+    // Wheel up / trackpad pinch-out → telescope; wheel down / pinch-in → overview.
+    zoomToward(event, event.deltaY < 0);
+  }, opts);
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 }

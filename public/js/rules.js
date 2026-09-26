@@ -1061,26 +1061,270 @@ const pages = [
   },
 ];
 
-/** Short in-match controls guide (settings menu). Full booklet stays on /rules. */
+/** Short in-match controls guide (settings menu). */
+function drawHowtoButtons(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 2);
+
+  vignette(ctx, panels[0], { l: 40, t: 100, r: 220, b: 220 }, "Click banks to buy", (frame) => {
+    drawGround(ctx);
+    drawKeep(ctx, "player");
+    const cap = CONFIG.playerCapital;
+    const size = 18;
+    const gap = 6;
+    const count = CONFIG.bankCount;
+    const total = count * size + (count - 1) * gap;
+    const startX = cap.x - total / 2;
+    const y = cap.y - CONFIG.capitalRadius - size - 8;
+    for (let i = 0; i < count; i += 1) {
+      const x = startX + i * (size + gap);
+      ctx.fillStyle = i < 1 ? CONFIG.colors.gold : "#2a3648";
+      ctx.fillRect(x, y, size, size);
+      ctx.strokeStyle = "#0d1218";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, size, size);
+    }
+    worldArrow(ctx, startX + size * 1.5 + gap, y - 28, startX + size * 1.5 + gap, y - 4, CONFIG.colors.gold);
+    zoomInk(ctx, frame, "🏛️", startX + size * 1.5 + gap, y + size / 2, CONFIG.colors.text, 12);
+  });
+
+  vignette(ctx, panels[1], { l: 430, t: 120, r: 560, b: 220 }, "Swipe unit · up/down lane", () => {
+    drawGround(ctx);
+    const bx = 495;
+    const by = 170;
+    const bw = 44;
+    const bh = 36;
+    ctx.fillStyle = "#243246";
+    ctx.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
+    ctx.strokeStyle = CONFIG.colors.player;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
+    drawUnit(ctx, { x: bx, y: by, side: "player", type: "troop" });
+    worldArrow(ctx, bx, by - bh / 2 - 6, bx, by - bh / 2 - 28, CONFIG.colors.laneHover);
+    worldArrow(ctx, bx, by + bh / 2 + 6, bx, by + bh / 2 + 28, CONFIG.colors.gold);
+  });
+
+  vignette(ctx, panels[2], { l: 430, t: 120, r: 560, b: 220 }, "Swipe unit · left/right type", () => {
+    drawGround(ctx);
+    const bx = 495;
+    const by = 170;
+    const bw = 44;
+    const bh = 36;
+    ctx.fillStyle = "#243246";
+    ctx.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
+    drawUnit(ctx, { x: bx, y: by, side: "player", type: "grenadier", alternate: true });
+    worldArrow(ctx, bx - bw / 2 - 6, by, bx - bw / 2 - 28, by, CONFIG.colors.gold);
+    worldArrow(ctx, bx + bw / 2 + 6, by, bx + bw / 2 + 28, by, CONFIG.colors.gold);
+  });
+
+  const town = townSpots()[2];
+  vignette(ctx, panels[3], around([
+    { x: town.x, y: town.y },
+    place("player", "bottom", 1, 0.45, "troop"),
+  ], 70, 50), "Strategy swipe · town research", () => {
+    drawGround(ctx);
+    drawTownMarker(ctx, town, "player", true);
+    const bx = town.x;
+    const by = town.y + 48;
+    const bw = 72;
+    const bh = 22;
+    ctx.fillStyle = "#2a4a3a";
+    ctx.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
+    ctx.strokeStyle = "#6ab890";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
+    ctx.fillStyle = CONFIG.colors.gold;
+    ctx.font = "11px Trebuchet MS, Segoe UI, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Bastion", bx, by);
+    worldArrow(ctx, bx - bw / 2 - 4, by, bx - bw / 2 - 22, by, "#8aa0b8");
+    worldArrow(ctx, bx + bw / 2 + 4, by, bx + bw / 2 + 22, by, "#8aa0b8");
+  });
+}
+
+function drawHowtoMap(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 2);
+  const sample = [
+    place("player", "top", 2, 0.55, "troop"),
+    place("enemy", "top", 3, 0.35, "troop"),
+    place("player", "bottom", 1, 0.4, "dragoon"),
+  ];
+
+  vignette(ctx, panels[0], { l: 280, t: 100, r: 680, b: 220 }, "Click / pinch / wheel · zoom lane", () => {
+    drawGround(ctx);
+    drawKeep(ctx, "player");
+    drawKeep(ctx, "enemy");
+    for (let i = 0; i < sample.length; i += 1) {
+      if (sample[i].lane === "top") drawUnit(ctx, sample[i]);
+    }
+    ctx.save();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(360, 110, 240, 90);
+    ctx.restore();
+  });
+
+  vignette(ctx, panels[1], { l: 200, t: 80, r: 760, b: 520 }, "Swipe up/down · switch lanes", (frame) => {
+    drawGround(ctx);
+    drawKeep(ctx, "player");
+    drawKeep(ctx, "enemy");
+    for (let i = 0; i < sample.length; i += 1) drawUnit(ctx, sample[i]);
+    const midX = (CONFIG.playerCapital.x + CONFIG.enemyCapital.x) / 2;
+    worldArrow(ctx, midX, 200, midX, 280, CONFIG.colors.laneHover);
+    worldArrow(ctx, midX, 360, midX, 280, CONFIG.colors.laneHover);
+    zoomInk(ctx, frame, "lanes", midX + 36, 290, CONFIG.colors.text, 13, "left");
+  });
+
+  vignette(ctx, panels[2], { l: 300, t: 110, r: 660, b: 210 }, "Swipe left/right · traverse", () => {
+    drawGround(ctx);
+    const u = place("player", "top", 2, 0.5, "troop");
+    drawUnit(ctx, u);
+    worldArrow(ctx, u.x - 20, u.y - 36, u.x - 70, u.y - 36, CONFIG.colors.gold);
+    worldArrow(ctx, u.x + 20, u.y - 36, u.x + 70, u.y - 36, CONFIG.colors.gold);
+  });
+
+  vignette(ctx, panels[3], { l: 36, t: 58, r: 924, b: 604 }, "Field / pinch / wheel · zoom out", () => {
+    drawGround(ctx);
+    drawKeep(ctx, "player");
+    drawKeep(ctx, "enemy");
+    for (let i = 0; i < sample.length; i += 1) drawUnit(ctx, sample[i]);
+    const spots = townSpots();
+    for (let i = 0; i < spots.length; i += 1) {
+      drawTownMarker(ctx, spots[i], i < 2 ? "player" : null, false);
+    }
+  });
+}
+
+function drawHowtoUnits(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 2);
+  drawSpeedLadder(ctx, panels[0]);
+
+  const line = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "troop", "halt"));
+  vignette(ctx, panels[1], around(line, 56, 28), "Click line · Halt → Reform → Advance", () => {
+    drawGround(ctx);
+    ctx.save();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(line[1].x, line[1].y, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    for (let i = 0; i < line.length; i += 1) drawUnit(ctx, line[i]);
+  });
+
+  const charger = placeX("player", 2, 470, "troop", "charge");
+  const chargeFoe = placeX("enemy", 2, 560, "troop");
+  vignette(ctx, panels[2], around([charger, chargeFoe], 70, 36), "Swipe forward/back · charge / fall back", () => {
+    drawGround(ctx);
+    worldArrow(ctx, charger.x - 36, charger.y - 28, chargeFoe.x - 16, charger.y - 28, CONFIG.colors.charge);
+    drawUnit(ctx, charger);
+    drawUnit(ctx, chargeFoe);
+  });
+
+  const solo = placeX("player", 2, 500, "troop", "reform");
+  const mates = [
+    placeX("player", 1, 500, "troop"),
+    placeX("player", 3, 500, "troop"),
+  ];
+  vignette(ctx, panels[3], around([solo, ...mates], 70, 36), "Long-press · solo unit only", () => {
+    drawGround(ctx);
+    for (let i = 0; i < mates.length; i += 1) drawUnit(ctx, mates[i]);
+    ctx.save();
+    ctx.strokeStyle = CONFIG.colors.gold;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(solo.x, solo.y, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    drawUnit(ctx, solo);
+  });
+}
+
 const howtoPages = [
   {
-    title: "How to play",
-    artHeight: 320,
+    title: "Main Objective",
+    artHeight: 230,
     blocks: [
-      { kind: "p", text: "Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways for an alternate." },
       {
         kind: "ul",
         items: [
-          "Click a unit: Halt → Reform → Advance.",
-          "Long-press: select that unit alone.",
-          "Swipe forward / back: charge or fall back.",
-          "Swipe up / down: change row.",
-          "Click a town you own to invest land in its upgrade.",
-          "Broken units ignore orders until they rally.",
+          "Build units to attack the enemy Capital.",
         ],
       },
     ],
-    draw: drawOrders,
+    draw: drawKeeps,
+  },
+  {
+    title: "Secondary Objectives",
+    aspect: 1.45,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Push the line in the top lane to gain more gold and build more units.",
+          "Push the line in the bottom lane to gain more land and build better units and upgrades.",
+        ],
+      },
+    ],
+    draw: drawLanes,
+  },
+  {
+    title: "Button Controls",
+    artHeight: 320,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Click Banks to buy them.",
+          "Swipe Unit Buttons up/down to purchase for the top/bottom lane.",
+          "Swipe Unit Buttons left/right to change the unit type.",
+          "Swipe Strategy Buttons left/right or click to change Strategy for that lane.",
+          "Click a Town you control to enable/disable researching in that town.",
+        ],
+      },
+    ],
+    draw: drawHowtoButtons,
+  },
+  {
+    title: "Map Controls",
+    artHeight: 320,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Click an empty part of lane, pinch zoom in, or mouse wheel up to zoom into that lane.",
+          "Swipe up/down to switch lanes when zoomed.",
+          "Swipe left/right on an empty part of the lane to traverse the lane.",
+          "Click the green field, pinch zoom out, or mouse wheel down to return to regular view.",
+        ],
+      },
+    ],
+    draw: drawHowtoMap,
+  },
+  {
+    title: "Unit Controls",
+    artHeight: 320,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Actions done to one unit apply to all matching units in a line.",
+          "Click a unit/line to cycle between Halt, Reform, and Advance.",
+          "Swipe up/down to switch to the highlighted row.",
+          "Swipe forward to Charge, or Advance if Halted.",
+          "Swipe back to Fall Back, or Advance if Charging.",
+          "Long press a single unit to issue orders to only that unit (ignore lines).",
+        ],
+      },
+    ],
+    draw: drawHowtoUnits,
   },
 ];
 

@@ -105,3 +105,31 @@ export async function payPool(socketClient, { userId, poolId, amount, pin, reaso
     pool: toId,
   });
 }
+
+/** Pool owner → contributor (wiki rewards). Uses POOL_OWNER_ID + POOL_PIN. */
+export async function rewardFromPool(socketClient, { userId, amount, reason }) {
+  const toId = Number(userId);
+  const fromId = Number(process.env.POOL_OWNER_ID);
+  const pin = process.env.POOL_PIN;
+  if (!Number.isInteger(toId) || toId <= 0) {
+    return { success: false, message: "Contributor Formbar id is missing." };
+  }
+  if (!Number.isInteger(fromId) || fromId <= 0) {
+    return { success: false, message: "Pool owner id is not configured." };
+  }
+  if (!pin) {
+    return { success: false, message: "Pool PIN is not configured." };
+  }
+  const digipogs = Number(amount);
+  if (!Number.isFinite(digipogs) || digipogs <= 0) {
+    return { success: false, message: "Reward amount is invalid." };
+  }
+
+  return transferDigipogs(socketClient, {
+    from: fromId,
+    to: toId,
+    amount: digipogs,
+    pin,
+    reason: reason || "Wiki contribution",
+  });
+}

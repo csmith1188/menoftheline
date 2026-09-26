@@ -112,7 +112,27 @@ export async function initDb() {
     created_at INTEGER NOT NULL,
     archived_at INTEGER
   )`);
+  await run(`CREATE TABLE IF NOT EXISTS wiki_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    current_revision_id INTEGER,
+    created_at INTEGER NOT NULL,
+    created_by INTEGER NOT NULL
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS wiki_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL,
+    formbar_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    confirmed_at INTEGER,
+    undone_at INTEGER,
+    rewarded_at INTEGER
+  )`);
   await run("UPDATE accounts SET held = 0");
+  await seedWikiHome();
 }
 
 function pickName() {
@@ -365,6 +385,263 @@ export async function archiveSuggestion(id) {
   const result = await run(
     "UPDATE suggestions SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
     [Date.now(), suggestionId],
+  );
+  return result.changes > 0;
+}
+
+export const WIKI_TITLE_MAX = 80;
+export const WIKI_BODY_MAX = 20000;
+
+const HOME_SEED_BODY = `Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways for an alternate.
+
+- Click a unit: Halt → Reform → Advance.
+- Long-press: select that unit alone.
+- Swipe forward / back: charge or fall back.
+- Swipe up / down: change row.
+- Click a town you own to invest land in its upgrade.
+- Broken units ignore orders until they rally.
+
+Players can edit this wiki to document rules and strategies. Use [[Page Title]] to link to other pages.`;
+
+export function wikiSlug(title) {
+  const slug = String(title || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, WIKI_TITLE_MAX);
+  return slug || "page";
+}
+
+export function wikiRewardAmount() {
+  const n = Number(process.env.WIKI_REWARD_DIGIPOGS);
+  return Number.isInteger(n) && n > 0 ? n : 10;
+}
+
+export async function canEditWiki(formbarId) {
+  const id = Number(formbarId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const played = await get(
+    `SELECT 1 AS ok FROM games
+     WHERE formbar_a = ? OR formbar_b = ?
+     LIMIT 1`,
+    [id, id],
+  );
+  if (!played) return false;
+  const bought = await get(
+    "SELECT 1 AS ok FROM ticket_purchases WHERE formbar_id = ? LIMIT 1",
+    [id],
+  );
+  if (!bought) return false;
+  const spent = await get(
+    `SELECT 1 AS ok FROM games
+     WHERE mode = 'ranked' AND (formbar_a = ? OR formbar_b = ?)
+     LIMIT 1`,
+    [id, id],
+  );
+  return Boolean(spent);
+}
+
+async function seedWikiHome() {
+  const count = await get("SELECT COUNT(*) AS n FROM wiki_pages");
+  if (count && count.n > 0) return;
+  const now = Date.now();
+  const page = await run(
+    `INSERT INTO wiki_pages (slug, title, current_revision_id, created_at, created_by)
+     VALUES (?, ?, NULL, ?, ?)`,
+    ["home", "Home", now, 0],
+  );
+  const rev = await run(
+    `INSERT INTO wiki_revisions (page_id, formbar_id, name, body, created_at, confirmed_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [page.lastID, 0, "System", HOME_SEED_BODY, now, now],
+  );
+  await run(
+    "UPDATE wiki_pages SET current_revision_id = ? WHERE id = ?",
+    [rev.lastID, page.lastID],
+  );
+}
+
+export async function listWikiSlugs() {
+  const rows = await all("SELECT slug FROM wiki_pages ORDER BY slug ASC");
+  return rows.map((row) => row.slug);
+}
+
+export async function listWikiPages() {
+  return all(
+    `SELECT p.id, p.slug, p.title, p.created_at,
+            r.name AS editor_name, r.formbar_id AS editor_id, r.created_at AS edited_at
+     FROM wiki_pages p
+     LEFT JOIN wiki_revisions r ON r.id = p.current_revision_id
+     ORDER BY CASE WHEN p.slug = 'home' THEN 0 ELSE 1 END, p.title COLLATE NOCASE ASC`,
+  );
+}
+
+export async function getWikiPageBySlug(slug) {
+  const key = wikiSlug(slug);
+  const page = await get(
+    `SELECT id, slug, title, current_revision_id, created_at, created_by
+     FROM wiki_pages WHERE slug = ?`,
+    [key],
+  );
+  if (!page) return null;
+  let revision = null;
+  if (page.current_revision_id) {
+    revision = await get(
+      `SELECT id, page_id, formbar_id, name, body, created_at,
+              confirmed_at, undone_at, rewarded_at
+       FROM wiki_revisions WHERE id = ?`,
+      [page.current_revision_id],
+    );
+  }
+  return { page, revision };
+}
+
+export async function getWikiRevision(id) {
+  const revisionId = Number(id);
+  if (!Number.isInteger(revisionId) || revisionId <= 0) return null;
+  return get(
+    `SELECT r.id, r.page_id, r.formbar_id, r.name, r.body, r.created_at,
+            r.confirmed_at, r.undone_at, r.rewarded_at,
+            p.slug, p.title, p.current_revision_id
+     FROM wiki_revisions r
+     JOIN wiki_pages p ON p.id = r.page_id
+     WHERE r.id = ?`,
+    [revisionId],
+  );
+}
+
+export async function saveWikiPage({ slug, title, body, formbarId, name }) {
+  const trimmedBody = String(body || "").trim().slice(0, WIKI_BODY_MAX);
+  if (!trimmedBody) {
+    return { ok: false, error: "Page text is required." };
+  }
+  const existing = await getWikiPageBySlug(slug);
+  const now = Date.now();
+  const authorId = Number(formbarId);
+  const authorName = String(name || "").trim().slice(0, 80) || `Player ${authorId}`;
+
+  if (existing) {
+    const rev = await run(
+      `INSERT INTO wiki_revisions (page_id, formbar_id, name, body, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [existing.page.id, authorId, authorName, trimmedBody, now],
+    );
+    await run(
+      "UPDATE wiki_pages SET current_revision_id = ? WHERE id = ?",
+      [rev.lastID, existing.page.id],
+    );
+    return { ok: true, slug: existing.page.slug, created: false };
+  }
+
+  const pageTitle = String(title || "").trim().slice(0, WIKI_TITLE_MAX);
+  if (!pageTitle) {
+    return { ok: false, error: "Page title is required." };
+  }
+  const newSlug = wikiSlug(pageTitle);
+  const clash = await get("SELECT id FROM wiki_pages WHERE slug = ?", [newSlug]);
+  if (clash) {
+    return { ok: false, error: "A page with that title already exists." };
+  }
+  const page = await run(
+    `INSERT INTO wiki_pages (slug, title, current_revision_id, created_at, created_by)
+     VALUES (?, ?, NULL, ?, ?)`,
+    [newSlug, pageTitle, now, authorId],
+  );
+  const rev = await run(
+    `INSERT INTO wiki_revisions (page_id, formbar_id, name, body, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [page.lastID, authorId, authorName, trimmedBody, now],
+  );
+  await run(
+    "UPDATE wiki_pages SET current_revision_id = ? WHERE id = ?",
+    [rev.lastID, page.lastID],
+  );
+  return { ok: true, slug: newSlug, created: true };
+}
+
+export async function listOpenWikiRevisions() {
+  return all(
+    `SELECT r.id, r.page_id, r.formbar_id, r.name, r.body, r.created_at,
+            r.confirmed_at, r.undone_at, r.rewarded_at,
+            p.slug, p.title,
+            (
+              SELECT prev.body FROM wiki_revisions prev
+              WHERE prev.page_id = r.page_id AND prev.id < r.id
+              ORDER BY prev.id DESC
+              LIMIT 1
+            ) AS previous_body
+     FROM wiki_revisions r
+     JOIN wiki_pages p ON p.id = r.page_id
+     WHERE r.confirmed_at IS NULL AND r.undone_at IS NULL
+     ORDER BY r.created_at DESC, r.id DESC`,
+  );
+}
+
+export async function confirmWikiRevision(id) {
+  const revisionId = Number(id);
+  if (!Number.isInteger(revisionId) || revisionId <= 0) return false;
+  const result = await run(
+    `UPDATE wiki_revisions
+     SET confirmed_at = ?
+     WHERE id = ? AND confirmed_at IS NULL AND undone_at IS NULL`,
+    [Date.now(), revisionId],
+  );
+  return result.changes > 0;
+}
+
+export async function undoWikiRevision(id) {
+  const revision = await getWikiRevision(id);
+  if (!revision || revision.undone_at) {
+    return { ok: false, error: "Revision not found." };
+  }
+  const now = Date.now();
+  const first = await get(
+    `SELECT id FROM wiki_revisions
+     WHERE page_id = ?
+     ORDER BY id ASC
+     LIMIT 1`,
+    [revision.page_id],
+  );
+  const isCreate = first && first.id === revision.id;
+
+  if (isCreate) {
+    await run("DELETE FROM wiki_revisions WHERE page_id = ?", [revision.page_id]);
+    await run("DELETE FROM wiki_pages WHERE id = ?", [revision.page_id]);
+    return { ok: true, deleted: true };
+  }
+
+  await run(
+    "UPDATE wiki_revisions SET undone_at = ?, confirmed_at = COALESCE(confirmed_at, ?) WHERE id = ?",
+    [now, now, revision.id],
+  );
+
+  if (revision.current_revision_id === revision.id) {
+    const previous = await get(
+      `SELECT id FROM wiki_revisions
+       WHERE page_id = ? AND id < ? AND undone_at IS NULL
+       ORDER BY id DESC
+       LIMIT 1`,
+      [revision.page_id, revision.id],
+    );
+    if (previous) {
+      await run(
+        "UPDATE wiki_pages SET current_revision_id = ? WHERE id = ?",
+        [previous.id, revision.page_id],
+      );
+    }
+  }
+  return { ok: true, deleted: false };
+}
+
+export async function setWikiRevisionRewarded(id) {
+  const revisionId = Number(id);
+  if (!Number.isInteger(revisionId) || revisionId <= 0) return false;
+  const result = await run(
+    "UPDATE wiki_revisions SET rewarded_at = ? WHERE id = ? AND rewarded_at IS NULL AND undone_at IS NULL",
+    [Date.now(), revisionId],
   );
   return result.changes > 0;
 }

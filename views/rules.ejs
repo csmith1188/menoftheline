@@ -4,32 +4,60 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#121821">
-  <title>Rules · Men Of The Line</title>
+  <title><%= page ? page.title : "Missing page" %> · Rules · Men Of The Line</title>
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="/css/landing.css">
 </head>
 <body>
   <div class="page rules-page">
     <%- include("header") %>
-    <div id="rules" class="rules-sheet" aria-labelledby="rules-title">
-      <div class="rules-head">
-        <h2 id="rules-title"></h2>
-      </div>
-      <div class="rules-body">
-        <canvas id="rules-art" width="640" height="260" aria-hidden="true"></canvas>
-        <div id="rules-copy" class="rules-copy"></div>
-      </div>
-      <div class="rules-nav">
-        <button type="button" id="rules-prev" class="action">Back</button>
-        <div class="rules-mid">
-          <div id="rules-dots" class="rules-dots"></div>
-          <p id="rules-page"></p>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section class="wiki-sheet">
+      <% if (page && revision) { %>
+        <div class="wiki-head">
+          <p class="hint"><a href="/rules">All pages</a></p>
+          <h2><%= page.title %></h2>
+          <p class="hint">
+            Last edit by
+            <% if (revision.formbar_id > 0) { %>
+              <a href="/profile/<%= revision.formbar_id %>"><%= revision.name %></a>
+            <% } else { %>
+              <%= revision.name %>
+            <% } %>
+            · <%= new Date(revision.created_at).toLocaleString() %>
+          </p>
         </div>
-        <button type="button" id="rules-next" class="action">Next</button>
-      </div>
-    </div>
+        <div class="wiki-body"><%- bodyHtml %></div>
+        <p class="wiki-actions">
+          <% if (canEdit) { %>
+            <a class="action" href="/rules/<%= page.slug %>/edit">Edit</a>
+          <% } else if (viewer) { %>
+            <span class="hint">Editing requires buying tickets and finishing a ranked game.</span>
+          <% } else { %>
+            <a href="/login">Log in</a> <span class="hint">to edit the wiki.</span>
+          <% } %>
+        </p>
+      <% } else { %>
+        <div class="wiki-head">
+          <p class="hint"><a href="/rules">All pages</a></p>
+          <h2><%= missingTitle %></h2>
+        </div>
+        <p class="hint">This page does not exist yet.</p>
+        <p class="wiki-actions">
+          <% if (canEdit) { %>
+            <a class="action" href="/rules/<%= slug %>/edit">Create page</a>
+          <% } else if (viewer) { %>
+            <span class="hint">Editing requires buying tickets and finishing a ranked game.</span>
+          <% } else { %>
+            <a href="/login">Log in</a> <span class="hint">to create wiki pages.</span>
+          <% } %>
+        </p>
+      <% } %>
+    </section>
   </div>
-  <%- include("suggestion-modal", { nextPath: "/rules" }) %>
-  <script type="module" src="/js/rules-page.js"></script>
+  <%- include("suggestion-modal", { nextPath: page ? "/rules/" + page.slug : "/rules/" + slug }) %>
 </body>
 </html>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title>Wiki · Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Wiki revisions</h2>
+      <p class="hint">Reward is <%= rewardAmount %> digipogs per revision. Confirm clears the item from this list.</p>
+      <% if (!revisions.length) { %>
+        <p class="hint">No open wiki changes.</p>
+      <% } else { %>
+        <ul class="list">
+          <% revisions.forEach(function (item) { %>
+            <li class="card">
+              <div class="suggest-meta">
+                <a href="/rules/<%= item.slug %>"><%= item.title %></a>
+                <a href="/profile/<%= item.formbar_id %>"><%= item.name %></a>
+                <span class="hint"><%= new Date(item.created_at).toLocaleString() %></span>
+                <% if (item.isCreate) { %><span class="hint">New page</span><% } %>
+                <% if (item.rewarded_at) { %><span class="hint">Rewarded</span><% } %>
+              </div>
+              <pre class="wiki-diff" aria-label="Diff"><% item.diff.forEach(function (line) { %><span class="wiki-diff-<%= line.type %>"><%= line.type === "add" ? "+" : line.type === "del" ? "-" : " " %><%= line.text %>
+</span><% }) %></pre>
+              <div class="wiki-admin-actions">
+                <form method="post" action="/admin/wiki/<%= item.id %>/confirm">
+                  <button type="submit">Confirm</button>
+                </form>
+                <form method="post" action="/admin/wiki/<%= item.id %>/undo">
+                  <button type="submit">Undo</button>
+                </form>
+                <% if (!item.rewarded_at && item.formbar_id > 0) { %>
+                  <form method="post" action="/admin/wiki/<%= item.id %>/reward">
+                    <button type="submit">Reward <%= rewardAmount %> digipogs</button>
+                  </form>
+                <% } %>
+              </div>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/admin/wiki" }) %>
+</body>
+</html>

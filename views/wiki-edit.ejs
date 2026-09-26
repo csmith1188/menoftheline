@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title>Edit <%= title %> · Rules · Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page rules-page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section class="wiki-sheet">
+      <div class="wiki-head">
+        <p class="hint"><a href="/rules">All pages</a></p>
+        <h2><%= exists ? "Edit" : "Create" %> page</h2>
+        <p class="hint">Markdown supported. Line breaks and tabs count. Link pages with [[Page Title]].</p>
+      </div>
+      <form method="post" action="/rules/<%= slug %>/edit" class="wiki-edit">
+        <label for="wiki-title">Title</label>
+        <% if (exists) { %>
+          <input id="wiki-title" type="text" value="<%= title %>" disabled>
+          <input type="hidden" name="title" value="<%= title %>">
+        <% } else { %>
+          <input id="wiki-title" name="title" type="text" maxlength="80" required value="<%= title %>">
+        <% } %>
+        <label for="wiki-body">Body</label>
+        <textarea id="wiki-body" name="body" rows="18" maxlength="20000" required><%= body %></textarea>
+        <div class="wiki-actions">
+          <button type="submit" class="action">Save</button>
+          <a href="/rules/<%= slug %>">Cancel</a>
+        </div>
+      </form>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/rules/" + slug + "/edit" }) %>
+</body>
+</html>

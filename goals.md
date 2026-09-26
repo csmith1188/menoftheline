@@ -1,12 +1,12 @@
 # Bugs
 
 # Ideas
-- Formbar user made wiki
-    - changes are auto accepted
-    - all changes listed in wiki admin panel. admin can confirm, undo or "reward" by transferring pogs for each entry
-    - ultra-simple. view, edit, and link features only
-    - replace current "how to play"
+- officers make order sounds when near lines given orders
+
+# Feature
+- Music
 - training:
+    - complete bot algorithm
     - adjust game speed
     - choose bot level and strategy
 - terrain:
@@ -15,10 +15,6 @@
     - river -> allow infantry, blocks horse and gun
     - peaks -> block los unless inside, slow infantry, blocks horse and gun
     - bridge -> cannot switch lanes
-- officers make order sounds when near lines given orders
-
-# Feature
-- music
 - Reinforced Learning player
 
 # UI

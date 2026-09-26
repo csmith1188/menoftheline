@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title>Rules · Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page rules-page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section class="wiki-sheet">
+      <div class="wiki-head">
+        <h2>Rules wiki</h2>
+        <p class="hint">Player-written rules and strategies. Markdown and [[Page Title]] links when editing.</p>
+      </div>
+      <% if (!pages.length) { %>
+        <p class="hint">No pages yet.</p>
+      <% } else { %>
+        <ul class="wiki-index">
+          <% pages.forEach(function (item) { %>
+            <li>
+              <a href="/rules/<%= item.slug %>"><%= item.title %></a>
+              <% if (item.edited_at) { %>
+                <span class="hint">
+                  <%= item.editor_name || "Unknown" %>
+                  · <%= new Date(item.edited_at).toLocaleString() %>
+                </span>
+              <% } %>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+      <p class="wiki-actions">
+        <% if (canEdit) { %>
+          <a class="action" href="/rules/new-page/edit">New page</a>
+        <% } else if (viewer) { %>
+          <span class="hint">Editing requires buying tickets and finishing a ranked game.</span>
+        <% } else { %>
+          <a href="/login">Log in</a> <span class="hint">to edit the wiki.</span>
+        <% } %>
+      </p>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/rules" }) %>
+</body>
+</html>

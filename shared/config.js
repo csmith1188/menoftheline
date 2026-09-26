@@ -80,7 +80,7 @@ export const CONFIG = {
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
   /** Land price to unlock one unit variant for the match. */
-  variantUnlockCost: 350,
+  variantUnlockCost: 5,
 
   // Interface
 

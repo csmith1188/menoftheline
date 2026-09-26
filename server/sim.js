@@ -62,9 +62,9 @@ class Projectile {
   }
 
   /**
-   * Cannon shells also hit other units on the target's line. Normal
-   * field guns splash half damage onto adjacent rows. Howitzers hit
-   * the whole line for full damage.
+   * Cannon shells also hit other units on the target's line. Field guns
+   * splash half damage onto adjacent rows. Howitzers fire separate
+   * cannister shells instead and do not splash.
    */
   splashCannonLine() {
     if (!(this.splash > 0) || !this.target.side) {
@@ -2669,13 +2669,106 @@ class Lancer extends Dragoon {
   }
 }
 
-/** Cannon alternate: shorter range, half shell, full damage across the line. */
+/**
+ * Cannon alternate: shorter range, cannister fire. On each shot, fires
+ * one projectile at the closest in-range non-officer in every row
+ * (lane + sublane), using the same shoot range as the current order.
+ * No splash.
+ */
 class Howitzer extends Cannon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
     this.variant = "howitzer";
     this.alternate = true;
     this.applyStats(UNIT_STATS.howitzer);
+  }
+
+  /**
+   * Closest living non-officer in each row inside maxRange. Units locked
+   * in melee are skipped. A row is a lane + sublane pair.
+   */
+  cannisterTargets(enemies, allies, maxRange) {
+    const best = {};
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (other.hp <= 0 || other.type === "officer") {
+        continue;
+      }
+      if (allies && other.isInMelee(allies)) {
+        continue;
+      }
+      const d = distance(this, other);
+      if (d > maxRange) {
+        continue;
+      }
+      const key = `${other.lane}:${other.sublane}`;
+      const prev = best[key];
+      if (!prev || d < prev.d) {
+        best[key] = { unit: other, d };
+      }
+    }
+    const out = [];
+    const keys = Object.keys(best);
+    for (let i = 0; i < keys.length; i += 1) {
+      out.push(best[keys[i]].unit);
+    }
+    return out;
+  }
+
+  /** Cannister: one shell per in-range row; falls back to a single aim. */
+  fire(target, allies, projectiles, kind) {
+    const strike = kind || "shoot";
+    if (strike === "melee") {
+      super.fire(target, allies, projectiles, kind);
+      return;
+    }
+    if (allies && this.collidingAlly(allies)) {
+      return;
+    }
+    const sim = this.side.sim;
+    const enemies = this.enemyTroops();
+    const enemySide = this.side === sim.player ? sim.enemy : sim.player;
+    const range = this.shootRange(allies || this.side.troops, enemies, enemySide);
+    let targets = this.cannisterTargets(enemies, allies, range);
+    if (!targets.length) {
+      if (
+        target
+        && (!(target.isInMelee) || !allies || !target.isInMelee(allies))
+      ) {
+        targets = [target];
+      } else {
+        return;
+      }
+    }
+    this.side.sim.emitSound({
+      type: "shoot",
+      lane: this.lane,
+      sublane: this.sublane,
+      unitType: this.type,
+      sideId: this.side.id,
+    });
+    for (let i = 0; i < targets.length; i += 1) {
+      const aim = targets[i];
+      projectiles.push(new Projectile(
+        this.x,
+        this.y,
+        aim,
+        this.attackDamage(aim, strike, allies),
+        allies,
+        strike,
+        this.type,
+        this.side.sim,
+        {
+          speed: this.projectileSpeed,
+          size: this.projectileSize,
+          color: this.projectileColor,
+          splash: 0,
+          splashWholeLine: false,
+        },
+      ));
+    }
+    this.cooldown = this.strikeDelay(strike);
+    this.flash = 0.12;
   }
 }
 

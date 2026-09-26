@@ -990,7 +990,7 @@ const pages = [
           "Grenadier: Tougher troops who prefer to fight up close.",
           "Rifle: Longer, harder shot with a slower reload.",
           "Lancer: Do regular flank damage but increased charge damage.",
-          "Howitzer: Shorter gun that hits a whole line.",
+          "Howitzer: Shorter gun. Fires one shell at the closest in-range target in each row.",
           "Color: Raises moral by restoring nearby fatigue and bolstering attack and speed.",
         ],
       },

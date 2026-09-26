@@ -194,13 +194,13 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
   },
-  /** Cannon: shorter reach, half shell damage, full damage to the whole line. */
+  /** Cannon: shorter reach, cannister — one shell per in-range row, no splash. */
   howitzer: {
     ...SHOT,
     hp: 200,
-    rangedDamage: 45,
+    rangedDamage: 120,
     meleeDamage: 0,
-    range: 350,
+    range: 200,
     engageRange: 0.5,
     chargeSpeed: 1,
     flankMultiplier: 1.2,
@@ -210,8 +210,8 @@ export const UNIT_STATS = {
     cost: 400,
     lineBonus: 0,
     fightsMelee: false,
-    splash: 1,
-    splashWholeLine: true,
+    splash: 0,
+    splashWholeLine: false,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,

@@ -19,5 +19,3 @@
 
 # UI
 - 3d should always zoom in to fill screen with map
-- Rewrite controls guide?
-    "How to accomplish X" -> diagram image of action

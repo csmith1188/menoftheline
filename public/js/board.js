@@ -878,7 +878,9 @@ function activeBonuses(board, troop, allies) {
 
   let flanking = false;
   for (let i = 0; i < enemies.length; i += 1) {
-    if (isFlanking(troop, enemies[i])) {
+    const foe = enemies[i];
+    if (foe.variant === "grenadier") continue;
+    if (isFlanking(troop, foe)) {
       flanking = true;
       break;
     }

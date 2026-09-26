@@ -2233,7 +2233,7 @@ class Unit {
     if (this.order === "charge") {
       damage *= this.chargeMultiplier;
     }
-    if (target.lane && this.isFlanking(target)) {
+    if (target.lane && this.isFlanking(target) && target.variant !== "grenadier") {
       damage *= this.flankMultiplier;
     }
     if (target.type === "officer") {
@@ -2662,7 +2662,7 @@ class Officer extends Unit {
   }
 }
 
-/** Troop alternate: tougher body, shorter musket. */
+/** Troop alternate: tougher body; ignores bonus flanking damage. */
 class Grenadier extends Troop {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);

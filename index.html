@@ -2059,7 +2059,7 @@ class Troop {
     if (this.order === "charge") {
       damage *= CONFIG.doubleDamageMultiplier;
     }
-    if (target.lane && this.isFlanking(target)) {
+    if (target.lane && this.isFlanking(target) && target.variant !== "grenadier") {
       damage *= CONFIG.doubleDamageMultiplier;
       if (this.type === "dragoon") {
         damage *= CONFIG.dragoonFlankBonus;

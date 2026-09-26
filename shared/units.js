@@ -130,7 +130,7 @@ export const UNIT_STATS = {
     officerDamageMultiplier: 1,
   },
   // Alternates (same base type in play; white square behind the icon)
-  /** Troop with more hit points and shorter musket range. */
+  /** Troop with more hit points; ignores bonus flanking damage. */
   grenadier: {
     ...SHOT,
     hp: 250,

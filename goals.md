@@ -2,6 +2,10 @@
 - starts in 30 but counts to 15
 
 # Ideas
+- Suggestion box
+    - requires login
+    - "bug" cbeckbox requires a new text area: "how did you create the bug?"
+    - admin link to new page to view and archive submissions
 - grand strategy button
     - one for each lane
     - Bastion: always target closest
@@ -32,6 +36,4 @@
 - move settings/tutorial to free space on scoreboard (each side).
 
 # Balance
-- grenadiers ability is bonus flanking damage cannot be applied to them. they are consider "troops" for all other intents and purposes.
-- lancer pistols that can shoot in combat
 - officers have to do more than handle fatigue, or fatigue must be more important

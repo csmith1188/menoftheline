@@ -992,7 +992,7 @@ const pages = [
       {
         kind: "ul",
         items: [
-          "Grenadier: Tougher troops who prefer to fight up close.",
+          "Grenadier: Tougher troops. Bonus flanking damage does not apply to them.",
           "Rifle: Longer, harder shot with a slower reload.",
           "Lancer: Do regular flank damage but increased charge damage.",
           "Howitzer: Shorter gun. Fires one shell at the closest in-range target in each row.",

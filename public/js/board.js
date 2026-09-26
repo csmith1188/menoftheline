@@ -1,6 +1,14 @@
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
 import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
+
+/** +12 or −1.2, one decimal when the tenth place is nonzero. */
+function formatSignedRate(n) {
+  const rounded = Math.round(n * 10) / 10;
+  const abs = Math.abs(rounded);
+  const text = Number.isInteger(rounded) ? String(abs) : abs.toFixed(1);
+  return `${rounded < 0 ? "−" : "+"}${text}`;
+}
 
 export const troopStateMethods = {
   bodyRadius() {
@@ -61,6 +69,44 @@ export const sideStateMethods = {
   /** Outgoing damage multiplier from damage ranks. */
   damageScale() {
     return 1 + CONFIG.damageUpgradeAmount * this.upgrades.damage;
+  },
+
+  /** Gold per second paid to keep this side's living units. */
+  massTax() {
+    return massTaxOf(this.troops);
+  },
+
+  /** Gold per second from unlocked banks. Matches the server formula. */
+  bankIncome() {
+    const n = this.banks;
+    return CONFIG.bankIncomePer * (n * (n + 1)) / 2;
+  },
+
+  /** Top-lane gold share already folded into income, after rounding. */
+  laneBonus() {
+    return this.income - CONFIG.baseIncome - this.bankIncome();
+  },
+
+  /** Gold per second after upkeep. This is the rate the treasury actually changes. */
+  netIncome() {
+    return this.income - this.massTax();
+  },
+
+  /** Signed gold-per-second for the top scoreboard count, tax included. */
+  goldRateLabel() {
+    return `${formatSignedRate(this.netIncome())}/s`;
+  },
+
+  /** Lane bonus, bank income, and upkeep for the scoreboard's second line. */
+  economyDetail() {
+    const tax = Math.round(this.massTax() * 10) / 10;
+    const taxText = Number.isInteger(tax) ? String(tax) : tax.toFixed(1);
+    return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰`;
+  },
+
+  /** Speed, damage, and armor ranks, drawn at the bottom corners. */
+  upgradeLabel() {
+    return `${this.speedMultiplier.toFixed(2)}x ⚡  ${this.damageScale().toFixed(2)}x ⚔️  ${Math.round(this.armorReduction() * 100)}% 🛡️`;
   },
 
   /** Gold to unlock the next bank. */

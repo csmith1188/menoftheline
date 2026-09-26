@@ -1048,7 +1048,7 @@ const pages = [
     title: "Gold and land",
     artHeight: 300,
     blocks: [
-      { kind: "p", text: "Gold buys units and banks. Land buys upgrades and unit variants. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane." },
+      { kind: "p", text: "Gold buys units and banks. Land buys upgrades and unit variants. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.1% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
       { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Click a town you own to upgrade speed, armor, or damage for your army." },
     ],
     draw: drawEconomy,

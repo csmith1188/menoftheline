@@ -28,6 +28,9 @@ const scoreEl = document.getElementById("score");
 const banksPlayer = document.getElementById("banks-player");
 const banksEnemy = document.getElementById("banks-enemy");
 const hudEl = document.getElementById("hud");
+const upgradeBar = document.getElementById("upgrade-bar");
+const upgradePlayer = document.getElementById("upgrade-player");
+const upgradeEnemy = document.getElementById("upgrade-enemy");
 const inspectEl = document.getElementById("inspect");
 const orderEl = document.getElementById("order-flash");
 
@@ -97,9 +100,9 @@ function sideLine(side) {
   if (!side) return "";
   const gold = Math.floor(side.gold);
   const land = Math.floor(side.land);
-  const econ = `${gold}💰 +${side.income}/s   ${land}🌿 +${side.landIncome}/s`;
-  const ups = `${side.speedMultiplier.toFixed(2)}x ⚡  ${side.damageScale().toFixed(2)}x ⚔️  ${Math.round(side.armorReduction() * 100)}% 🛡️`;
-  return `${econ}<br>${ups}`;
+  const econ = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 +${side.landIncome}/s`;
+  const detail = side.economyDetail();
+  return `${econ}<br><span class="mass-tax${side.netIncome() < 0 ? " over" : ""}">${detail}</span>`;
 }
 
 function syncScore() {
@@ -111,6 +114,8 @@ function syncScore() {
     `<div class="keeps"><span class="you">${pHp}</span> — <span class="them">${eHp}</span></div>`,
     `<div class="side foe">${sideLine(board.enemy)}</div>`,
   ].join("");
+  if (upgradePlayer) upgradePlayer.textContent = board.player.upgradeLabel();
+  if (upgradeEnemy) upgradeEnemy.textContent = board.enemy.upgradeLabel();
 }
 
 function bankRowKey(side, clickable) {
@@ -222,6 +227,7 @@ function syncChrome() {
   const showHud = Boolean(board.player) && !waiting;
   topChrome.classList.toggle("hidden", !showHud);
   if (hudEl) hudEl.classList.toggle("hidden", !showHud);
+  if (upgradeBar) upgradeBar.classList.toggle("hidden", !showHud);
   if (showHud) {
     syncScore();
     syncBanks();

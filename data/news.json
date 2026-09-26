@@ -1,5 +1,17 @@
 [
   {
+    "date": "2026-09-25",
+    "title": "Upkeep & Scoreboard",
+    "summary": "Living units now cost gold over time, and the scoreboard shows where that gold comes from and where it goes.",
+    "items": [
+      "Each living unit pays upkeep: 1% of its gold cost per second, multiplied by its remaining health. A unit at half health pays half.",
+      "Upkeep cannot drop gold below zero.",
+      "The gold per second beside your treasury is income after upkeep.",
+      "The line under that shows your top-lane bonus, bank income, and upkeep. It turns red when upkeep is higher than income.",
+      "Speed, damage, and armor readouts moved to the bottom corners of the screen."
+    ]
+  },
+  {
     "date": "2026-09-24",
     "title": "Charge Through & Stack Resolve",
     "summary": "Cavalry can charge through friendlies, and stacked units peel apart instead of fighting through each other.",

@@ -539,9 +539,10 @@ const boardMethods = {
       this.drawBattlefield(ctx);
       ctx.restore();
       applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
-      this.drawScoreboard(ctx);
-      this.drawTelescopeHud(ctx);
-      return;
+    this.drawScoreboard(ctx);
+    this.drawUpgradeReadouts(ctx);
+    this.drawTelescopeHud(ctx);
+    return;
     }
     applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
     ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
@@ -556,6 +557,7 @@ const boardMethods = {
     this.player.drawBanks(ctx);
     this.enemy.drawBanks(ctx);
     this.drawScoreboard(ctx);
+    this.drawUpgradeReadouts(ctx);
     this.drawBuyButtons(ctx);
     this.drawInspectedUnit(ctx);
     this.drawOrderCallout(ctx);
@@ -697,17 +699,38 @@ const boardMethods = {
   drawSideStats(ctx, side, x, midY, align) {
     const gold = Math.floor(side.gold);
     const land = Math.floor(side.land);
-    const line1 = `${gold}💰 +${side.income}/s   ${land}🌿 +${side.landIncome}/s`;
-    const line2 = `${side.speedMultiplier.toFixed(2)}x ⚡  ${side.damageScale().toFixed(2)}x ⚔️  ${Math.round(side.armorReduction() * 100)}% 🛡️`;
+    const line1 = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 +${side.landIncome}/s`;
+    const line2 = side.economyDetail();
     ctx.save();
     ctx.textAlign = align;
     ctx.textBaseline = "middle";
     ctx.fillStyle = side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
     ctx.font = this.uiFont(12);
     ctx.fillText(line1, x, midY - 8 * CONFIG.uiScale);
-    ctx.fillStyle = CONFIG.colors.text;
+    ctx.fillStyle = side.netIncome() < 0 ? "#e85d4c" : CONFIG.colors.gold;
     ctx.font = this.uiFont(11, "normal");
     ctx.fillText(line2, x, midY + 9 * CONFIG.uiScale);
+    ctx.restore();
+  },
+
+  /** Speed, damage, and armor, pinned to the bottom corners. */
+  drawUpgradeReadouts(ctx) {
+    if (!this.player || !this.enemy) return;
+    const y = CONFIG.canvasHeight - 12 * CONFIG.uiScale;
+    const pad = 14 * CONFIG.uiScale;
+    ctx.save();
+    ctx.textBaseline = "bottom";
+    ctx.font = this.uiFont(12);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#0d1218";
+    ctx.textAlign = "left";
+    ctx.strokeText(this.player.upgradeLabel(), pad, y);
+    ctx.fillStyle = CONFIG.colors.player;
+    ctx.fillText(this.player.upgradeLabel(), pad, y);
+    ctx.textAlign = "right";
+    ctx.strokeText(this.enemy.upgradeLabel(), CONFIG.canvasWidth - pad, y);
+    ctx.fillStyle = CONFIG.colors.enemy;
+    ctx.fillText(this.enemy.upgradeLabel(), CONFIG.canvasWidth - pad, y);
     ctx.restore();
   },
 

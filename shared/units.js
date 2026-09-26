@@ -1,3 +1,5 @@
+import { CONFIG } from "./config.js";
+
 /**
  * Canonical stats for each unit kind. The server unit classes copy these
  * onto each instance. Keys match the spawn type. Alternates keep their
@@ -39,10 +41,10 @@ export const UNIT_STATS = {
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 20,
-    cost: 120,
+    cost: 100,
     lineBonus: 0.2,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -59,10 +61,10 @@ export const UNIT_STATS = {
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 20,
-    cost: 120,
+    cost: 100,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
@@ -79,10 +81,10 @@ export const UNIT_STATS = {
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 40,
-    cost: 240,
+    cost: 200,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -99,7 +101,7 @@ export const UNIT_STATS = {
     rangedCooldown: 4,
     meleeCooldown: 4,
     speed: 20,
-    cost: 360,
+    cost: 300,
     lineBonus: 0,
     fightsMelee: false,
     splash: 0.5,
@@ -119,10 +121,10 @@ export const UNIT_STATS = {
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 20,
-    cost: 180,
+    cost: 200,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 100,
     restoreRate: 1,
     officerDamageMultiplier: 1,
@@ -131,20 +133,20 @@ export const UNIT_STATS = {
   /** Troop with more hit points and shorter musket range. */
   grenadier: {
     ...SHOT,
-    hp: 280,
+    hp: 250,
     rangedDamage: 10,
     meleeDamage: 10,
-    range: 150,
+    range: 200,
     engageRange: 0.5,
     chargeSpeed: 1.5,
     flankMultiplier: 1.2,
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 20,
-    cost: 120,
+    cost: 150,
     lineBonus: 0.2,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -162,10 +164,10 @@ export const UNIT_STATS = {
     rangedCooldown: 2,
     meleeCooldown: 1,
     speed: 20,
-    cost: 120,
+    cost: 200,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
@@ -176,18 +178,18 @@ export const UNIT_STATS = {
     hp: 200,
     rangedDamage: 5,
     meleeDamage: 20,
-    range: 200,
+    range: 100,
     engageRange: 0.5,
     chargeSpeed: 1.5,
     flankMultiplier: 1.2,
     chargeMultiplier: 1.5,
-    rangedCooldown: 1,
+    rangedCooldown: 0.5,
     meleeCooldown: 1,
     speed: 40,
-    cost: 240,
+    cost: 250,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -205,11 +207,11 @@ export const UNIT_STATS = {
     rangedCooldown: 4,
     meleeCooldown: 4,
     speed: 20,
-    cost: 360,
+    cost: 400,
     lineBonus: 0,
     fightsMelee: false,
     splash: 1,
-    splashWholeLine: true,
+    splashWholeLine: true,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
@@ -227,10 +229,10 @@ export const UNIT_STATS = {
     rangedCooldown: 1,
     meleeCooldown: 1,
     speed: 20,
-    cost: 180,
+    cost: 400,
     lineBonus: 0,
     fightsMelee: true,
-    splash: 0,
+    splash: 0,
     restoreRange: 100,
     restoreRate: 1,
     officerDamageMultiplier: 1,
@@ -242,6 +244,26 @@ export const UNIT_STATS = {
 export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
 }
+
+/**
+ * Gold drained per second for the units on the field.
+ * Each living unit pays massTaxRate of its gold cost, scaled by remaining health.
+ */
+export function massTaxOf(troops) {
+  if (!troops) return 0;
+  let tax = 0;
+  const rate = CONFIG.massTaxRate;
+  for (let i = 0; i < troops.length; i += 1) {
+    const troop = troops[i];
+    if (!troop || troop.hp <= 0) continue;
+    const stats = unitStats(troop.variant || troop.type);
+    const maxHp = troop.maxHp || stats.hp;
+    if (maxHp <= 0) continue;
+    tax += stats.cost * (Math.max(0, troop.hp) / maxHp) * rate;
+  }
+  return tax;
+}
+
 /** Base buy type → unlocked alternate spawn key. */
 export const UNIT_VARIANTS = {
   troop: "grenadier",

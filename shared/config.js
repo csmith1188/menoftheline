@@ -48,13 +48,18 @@ export const CONFIG = {
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
-  bankBaseCost: 120,
+  bankBaseCost: 240,
   /** Extra gold per bank already unlocked on that side. */
-  bankCostStep: 120,
+  bankCostStep: 240,
   /** Gold/sec granted per unlock, times current unlocked count. */
-  bankIncomePer: 1,
+  bankIncomePer: 2,
+  /**
+   * Mass tax per second: this fraction of a living unit's gold cost,
+   * times its remaining health (current hp / max hp).
+   */
+  massTaxRate: 0.01,
   /** Match time (seconds) when each bank becomes purchasable. */
-  bankUnlockAt: [120, 240, 360],
+  bankUnlockAt: [0, 120, 240],
 
   // Upgrades
 

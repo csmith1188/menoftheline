@@ -487,6 +487,38 @@ body {
   color: #e85d4c;
 }
 
+.score .mass-tax {
+  color: var(--gold);
+}
+
+.score .mass-tax.over {
+  color: #e85d4c;
+}
+
+.upgrade-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  z-index: 4;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px #0d1218;
+}
+
+.upgrade-bar .you {
+  color: #4aa3ff;
+}
+
+.upgrade-bar .foe {
+  text-align: right;
+  color: #e85d4c;
+}
+
 .cam-debug {
   position: absolute;
   left: 8px;

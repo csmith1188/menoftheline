@@ -1,5 +1,5 @@
 import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
-import { UNIT_STATS, unitStats, UNIT_VARIANTS } from "../shared/units.js";
+import { UNIT_STATS, unitStats, UNIT_VARIANTS, massTaxOf } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
 /**
@@ -2835,6 +2835,11 @@ class Side {
     return 1 + CONFIG.damageUpgradeAmount * this.upgrades.damage;
   }
 
+  /** Gold per second paid to keep this side's living units. */
+  massTax() {
+    return massTaxOf(this.troops);
+  }
+
   /** Gold price of a troop, skirmisher, dragoon, cannon, or officer. */
   /** Gold price of a unit or its unlocked alternate. */
   unitCost(type) {
@@ -3318,11 +3323,14 @@ export class GameSim {
     this.enemy.refreshLand(1 - bottom);
   }
 
-  /** Award passive gold and land from current income. */
+  /**
+   * Award passive gold and land, then drain mass tax.
+   * Tax cannot push a treasury below zero.
+   */
   tickIncome(dt) {
     this.refreshIncomes();
-    this.player.gold += this.player.income * dt;
-    this.enemy.gold += this.enemy.income * dt;
+    this.player.gold = Math.max(0, this.player.gold + (this.player.income - this.player.massTax()) * dt);
+    this.enemy.gold = Math.max(0, this.enemy.gold + (this.enemy.income - this.enemy.massTax()) * dt);
     this.player.land += this.player.landIncome * dt;
     this.enemy.land += this.enemy.landIncome * dt;
   }

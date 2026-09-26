@@ -933,6 +933,12 @@ function inCapitalRange(troop) {
   return distance(troop, capital) <= CONFIG.capitalCannonRange;
 }
 
+function overlapsOwnCapital(troop) {
+  const capital = troop.side && troop.side.capital;
+  if (!capital) return false;
+  return distance(troop, capital) <= CONFIG.capitalRadius + troop.bodyRadius();
+}
+
 /** Color-guard attack/speed auras currently affecting this unit. */
 function auraBonuses(troop, allies) {
   let attack = 1;
@@ -1011,7 +1017,7 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Flank ${multText(stats.flankMultiplier)}`);
   }
 
-  if (touchesQuarterLine(troop)) {
+  if (touchesQuarterLine(troop) || overlapsOwnCapital(troop)) {
     labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
   }
 

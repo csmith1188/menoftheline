@@ -144,7 +144,7 @@ export const CONFIG = {
   fatigueRecoverRate: 4,
   /** Progress from each keep to that side's cover line. */
   quarterMark: 0.25,
-  /** Extra armor while a troop's body overlaps its own side's fort line. */
+  /** Extra armor while overlapping own fort line or own keep. */
   quarterArmor: 0.2,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,
@@ -181,6 +181,28 @@ export const CONFIG = {
   dragoonSupportRange: 100,
   /** Seconds a bot unit must wait before it can change orders again. */
   botOrderCooldown: 2.5,
+  /** Bot lane share below this → Bastion (bar near bot keep). */
+  botShareBastion: 1 / 3,
+  /** Bot lane share above this → Terror. */
+  botShareTerror: 2 / 3,
+  /** Own keep HP fraction that triggers desperate defense. */
+  botDesperateKeepHp: 0.4,
+  /** Low vitality (hp% − fatigue%) triggers survival fallback/halt. */
+  botSurvivalVitality: 0.25,
+  /** Simple-mode per-lane composition weights. */
+  botSimpleRatio: {
+    troop: 5,
+    skirmisher: 2,
+    dragoon: 2,
+    officer: 1,
+    cannon: 1,
+  },
+  /** Hard mode: foe troop count that triggers cannon buys. */
+  botCannonCluster: 3,
+  /** Hard mode: ally count that warrants an officer. */
+  botOfficerAllyMin: 4,
+  /** Max sim steps per wall tick when game speed is above 1×. */
+  botSpeedStepCap: 4,
 
   // Checkpoints
 

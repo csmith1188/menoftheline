@@ -261,6 +261,38 @@ body {
   cursor: pointer;
 }
 
+.training {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.training.hidden {
+  display: none;
+}
+
+.training-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.training-row select {
+  flex: 0 0 auto;
+  min-width: 7.5rem;
+  max-width: 55%;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #121821;
+  color: var(--text);
+  font: inherit;
+}
+
 .confirm {
   display: flex;
   flex-direction: column;

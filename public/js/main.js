@@ -24,6 +24,11 @@ const concedeNo = document.getElementById("concede-no");
 const southpawBtn = document.getElementById("southpaw");
 const soundVolume = document.getElementById("sound-volume");
 const soundMute = document.getElementById("sound-mute");
+const training = document.getElementById("training");
+const botDifficulty = document.getElementById("bot-difficulty");
+const botSpeed = document.getElementById("bot-speed");
+const botStrategyTop = document.getElementById("bot-strategy-top");
+const botStrategyBottom = document.getElementById("bot-strategy-bottom");
 
 const rulesUi = bindRules({
   onOpen() {
@@ -41,6 +46,7 @@ southpawBtn.addEventListener("click", () => {
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
+let syncingBotUi = false;
 
 function syncSoundUi() {
   const volume = getSoundVolume();
@@ -49,6 +55,20 @@ function syncSoundUi() {
   soundMute.setAttribute("aria-pressed", muted ? "true" : "false");
   soundMute.textContent = muted ? "Unmute" : "Mute";
   soundMute.title = muted ? "Unmute sound" : "Mute sound";
+}
+
+function applyBotSettingsUi(settings) {
+  const show = Boolean(settings);
+  training.classList.toggle("hidden", !show);
+  if (!settings) return;
+  syncingBotUi = true;
+  if (settings.difficulty) botDifficulty.value = settings.difficulty;
+  if (settings.speed != null) botSpeed.value = String(settings.speed);
+  if (settings.strategy) {
+    if (settings.strategy.top) botStrategyTop.value = settings.strategy.top;
+    if (settings.strategy.bottom) botStrategyBottom.value = settings.strategy.bottom;
+  }
+  syncingBotUi = false;
 }
 
 syncSoundUi();
@@ -79,6 +99,27 @@ let lastCountdownBeep = null;
 const socket = window.io();
 board.onCommand = (cmd) => socket.emit("command", cmd);
 bindInput(board);
+
+botDifficulty.addEventListener("change", () => {
+  if (syncingBotUi) return;
+  socket.emit("botSettings", { difficulty: botDifficulty.value });
+});
+botSpeed.addEventListener("change", () => {
+  if (syncingBotUi) return;
+  socket.emit("botSettings", { speed: Number(botSpeed.value) });
+});
+botStrategyTop.addEventListener("change", () => {
+  if (syncingBotUi) return;
+  socket.emit("botSettings", {
+    strategy: { lane: "top", mode: botStrategyTop.value },
+  });
+});
+botStrategyBottom.addEventListener("change", () => {
+  if (syncingBotUi) return;
+  socket.emit("botSettings", {
+    strategy: { lane: "bottom", mode: botStrategyBottom.value },
+  });
+});
 
 function bannerCopy() {
   const iWon = board.winner === "player";
@@ -129,6 +170,7 @@ socket.on("lobby", (lobbyState) => {
   seat = lobbyState.seat;
   meta.you = lobbyState.you;
   meta.opponent = lobbyState.opponent;
+  applyBotSettingsUi(lobbyState.botSettings || null);
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
   applyCountdownTiming(board, lobbyState);

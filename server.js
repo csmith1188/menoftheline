@@ -687,6 +687,7 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   matchmaker.connect(socket);
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
+  socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));
   socket.on("disconnect", () => matchmaker.disconnect(socket));

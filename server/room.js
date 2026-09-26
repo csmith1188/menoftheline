@@ -1,4 +1,5 @@
-import { BotController } from "./bot.js";
+import { CONFIG } from "../shared/config.js";
+import { BotController, DIFFICULTIES, STRATEGY_MODES } from "./bot.js";
 import {
   chargeHeld,
   eloK,
@@ -15,6 +16,8 @@ export const STEP_DT = 0.05;
 export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 10000;
 /** Match-start countdown for bot games. */
 export const BOT_COUNTDOWN_MS = Number(process.env.BOT_COUNTDOWN_MS) || 5000;
+
+export const BOT_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 
 function emptySeat(key, sideId) {
   return {
@@ -52,6 +55,10 @@ export class GameRoom {
     this.recorded = false;
     this.closing = false;
     this.view3d = false;
+    this.botDifficulty = "simple";
+    this.botStrategy = { top: "auto", bottom: "auto" };
+    this.speedScale = 1;
+    this.speedAccum = 0;
     this.seat = {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),
@@ -145,7 +152,59 @@ export class GameRoom {
     seat.mmr = null;
     seat.socket = null;
     seat.queue = [];
-    seat.bot = new BotController(seat.sideId);
+    seat.bot = new BotController(seat.sideId, {
+      difficulty: this.botDifficulty,
+      strategy: { ...this.botStrategy },
+    });
+  }
+
+  /** Mid-match training controls. Bot games only. */
+  botSettings(socket, payload) {
+    if (this.mode !== "bot") return;
+    const seat = this.seatBySocket(socket);
+    if (!seat || seat.bot) return;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+
+    if (payload.difficulty != null) {
+      const d = String(payload.difficulty);
+      if (DIFFICULTIES.includes(d)) {
+        this.botDifficulty = d;
+        this.forEachBot((bot) => bot.setDifficulty(d));
+      }
+    }
+
+    if (payload.speed != null) {
+      const speed = Number(payload.speed);
+      if (BOT_SPEEDS.includes(speed)) {
+        this.speedScale = speed;
+        this.speedAccum = 0;
+      }
+    }
+
+    if (payload.strategy && typeof payload.strategy === "object") {
+      const lane = payload.strategy.lane;
+      const mode = payload.strategy.mode;
+      if ((lane === "top" || lane === "bottom") && STRATEGY_MODES.includes(mode)) {
+        this.botStrategy[lane] = mode;
+        this.forEachBot((bot) => bot.setLaneStrategy(lane, mode));
+      }
+    }
+
+    this.pushLobby();
+  }
+
+  forEachBot(fn) {
+    if (this.seat.a.bot) fn(this.seat.a.bot);
+    if (this.seat.b.bot) fn(this.seat.b.bot);
+  }
+
+  botSettingsPublic() {
+    if (this.mode !== "bot") return null;
+    return {
+      difficulty: this.botDifficulty,
+      speed: this.speedScale,
+      strategy: { ...this.botStrategy },
+    };
   }
 
   async startCountdown() {
@@ -207,12 +266,20 @@ export class GameRoom {
 
   tick() {
     if (this.status !== "playing") return;
-    if (this.sim.beginStep(STEP_DT)) {
+    const scale = this.mode === "bot" ? this.speedScale : 1;
+    this.speedAccum += scale;
+    const cap = CONFIG.botSpeedStepCap || 4;
+    let steps = Math.floor(this.speedAccum);
+    if (steps > cap) steps = cap;
+    this.speedAccum -= steps;
+    for (let s = 0; s < steps; s += 1) {
+      if (!this.sim.beginStep(STEP_DT)) break;
       this.applyQueued();
       if (this.seat.a.bot) this.seat.a.bot.act(this.sim);
       if (this.seat.b.bot) this.seat.b.bot.act(this.sim);
       this.sim.finishStep(STEP_DT);
     }
+    // Visual splats age on wall time so they do not freeze at slow speeds.
     this.sim.updateSplats(STEP_DT);
     this.broadcastState();
   }
@@ -317,6 +384,7 @@ export class GameRoom {
       countdownLeft: this.countdownLeftMs(),
       you: seat.userId ? { id: seat.userId, name: seat.name } : null,
       opponent: this.opponentOf(seat),
+      botSettings: this.botSettingsPublic(),
     };
   }
 

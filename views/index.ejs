@@ -42,6 +42,44 @@
           </div>
           <input type="range" id="sound-volume" min="0" max="100" step="1" value="100" aria-label="Sound volume">
         </div>
+        <div id="training" class="training hidden">
+          <p class="label">Training</p>
+          <label class="training-row">
+            <span>Difficulty</span>
+            <select id="bot-difficulty" aria-label="Bot difficulty">
+              <option value="simple">Simple</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <label class="training-row">
+            <span>Speed</span>
+            <select id="bot-speed" aria-label="Game speed">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <label class="training-row">
+            <span>Top strategy</span>
+            <select id="bot-strategy-top" aria-label="Bot top-lane strategy">
+              <option value="auto" selected>Auto</option>
+              <option value="bastion">Bastion</option>
+              <option value="attrition">Attrition</option>
+              <option value="terror">Terror</option>
+            </select>
+          </label>
+          <label class="training-row">
+            <span>Bottom strategy</span>
+            <select id="bot-strategy-bottom" aria-label="Bot bottom-lane strategy">
+              <option value="auto" selected>Auto</option>
+              <option value="bastion">Bastion</option>
+              <option value="attrition">Attrition</option>
+              <option value="terror">Terror</option>
+            </select>
+          </label>
+        </div>
         <button type="button" id="concede" class="action">Concede</button>
         <div id="confirm" class="confirm hidden">
           <p>Concede this match?</p>

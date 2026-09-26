@@ -5,10 +5,6 @@
 
 # Feature
 - Music
-- training:
-    - complete bot algorithm
-    - adjust game speed
-    - choose bot level and strategy
 - terrain:
     - hills -> neutral forts
     - woods -> block LoS unless inside, cover and slow

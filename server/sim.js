@@ -2244,7 +2244,7 @@ class Unit {
 
   /** Apply incoming damage and spawn a hit splat over this troop. */
   takeDamage(amount, kind) {
-    const hit = truncateDamage(this.side.mitigate(amount, this.onQuarterLine()));
+    const hit = truncateDamage(this.side.mitigate(amount, this.hasCover()));
     this.hp -= hit;
     this.flash = 0.12;
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
@@ -2260,6 +2260,11 @@ class Unit {
   /** True when this body overlaps this side's fort line. */
   onQuarterLine() {
     return touchesQuarterLine(this);
+  }
+
+  /** Fort line or own keep: both grant the quarter-armor cover bonus. */
+  hasCover() {
+    return this.onQuarterLine() || this.overlapsOwnCapital();
   }
 
   /**
@@ -3009,7 +3014,7 @@ class Side {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
 
-  /** Apply armor (plus cover on this side's fort line). Caller truncates. */
+  /** Apply armor (plus fort/keep cover). Caller truncates. */
   mitigate(amount, cover) {
     let reduction = this.armorReduction();
     if (cover) {

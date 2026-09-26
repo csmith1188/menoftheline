@@ -143,9 +143,11 @@ class HitSplat {
     this.alive = true;
   }
 
-  /** Yellow for shots, red for melee. */
+  /** Yellow for shots, red for melee, green for healing. */
   fillColor() {
-    return this.kind === "melee" ? CONFIG.colors.splatMelee : CONFIG.colors.splatShoot;
+    if (this.kind === "melee") return CONFIG.colors.splatMelee;
+    if (this.kind === "heal") return CONFIG.colors.splatHeal;
+    return CONFIG.colors.splatShoot;
   }
 
   /** Rise and expire. */
@@ -235,6 +237,7 @@ class Unit {
     this.splashWholeLine = Boolean(stats.splashWholeLine);
     this.restoreRange = stats.restoreRange || 0;
     this.restoreRate = stats.restoreRate || 0;
+    this.restoreHealth = Boolean(stats.restoreHealth);
     this.officerDamageMultiplier = stats.officerDamageMultiplier || 1;
     this.buffRange = stats.buffRange || 0;
     this.attackBuff = stats.attackBuff || 0;
@@ -2616,6 +2619,7 @@ class Officer extends Unit {
 
   /**
    * Lower fatigue on nearby teammates. Ahead of an ally doubles the rate.
+   * A color guard also restores that much health.
    * Does not restore this officer.
    */
   restoreNearby(allies, dt) {
@@ -2629,8 +2633,27 @@ class Officer extends Unit {
       const rate = ally.alongSigned(this) > 0
         ? this.restoreRate * 2
         : this.restoreRate;
-      ally.fatigue = Math.max(0, ally.fatigue - rate * dt);
+      const step = rate * dt;
+      ally.fatigue = Math.max(0, ally.fatigue - step);
+      if (this.restoreHealth) this.restoreHealthTo(ally, step);
     }
+  }
+
+  /**
+   * The same restore step is also health. A + splat appears once a
+   * whole point has landed.
+   */
+  restoreHealthTo(ally, amount) {
+    if (!(amount > 0) || ally.hp >= ally.maxHp) return;
+    const before = ally.hp;
+    ally.hp = Math.min(ally.maxHp, ally.hp + amount);
+    const gained = ally.hp - before;
+    if (!(gained > 0) || !this.side || !this.side.sim) return;
+    ally.healBank = (ally.healBank || 0) + gained;
+    if (ally.healBank < 1) return;
+    const shown = Math.floor(ally.healBank);
+    ally.healBank -= shown;
+    this.side.sim.spawnSplat(ally.x, ally.y, shown, "heal");
   }
 
   update(dt, allies, enemies, enemySide, projectiles) {
@@ -2773,8 +2796,9 @@ class Howitzer extends Cannon {
 }
 
 /**
- * Officer alternate: same fatigue restore, plus attack and speed to
- * nearby allies within buffRange.
+ * Officer alternate: fatigue restore also heals the same amount,
+ * plus attack and speed to nearby allies within buffRange.
+ * Units behind this color are restored twice as fast.
  */
 class ColorGuard extends Officer {
   constructor(id, side, lane, sublane) {

@@ -52,12 +52,12 @@ export const CONFIG = {
   /** Extra gold per bank already unlocked on that side. */
   bankCostStep: 240,
   /** Gold/sec granted per unlock, times current unlocked count. */
-  bankIncomePer: 2,
+  bankIncomePer: 3,
   /**
    * Mass tax per second: this fraction of a living unit's gold cost,
    * times its remaining health (current hp / max hp).
    */
-  massTaxRate: 0.01,
+  massTaxRate: 0.005,
   /** Match time (seconds) when each bank becomes purchasable. */
   bankUnlockAt: [0, 120, 240],
 
@@ -80,7 +80,7 @@ export const CONFIG = {
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
   /** Land price to unlock one unit variant for the match. */
-  variantUnlockCost: 5,
+  variantUnlockCost: 350,
 
   // Interface
 
@@ -226,6 +226,8 @@ export const CONFIG = {
     splatShoot: "#ffe27a",
     /** Damage number for a melee hit. */
     splatMelee: "#ff5a4a",
+    /** Heal number for a color-guard restore. */
+    splatHeal: "#9ee07a",
     /** Unit fatigue bar fill. */
     fatigue: "#5b9fd4",
     /** Outline behind a damage number. */

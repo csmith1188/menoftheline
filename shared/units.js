@@ -216,7 +216,7 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
   },
-  /** Officer that also raises nearby attack and walk speed. */
+  /** Officer that heals with its fatigue restore, and raises nearby attack and walk speed. */
   colorGuard: {
     ...SHOT,
     hp: 50,
@@ -235,6 +235,7 @@ export const UNIT_STATS = {
     splash: 0,
     restoreRange: 100,
     restoreRate: 1,
+    restoreHealth: true,
     officerDamageMultiplier: 1,
     buffRange: 100,
     attackBuff: 0.15,

@@ -631,7 +631,8 @@ export function createScene(canvas) {
       }
       sprite.visible = true;
       const shown = Math.round(splat.amount * 10) / 10;
-      const text = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
+      const num = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
+      const text = splat.kind === "heal" ? `+${num}` : num;
       const key = `${text}:${splat.kind}`;
       if (sprite.userData.key !== key) {
         const pad = document.createElement("canvas");
@@ -645,7 +646,11 @@ export function createScene(canvas) {
         ctx.lineWidth = 8;
         ctx.strokeStyle = CONFIG.colors.splatStroke;
         ctx.strokeText(text, 64, 32);
-        ctx.fillStyle = splat.kind === "melee" ? CONFIG.colors.splatMelee : CONFIG.colors.splatShoot;
+        ctx.fillStyle = splat.kind === "melee"
+          ? CONFIG.colors.splatMelee
+          : splat.kind === "heal"
+            ? CONFIG.colors.splatHeal
+            : CONFIG.colors.splatShoot;
         ctx.fillText(text, 64, 32);
         const tex = new THREE.CanvasTexture(pad);
         if (sprite.material.map) sprite.material.map.dispose();

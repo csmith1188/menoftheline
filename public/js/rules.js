@@ -294,7 +294,8 @@ function drawShot(ctx, x, y) {
 }
 
 function drawSplat(ctx, x, y, amount, kind) {
-  const text = String(Math.round(amount));
+  const num = String(Math.round(amount));
+  const text = kind === "heal" ? `+${num}` : num;
   ctx.save();
   ctx.font = "bold 14px Trebuchet MS, Segoe UI, sans-serif";
   ctx.textAlign = "center";
@@ -302,7 +303,11 @@ function drawSplat(ctx, x, y, amount, kind) {
   ctx.lineWidth = 3;
   ctx.strokeStyle = CONFIG.colors.splatStroke;
   ctx.strokeText(text, x, y - 18);
-  ctx.fillStyle = kind === "melee" ? CONFIG.colors.splatMelee : CONFIG.colors.splatShoot;
+  ctx.fillStyle = kind === "melee"
+    ? CONFIG.colors.splatMelee
+    : kind === "heal"
+      ? CONFIG.colors.splatHeal
+      : CONFIG.colors.splatShoot;
   ctx.fillText(text, x, y - 18);
   ctx.restore();
 }
@@ -991,7 +996,7 @@ const pages = [
           "Rifle: Longer, harder shot with a slower reload.",
           "Lancer: Do regular flank damage but increased charge damage.",
           "Howitzer: Shorter gun. Fires one shell at the closest in-range target in each row.",
-          "Color: Raises moral by restoring nearby fatigue and bolstering attack and speed.",
+          "Color: Restores nearby fatigue, and that restore also heals. Bolsters attack and speed. Units behind the color recover faster.",
         ],
       },
     ],

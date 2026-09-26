@@ -850,16 +850,22 @@ function auraBonuses(troop, allies) {
   return { attack, speed };
 }
 
-/** True while an officer (or color guard) is restoring this unit's fatigue. */
+/**
+ * "color" while a color guard is restoring this unit, "officer" for a
+ * plain officer, or null when nobody nearby is restoring fatigue.
+ */
 function underOfficerRestore(troop, allies) {
+  let found = null;
   for (let i = 0; i < allies.length; i += 1) {
     const ally = allies[i];
     if (ally === troop || ally.hp <= 0) continue;
     const stats = troopKindStats(ally);
     if (!(stats.restoreRate > 0) || !(stats.restoreRange > 0)) continue;
-    if (distance(troop, ally) <= stats.restoreRange) return true;
+    if (distance(troop, ally) > stats.restoreRange) continue;
+    if (stats.restoreHealth) return "color";
+    found = "officer";
   }
-  return false;
+  return found;
 }
 
 function shotSlowActive(troop) {
@@ -947,12 +953,15 @@ function activeBonuses(board, troop, allies) {
     }
   }
 
+  const restore = underOfficerRestore(troop, allies);
   if (troop.broken) {
     labels.push("Rallying");
   } else if (troop.order === "charge" || troop.order === "retreat"
       || inMeleeContact(troop, enemies)) {
     labels.push("Fatigue rising");
-  } else if (underOfficerRestore(troop, allies)) {
+  } else if (restore === "color") {
+    labels.push("Color restore");
+  } else if (restore === "officer") {
     labels.push("Officer restore");
   } else if (inCapitalRange(troop)) {
     labels.push("Recovering");

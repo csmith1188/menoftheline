@@ -27,8 +27,14 @@ function drawProjectile(ctx, shot) {
 function drawSplat(ctx, splat) {
   const fade = Math.max(0, 1 - splat.age / CONFIG.splatLife);
   const shown = Math.round(splat.amount * 10) / 10;
-  const text = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
-  const fill = splat.kind === "melee" ? CONFIG.colors.splatMelee : CONFIG.colors.splatShoot;
+  const num = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
+  // const text = splat.kind === "heal" ? `+${num}` : num;
+  const text = splat.kind === "heal" ? `+` : num;
+  const fill = splat.kind === "melee"
+    ? CONFIG.colors.splatMelee
+    : splat.kind === "heal"
+      ? CONFIG.colors.splatHeal
+      : CONFIG.colors.splatShoot;
   ctx.save();
   ctx.globalAlpha = fade;
   ctx.font = "bold 14px Trebuchet MS, sans-serif";

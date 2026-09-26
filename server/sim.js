@@ -2092,16 +2092,20 @@ class Unit {
   /**
    * Closest living enemy inside a world-space circle. Lane and sublane
    * do not matter. Units locked in melee are not targeted until they
-   * leave it. Non-skirmishers ignore officers while any other enemy is
-   * in range. The enemy keep is a valid target when no unit is closer.
+   * leave it. Except skirmishers/rifles, units will not fire at officers
+   * while any other target (enemy unit or keep) is in full shooting
+   * range. The enemy keep is a valid target when no unit is closer.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.attackRange() : maxRange;
+    const fullRange = this.attackRange();
+    // Rifles keep type "skirmisher", so they may snipe officers too.
     const shyOfOfficers = this.type !== "skirmisher";
     let best = null;
     let bestD = Infinity;
     let bestOfficer = null;
     let bestOfficerD = Infinity;
+    let otherInFullRange = false;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
@@ -2111,6 +2115,9 @@ class Unit {
         continue;
       }
       const d = distance(this, other);
+      if (shyOfOfficers && other.type !== "officer" && d <= fullRange) {
+        otherInFullRange = true;
+      }
       if (d > range) {
         continue;
       }
@@ -2126,7 +2133,16 @@ class Unit {
         best = other;
       }
     }
-    if (!best) {
+    if (
+      shyOfOfficers &&
+      !otherInFullRange &&
+      enemySide &&
+      enemySide.capitalHP > 0 &&
+      distance(this, enemySide.capital) <= fullRange
+    ) {
+      otherInFullRange = true;
+    }
+    if (!best && !(shyOfOfficers && otherInFullRange)) {
       best = bestOfficer;
     }
     if (!best && enemySide && enemySide.capitalHP > 0) {
@@ -2588,6 +2604,8 @@ class Cannon extends Unit {
 /**
  * Command unit. Restores fatigue to living allies within restoreRange.
  * Restores twice as fast when this officer stands ahead of that ally.
+ * Enemy fire ignores this unit except from skirmishers/rifles while any
+ * other target remains in the firer's full shooting range.
  */
 class Officer extends Unit {
   constructor(id, side, lane, sublane) {
@@ -2978,7 +2996,7 @@ class Side {
 
   /**
    * Closest enemy troop in cannon range. Units locked in melee are skipped.
-   * Officers are ignored while any other enemy is in range.
+   * Officers are ignored while any other enemy is in full cannon range.
    */
   capitalTarget(enemies, allies) {
     let best = null;

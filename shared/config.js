@@ -65,7 +65,7 @@ export const CONFIG = {
    */
   massTaxRate: 0.005,
   /** Match time (seconds) when each bank becomes purchasable. */
-  bankUnlockAt: [0, 2, 4],
+  bankUnlockAt: [0, 120, 240],
 
   // Upgrades
 

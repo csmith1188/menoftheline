@@ -50,7 +50,7 @@ export const CONFIG = {
   /** Gold to unlock the first bank. */
   bankBaseCost: 240,
   /** Extra gold per bank already unlocked on that side. */
-  bankCostStep: 240,
+  bankCostStep: 120,
   /** Gold/sec granted per unlock, times current unlocked count. */
   bankIncomePer: 3,
   /**

@@ -22,6 +22,7 @@
     - rifles kill colors better
 
 # UI
+- stack upgrades on edge of screen
 - move order flash above unit select
 - Upgrades and unit passives not in unit select info
 - move settings/tutorial to free space on scoreboard (each side).
@@ -29,6 +30,4 @@
 # Balance
 - grenadiers ability is bonus flanking damage cannot be applied to them. they are consider "troops" for all other intents and purposes.
 - lancer pistols that can shoot in combat
-- color guard restores health to units in range, more if they are behind (tiny + hit splats for healing)
-- lancers and howitzers are better at breaking up solid walls late game
 - officers have to do more than handle fatigue, or fatigue must be more important

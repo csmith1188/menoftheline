@@ -1060,6 +1060,29 @@ const pages = [
   },
 ];
 
+/** Short in-match controls guide (settings menu). Full booklet stays on /rules. */
+const howtoPages = [
+  {
+    title: "How to play",
+    artHeight: 320,
+    blocks: [
+      { kind: "p", text: "Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways for an alternate." },
+      {
+        kind: "ul",
+        items: [
+          "Click a unit: Halt → Reform → Advance.",
+          "Long-press: select that unit alone.",
+          "Swipe forward / back: charge or fall back.",
+          "Swipe up / down: change row.",
+          "Click a town you own to invest land in its upgrade.",
+          "Broken units ignore orders until they rally.",
+        ],
+      },
+    ],
+    draw: drawOrders,
+  },
+];
+
 function fillCopy(copy, blocks) {
   copy.replaceChildren();
   for (let i = 0; i < blocks.length; i += 1) {
@@ -1083,7 +1106,8 @@ function fillCopy(copy, blocks) {
 export function bindRules(options) {
   const onOpen = options && options.onOpen;
   const pageMode = Boolean(options && options.page);
-  const book = document.getElementById("book");
+  const pagesToUse = pageMode ? pages : howtoPages;
+  const openBtn = document.getElementById("howto") || document.getElementById("book");
   const overlay = document.getElementById("rules");
   const title = document.getElementById("rules-title");
   const art = document.getElementById("rules-art");
@@ -1096,7 +1120,7 @@ export function bindRules(options) {
   let index = 0;
 
   function sizeArt() {
-    const page = pages[index];
+    const page = pagesToUse[index];
     const w = art.clientWidth || overlay.clientWidth || 640;
     const h = page.aspect
       ? Math.round(Math.max(200, Math.min(460, w / page.aspect)))
@@ -1115,23 +1139,25 @@ export function bindRules(options) {
     const ctx = art.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     applySouthpaw(ctx, w, readSouthpaw());
-    pages[index].draw(ctx, w, h);
+    pagesToUse[index].draw(ctx, w, h);
   }
 
   function render() {
-    const page = pages[index];
+    const page = pagesToUse[index];
     title.textContent = page.title;
     const blocks = typeof page.blocks === "function" ? page.blocks(readSouthpaw()) : page.blocks;
     fillCopy(copy, blocks);
-    pageLabel.textContent = `${index + 1} / ${pages.length}`;
+    pageLabel.textContent = `${index + 1} / ${pagesToUse.length}`;
     prev.disabled = index === 0;
-    next.disabled = index === pages.length - 1;
+    next.disabled = index === pagesToUse.length - 1;
+    const nav = overlay.querySelector(".rules-nav");
+    if (nav) nav.classList.toggle("hidden", pagesToUse.length < 2);
     dots.replaceChildren();
-    for (let i = 0; i < pages.length; i += 1) {
+    for (let i = 0; i < pagesToUse.length; i += 1) {
       const dot = document.createElement("button");
       dot.type = "button";
       dot.className = "rules-dot";
-      dot.setAttribute("aria-label", pages[i].title);
+      dot.setAttribute("aria-label", pagesToUse[i].title);
       dot.setAttribute("aria-current", i === index ? "true" : "false");
       dot.addEventListener("click", () => go(i));
       dots.appendChild(dot);
@@ -1140,7 +1166,7 @@ export function bindRules(options) {
   }
 
   function go(nextIndex) {
-    index = Math.max(0, Math.min(pages.length - 1, nextIndex));
+    index = Math.max(0, Math.min(pagesToUse.length - 1, nextIndex));
     render();
     const card = overlay.querySelector(".rules-card") || overlay;
     card.scrollTop = 0;
@@ -1150,20 +1176,20 @@ export function bindRules(options) {
   function hide() {
     if (pageMode) return;
     overlay.classList.add("hidden");
-    if (book) book.setAttribute("aria-expanded", "false");
+    if (openBtn) openBtn.setAttribute("aria-expanded", "false");
   }
 
   function show() {
     const wasHidden = overlay.classList.contains("hidden");
     if (wasHidden && onOpen) onOpen();
     overlay.classList.remove("hidden");
-    if (book) book.setAttribute("aria-expanded", "true");
+    if (openBtn) openBtn.setAttribute("aria-expanded", "true");
     render();
     requestAnimationFrame(paint);
     if (wasHidden && !pageMode) overlay.focus();
   }
 
-  if (book) book.addEventListener("click", show);
+  if (openBtn) openBtn.addEventListener("click", show);
   if (close) close.addEventListener("click", hide);
   prev.addEventListener("click", () => go(index - 1));
   next.addEventListener("click", () => go(index + 1));

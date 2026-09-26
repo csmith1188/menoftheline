@@ -112,10 +112,10 @@ body {
   background: #4a4232;
 }
 
-.gear,
-.book {
+.gear {
   position: absolute;
   top: 8px;
+  right: 8px;
   z-index: 5;
   width: 44px;
   height: 44px;
@@ -133,22 +133,7 @@ body {
   touch-action: manipulation;
 }
 
-.gear {
-  right: 8px;
-}
-
-.book {
-  right: 60px;
-}
-
-.book svg {
-  display: block;
-  width: 22px;
-  height: 22px;
-}
-
-.gear:hover,
-.book:hover {
+.gear:hover {
   border-color: var(--gold);
 }
 
@@ -430,7 +415,7 @@ body {
   position: absolute;
   top: 8px;
   left: 8px;
-  right: 116px;
+  right: 60px;
   z-index: 4;
   display: flex;
   align-items: flex-start;
@@ -497,24 +482,28 @@ body {
 
 .upgrade-bar {
   position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 8px;
+  inset: 0;
   z-index: 4;
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
   pointer-events: none;
   font-size: 13px;
-  line-height: 1.2;
+  line-height: 1.35;
   text-shadow: 0 1px 2px #0d1218;
 }
 
+.upgrade-bar .upgrade-side {
+  position: absolute;
+  bottom: 8px;
+  margin: 0;
+  white-space: pre-line;
+}
+
 .upgrade-bar .you {
+  left: 10px;
   color: #4aa3ff;
 }
 
 .upgrade-bar .foe {
+  right: 10px;
   text-align: right;
   color: #e85d4c;
 }

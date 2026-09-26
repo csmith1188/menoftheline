@@ -1,5 +1,5 @@
 # Bugs
-- starts in 30 but counts to 15
+# - ~~starts in 30 but counts to 15~~ (fixed: 10s countdown, skew-safe)
 
 # Ideas
 - Suggestion box
@@ -15,8 +15,8 @@
     - adjust game speed
     - choose bot level and strategy
 - terrain:
-    - hills -> nuetral forts
-    - woods -> block LoS and slow
+    - hills -> neutral forts
+    - woods -> block LoS unless inside, cover and slow
     - river -> allow infantry, blocks horse and gun
     - peaks -> block los unless inside, slow infantry, blocks horse and gun
     - bridge -> cannot switch lanes
@@ -30,10 +30,6 @@
     - rifles kill colors better
 
 # UI
-- stack upgrades on edge of screen
-- move order flash above unit select
-- Upgrades and unit passives not in unit select info
-- move settings/tutorial to free space on scoreboard (each side).
 
 # Balance
 - officers have to do more than handle fatigue, or fatigue must be more important

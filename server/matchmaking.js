@@ -94,6 +94,7 @@ export class Matchmaker {
       mode: entry.mode,
       text: searchText(entry.mode),
       countdownEnds: null,
+      countdownLeft: null,
       you: { id: entry.userId, name: entry.name },
       opponent: null,
     });

@@ -606,6 +606,8 @@ const boardMethods = {
    */
   drawTelescopeHud(ctx) {
     const info = inspectReadout(this);
+    const troop = this.inspectedTroop ? this.inspectedTroop() : null;
+    if (troop && troop.broken) this.orderCallout = null;
     const call = this.orderCallout;
     let callFade = 0;
     if (call) {
@@ -653,6 +655,11 @@ const boardMethods = {
 
   drawOrderCallout(ctx) {
     if (this.telescope) return;
+    const troop = this.inspectedTroop ? this.inspectedTroop() : null;
+    if (troop && troop.broken) {
+      this.orderCallout = null;
+      return;
+    }
     const call = this.orderCallout;
     if (!call) return;
     const left = call.until - performance.now();
@@ -726,24 +733,33 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Speed, damage, and armor, pinned to the bottom corners. */
+  /** Speed, damage, and armor, stacked on the left/right edges. */
   drawUpgradeReadouts(ctx) {
     if (!this.player || !this.enemy) return;
-    const y = CONFIG.canvasHeight - 12 * CONFIG.uiScale;
     const pad = 14 * CONFIG.uiScale;
+    const lineH = 16 * CONFIG.uiScale;
+    const baseY = CONFIG.canvasHeight - 12 * CONFIG.uiScale;
+    const drawStack = (lines, x, align, color) => {
+      ctx.textAlign = align;
+      ctx.fillStyle = color;
+      for (let i = 0; i < lines.length; i += 1) {
+        const y = baseY - (lines.length - 1 - i) * lineH;
+        ctx.strokeText(lines[i], x, y);
+        ctx.fillText(lines[i], x, y);
+      }
+    };
     ctx.save();
     ctx.textBaseline = "bottom";
     ctx.font = this.uiFont(12);
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
-    ctx.textAlign = "left";
-    ctx.strokeText(this.player.upgradeLabel(), pad, y);
-    ctx.fillStyle = CONFIG.colors.player;
-    ctx.fillText(this.player.upgradeLabel(), pad, y);
-    ctx.textAlign = "right";
-    ctx.strokeText(this.enemy.upgradeLabel(), CONFIG.canvasWidth - pad, y);
-    ctx.fillStyle = CONFIG.colors.enemy;
-    ctx.fillText(this.enemy.upgradeLabel(), CONFIG.canvasWidth - pad, y);
+    drawStack(this.player.upgradeLines(), pad, "left", CONFIG.colors.player);
+    drawStack(
+      this.enemy.upgradeLines(),
+      CONFIG.canvasWidth - pad,
+      "right",
+      CONFIG.colors.enemy,
+    );
     ctx.restore();
   },
 

@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { applySnapshot, createBoardState, inspectReadout, writeSouthpaw } from "./board.js";
+import { applySnapshot, createBoardState, applyCountdownTiming, countdownSecondsLeft, inspectReadout, writeSouthpaw } from "./board.js";
 import { bindInput } from "./input.js";
 import { playCountdownBeep, playSounds, unlockAudio } from "./audio.js";
 import { bindRules } from "./rules.js";
@@ -183,6 +183,8 @@ function syncInspect() {
   } else {
     inspectEl.textContent = info.bonuses ? `${info.main} · ${info.bonuses}` : info.main;
   }
+  const troop = board.inspectedTroop ? board.inspectedTroop() : null;
+  if (troop && troop.broken) board.orderCallout = null;
   const call = board.orderCallout;
   if (!call || call.until <= performance.now()) {
     if (call) board.orderCallout = null;
@@ -202,7 +204,7 @@ function syncChrome() {
   lobbyLeave.classList.toggle("hidden", lobby.classList.contains("hidden"));
   if (waiting) lobbyText.textContent = lobbyMessage || "Waiting for an opponent";
   if (countdown) {
-    const left = Math.max(0, Math.ceil((board.countdownEnds - Date.now()) / 1000));
+    const left = countdownSecondsLeft(board);
     lobbyText.textContent = `Match starts in ${left}`;
     if (Number.isFinite(left) && left !== lastCountdownBeep) {
       lastCountdownBeep = left;
@@ -248,7 +250,7 @@ socket.on("lobby", (lobbyState) => {
   meta.opponent = lobbyState.opponent;
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
-  board.countdownEnds = lobbyState.countdownEnds;
+  applyCountdownTiming(board, lobbyState);
   if (lobbyState.status === "waiting") {
     board.winner = null;
     board.winReason = null;

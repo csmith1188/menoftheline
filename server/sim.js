@@ -260,10 +260,15 @@ class Unit {
     return 3;
   }
 
-  /** Units that receive this order: the whole line, or only this troop. */
-  orderGroup(allies, solo) {
+  /** Units that receive this order: the whole line, or only this troop.
+   * Melee units never share group orders — each must be ordered alone.
+   * They still count in lineGroup for line bonus and Line size. */
+  orderGroup(allies, solo, enemies) {
     if (solo) return [this];
-    return this.lineGroup(allies);
+    if (enemies && this.isInMelee(enemies)) return [this];
+    const group = this.lineGroup(allies);
+    if (!enemies) return group;
+    return group.filter((unit) => unit === this || !unit.isInMelee(enemies));
   }
 
   /**
@@ -308,8 +313,9 @@ class Unit {
 
   /** Apply an order to this troop's order group. */
   applyGroupOrder(allies, next, solo, enemies) {
-    const group = this.orderGroup(allies, solo);
-    const lock = Boolean(solo);
+    const forceSolo = Boolean(solo) || Boolean(enemies && this.isInMelee(enemies));
+    const group = this.orderGroup(allies, forceSolo, enemies);
+    const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       group[i].commitOrder(next, enemies);
       group[i].ignoreLineOrders = lock;
@@ -329,15 +335,16 @@ class Unit {
 
   /**
    * Left-click while selected: enter reform, remembering the prior order.
-   * Locked while the line is in melee or broken.
+   * Broken units ignore it. Melee units reform alone.
    */
   issueReform(allies, enemies, solo) {
     if (this.broken) {
       return;
     }
     if (this.order === "reform") return;
-    const group = this.orderGroup(allies, solo);
-    const lock = Boolean(solo);
+    const forceSolo = Boolean(solo) || this.isInMelee(enemies);
+    const group = this.orderGroup(allies, forceSolo, enemies);
+    const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken || group[i].order === "reform") continue;
       group[i].priorOrder = group[i].orderHeld ? group[i].heldOrder : group[i].order;
@@ -444,8 +451,9 @@ class Unit {
    */
   issueBack(allies, enemies, solo) {
     if (this.broken) return;
-    const group = this.orderGroup(allies, solo);
-    const lock = Boolean(solo);
+    const forceSolo = Boolean(solo) || this.isInMelee(enemies);
+    const group = this.orderGroup(allies, forceSolo, enemies);
+    const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       const member = group[i];
       if (member.broken) continue;
@@ -484,16 +492,27 @@ class Unit {
 
   /**
    * Hidden switch for a line: each member steps one sublane in dir.
+   * Melee members are left alone (they must be switched individually).
    * The line stays put when any member who can switch would leave the lane.
    */
   issueLineSwitch(dir, allies) {
     if (this.switchBlocked() || (dir !== 1 && dir !== -1)) return;
+    const foes = this.enemyTroops();
+    if (foes && this.isInMelee(foes)) {
+      const next = this.sublane + dir;
+      const count = Path.sublaneCount(this.lane);
+      if (next < 0 || next >= count) return;
+      this.switch = next;
+      this.switchEscape = false;
+      return;
+    }
     const group = this.lineGroup(allies);
     const count = Path.sublaneCount(this.lane);
     const movers = [];
     for (let i = 0; i < group.length; i += 1) {
       const member = group[i];
       if (member.switchBlocked()) continue;
+      if (foes && member.isInMelee(foes)) continue;
       const next = member.sublane + dir;
       if (next < 0 || next >= count) return;
       movers.push(member);
@@ -505,9 +524,10 @@ class Unit {
   }
 
   /** Put this line on reform without cycling through halt. */
-  startReform(allies, solo) {
-    const group = this.orderGroup(allies, solo);
-    const lock = Boolean(solo);
+  startReform(allies, solo, enemies) {
+    const forceSolo = Boolean(solo) || Boolean(enemies && this.isInMelee(enemies));
+    const group = this.orderGroup(allies, forceSolo, enemies);
+    const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken) continue;
       group[i].priorOrder = group[i].order;
@@ -3294,7 +3314,7 @@ export class GameSim {
       const troopId = Number(cmd.troopId);
       const troop = side.troops.find((t) => t.id === troopId && t.hp > 0);
       if (!troop) return false;
-      const solo = Boolean(cmd.solo);
+      const solo = Boolean(cmd.solo) || troop.isInMelee(foe.troops);
       if (cmd.action === "reform") troop.issueReform(side.troops, foe.troops, solo);
       else if (cmd.action === "restore") troop.issueRestore(side.troops, foe.troops, solo);
       else if (cmd.action === "speedUp") troop.issueSpeedUp(side.troops, foe.troops, solo);

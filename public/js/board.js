@@ -117,9 +117,18 @@ export const sideStateMethods = {
     return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰  −${investText}🌿`;
   },
 
-  /** Speed, damage, and armor ranks, drawn at the bottom corners. */
+  /** Speed, damage, and armor ranks as separate lines for edge readouts. */
+  upgradeLines() {
+    return [
+      `${this.speedMultiplier.toFixed(2)}x ⚡`,
+      `${this.damageScale().toFixed(2)}x ⚔️`,
+      `${Math.round(this.armorReduction() * 100)}% 🛡️`,
+    ];
+  },
+
+  /** Speed, damage, and armor ranks, stacked for the screen-edge HUD. */
   upgradeLabel() {
-    return `${this.speedMultiplier.toFixed(2)}x ⚡  ${this.damageScale().toFixed(2)}x ⚔️  ${Math.round(this.armorReduction() * 100)}% 🛡️`;
+    return this.upgradeLines().join("\n");
   },
 
   /** Gold to unlock the next bank. */
@@ -682,7 +691,11 @@ export const boardStateMethods = {
       return null;
     }
     const allies = troop.side.troops;
-    const group = this.inspectedSolo ? [troop] : lineGroup(troop, allies);
+    let group = this.inspectedSolo ? [troop] : lineGroup(troop, allies);
+    // Melee units stay in the line for bonuses, but are never group-selected.
+    if (!this.inspectedSolo) {
+      group = group.filter((unit) => unit === troop || !this.isTroopInMelee(unit));
+    }
     const ids = {};
     for (let i = 0; i < group.length; i += 1) ids[group[i].id] = true;
     this.inspectedLineIds = ids;
@@ -692,7 +705,13 @@ export const boardStateMethods = {
   announceOrder(troop, action) {
     if (troop) {
       this.inspectedId = troop.id;
+      if (this.isTroopInMelee(troop)) this.inspectedSolo = true;
       this.inspectedTroop();
+    }
+    // Broken units ignore orders; keep the steady "Broken" readout.
+    if (troop && troop.broken) {
+      this.orderCallout = null;
+      return;
     }
     if (action === "back" && troop && this.enemy) {
       troop.inMelee = inMeleeContact(troop, this.enemy.troops);
@@ -704,6 +723,15 @@ export const boardStateMethods = {
       color: shown.color,
       until: performance.now() + 900,
     };
+  },
+
+  /** True when this troop is locked in body contact with a melee foe. */
+  isTroopInMelee(troop) {
+    if (!troop || !this.player || !this.enemy) return false;
+    const foes = troop.side && troop.side.id === "player"
+      ? this.enemy.troops
+      : this.player.troops;
+    return inMeleeContact(troop, foes || []);
   },
 };
 
@@ -871,10 +899,10 @@ function activeBonuses(board, troop, allies) {
   if (troop.order === "charge" && stats.chargeMultiplier && stats.chargeMultiplier !== 1) {
     labels.push(`Charge ${multText(stats.chargeMultiplier)}`);
   }
-  if (hasChargeSpeed(troop)) {
-    const label = troop.order === "retreat" ? "Retreat speed" : "Charge speed";
-    labels.push(`${label} ${multText(troopKindStats(troop).chargeSpeed)}`);
-  }
+  // if (hasChargeSpeed(troop)) {
+  //   const label = troop.order === "retreat" ? "Retreat speed" : "Charge speed";
+  //   labels.push(`${label} ${multText(troopKindStats(troop).chargeSpeed)}`);
+  // }
 
   let flanking = false;
   for (let i = 0; i < enemies.length; i += 1) {
@@ -893,52 +921,53 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
   }
 
-  if (side) {
-    if (side.speedMultiplier && side.speedMultiplier !== 1) {
-      labels.push(`Upgrade speed ${multText(side.speedMultiplier)}`);
-    }
-    const armorRanks = side.upgrades ? side.upgrades.armor : 0;
-    if (armorRanks > 0) {
-      const armor = Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * armorRanks);
-      labels.push(`Armor +${Math.round(armor * 100)}%`);
-    }
-    const dmgRanks = side.upgrades ? side.upgrades.damage : 0;
-    if (dmgRanks > 0) {
-      labels.push(`Upgrade dmg ${multText(1 + CONFIG.damageUpgradeAmount * dmgRanks)}`);
-    }
-  }
+  // if (side) {
+  //   if (side.speedMultiplier && side.speedMultiplier !== 1) {
+  //     labels.push(`Upgrade speed ${multText(side.speedMultiplier)}`);
+  //   }
+  //   const armorRanks = side.upgrades ? side.upgrades.armor : 0;
+  //   if (armorRanks > 0) {
+  //     const armor = Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * armorRanks);
+  //     labels.push(`Armor +${Math.round(armor * 100)}%`);
+  //   }
+  //   const dmgRanks = side.upgrades ? side.upgrades.damage : 0;
+  //   if (dmgRanks > 0) {
+  //     labels.push(`Upgrade dmg ${multText(1 + CONFIG.damageUpgradeAmount * dmgRanks)}`);
+  //   }
+  // }
 
-  const aura = auraBonuses(troop, allies);
-  if (aura.attack > 1) labels.push(`Aura attack ${multText(aura.attack)}`);
-  if (aura.speed > 1) labels.push(`Aura speed ${multText(aura.speed)}`);
+  // const aura = auraBonuses(troop, allies);
+  // if (aura.attack > 1) labels.push(`Aura attack ${multText(aura.attack)}`);
+  // if (aura.speed > 1) labels.push(`Aura speed ${multText(aura.speed)}`);
 
-  if (shotSlowActive(troop) && stats.slowFactor && stats.slowFactor !== 1) {
-    labels.push(`Slowed ${multText(stats.slowFactor)}`);
-  }
+  // if (shotSlowActive(troop) && stats.slowFactor && stats.slowFactor !== 1) {
+  //   labels.push(`Slowed ${multText(stats.slowFactor)}`);
+  // }
 
-  if (troop.order === "reform") {
-    labels.push(`Reform speed ${multText(CONFIG.reformSpeedFactor)}`);
-  } else if (troop.order === "fallback" && !troop.broken) {
-    labels.push(`Fallback speed ${multText(CONFIG.reformSpeedFactor)}`);
-  }
+  // if (troop.order === "reform") {
+  //   labels.push(`Reform speed ${multText(CONFIG.reformSpeedFactor)}`);
+  // } else if (troop.order === "fallback" && !troop.broken) {
+  //   labels.push(`Fallback speed ${multText(CONFIG.reformSpeedFactor)}`);
+  // }
 
-  if (troop.lane === "bottom") {
-    const outer = Path.bottomRadius(0);
-    if (outer > 0) {
-      const ring = Path.bottomRadius(troop.sublane) / outer;
-      if (Math.abs(ring - 1) > 0.01) {
-        labels.push(`Ring speed ${multText(ring)}`);
-      }
-    }
-  }
+  // if (troop.lane === "bottom") {
+  //   const outer = Path.bottomRadius(0);
+  //   if (outer > 0) {
+  //     const ring = Path.bottomRadius(troop.sublane) / outer;
+  //     if (Math.abs(ring - 1) > 0.01) {
+  //       labels.push(`Ring speed ${multText(ring)}`);
+  //     }
+  //   }
+  // }
 
   const restore = underOfficerRestore(troop, allies);
-  if (troop.broken) {
-    labels.push("Rallying");
-  } else if (troop.order === "charge" || troop.order === "retreat"
-      || inMeleeContact(troop, enemies)) {
-    labels.push("Fatigue rising");
-  } else if (restore === "color") {
+  // if (troop.broken) {
+  //   labels.push("Rallying");
+  // } else if (troop.order === "charge" || troop.order === "retreat"
+  //     || inMeleeContact(troop, enemies)) {
+  //   labels.push("Fatigue rising");
+  // } else
+  if (restore === "color") {
     labels.push("Color restore");
   } else if (restore === "officer") {
     labels.push("Officer restore");
@@ -948,9 +977,9 @@ function activeBonuses(board, troop, allies) {
     labels.push("Recovering");
   }
 
-  if (stats.speed && stats.speed !== UNIT_STATS.troop.speed) {
-    labels.push(`Walk ${multText(stats.speed / UNIT_STATS.troop.speed)}`);
-  }
+  // if (stats.speed && stats.speed !== UNIT_STATS.troop.speed) {
+  //   labels.push(`Walk ${multText(stats.speed / UNIT_STATS.troop.speed)}`);
+  // }
 
   return labels.join("   ");
 }
@@ -1096,6 +1125,33 @@ function makeCheckpoint(data, board) {
   return town;
 }
 
+/**
+ * Bind the match-start countdown to the local clock using server-sent
+ * remaining ms, so display matches when the server actually starts play.
+ */
+export function applyCountdownTiming(board, payload) {
+  board.countdownEnds = payload.countdownEnds || null;
+  if (payload.status === "countdown" && Number.isFinite(payload.countdownLeft)) {
+    board.countdownLocalEnd = performance.now() + Math.max(0, payload.countdownLeft);
+    return;
+  }
+  if (payload.status !== "countdown") {
+    board.countdownLocalEnd = null;
+  }
+}
+
+/** Whole seconds left on the local countdown display. */
+export function countdownSecondsLeft(board) {
+  if (board.status !== "countdown") return 0;
+  if (Number.isFinite(board.countdownLocalEnd)) {
+    return Math.max(0, Math.ceil((board.countdownLocalEnd - performance.now()) / 1000));
+  }
+  if (Number.isFinite(board.countdownEnds)) {
+    return Math.max(0, Math.ceil((board.countdownEnds - Date.now()) / 1000));
+  }
+  return 0;
+}
+
 /** Local player is always the left side. Seat b is mirrored onto that view. */
 export function applySnapshot(board, snap, seat) {
   const mirror = seat === "b";
@@ -1109,7 +1165,7 @@ export function applySnapshot(board, snap, seat) {
   board.winner = snap.winner ? viewOwner(snap.winner) : null;
   board.winReason = snap.winReason || null;
   board.status = snap.status;
-  board.countdownEnds = snap.countdownEnds || null;
+  applyCountdownTiming(board, snap);
   board.topCenter = mirror ? 1 - snap.topCenter : snap.topCenter;
   board.bottomCenter = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
   board.player = makeSide(snap.sides[mine], "player", board, mx);
@@ -1144,7 +1200,7 @@ export function inspectReadout(board) {
   const troop = board.inspectedTroop();
   if (!troop) return null;
   const allies = troop.side.troops;
-  const line = board.inspectedSolo ? 1 : lineSize(troop, allies);
+  const line = lineSize(troop, allies);
   const hp = Math.max(0, Math.round(troop.hp));
   const fatigue = Math.max(0, Math.round(troop.fatigue || 0));
   const maxFatigue = troop.maxFatigue || unitStats(troop.variant || troop.type).fatigue;
@@ -1180,6 +1236,7 @@ export function createBoardState(canvas) {
     elapsed: 0,
     status: "waiting",
     countdownEnds: null,
+    countdownLocalEnd: null,
     cssScale: 1,
     southpaw: readSouthpaw(),
     topCenter: 0.5,

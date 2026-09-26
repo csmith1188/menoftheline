@@ -11,7 +11,10 @@ import { GameSim } from "./sim.js";
 
 export const TICK_MS = 50;
 export const STEP_DT = 0.05;
-export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 5000;
+/** Match-start countdown for human vs human games. */
+export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 10000;
+/** Match-start countdown for bot games. */
+export const BOT_COUNTDOWN_MS = Number(process.env.BOT_COUNTDOWN_MS) || 5000;
 
 function emptySeat(key, sideId) {
   return {
@@ -173,11 +176,17 @@ export class GameRoom {
       return false;
     }
     this.status = "countdown";
-    this.countdownEnds = Date.now() + COUNTDOWN_MS;
+    const wait = this.countdownDurationMs();
+    this.countdownEnds = Date.now() + wait;
     this.pushLobby();
     this.broadcastState();
-    this.countdownTimer = setTimeout(() => this.beginPlay(), COUNTDOWN_MS);
+    this.countdownTimer = setTimeout(() => this.beginPlay(), wait);
     return true;
+  }
+
+  /** 10s vs humans, 5s vs bot. */
+  countdownDurationMs() {
+    return this.mode === "bot" ? BOT_COUNTDOWN_MS : COUNTDOWN_MS;
   }
 
   cancelCountdown() {
@@ -292,6 +301,12 @@ export class GameRoom {
     return "Waiting for an opponent";
   }
 
+  /** Remaining ms until play, from the server clock (avoids client clock skew). */
+  countdownLeftMs() {
+    if (this.status !== "countdown" || !this.countdownEnds) return null;
+    return Math.max(0, this.countdownEnds - Date.now());
+  }
+
   lobbyFor(seat) {
     return {
       seat: seat.key,
@@ -299,6 +314,7 @@ export class GameRoom {
       mode: this.mode,
       text: this.status === "waiting" ? this.waitingText() : "",
       countdownEnds: this.countdownEnds,
+      countdownLeft: this.countdownLeftMs(),
       you: seat.userId ? { id: seat.userId, name: seat.name } : null,
       opponent: this.opponentOf(seat),
     };
@@ -316,6 +332,7 @@ export class GameRoom {
     const snap = this.sim.snapshot();
     snap.status = this.status;
     snap.countdownEnds = this.countdownEnds;
+    snap.countdownLeft = this.countdownLeftMs();
     return snap;
   }
 

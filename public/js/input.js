@@ -29,6 +29,7 @@ const pointerMethods = {
         const friendly = troop && troop.side && troop.side.id === "player";
         if (troop && friendly) {
           const wasSelected = this.isInspected(troop);
+          const meleeSolo = this.isTroopInMelee(troop);
           this.drag = {
             troop,
             x: world.x,
@@ -38,9 +39,10 @@ const pointerMethods = {
             ux: troop.x,
             uy: troop.y,
             downAt: performance.now(),
-            soloPick: false,
+            soloPick: meleeSolo,
             wasSelected,
           };
+          if (meleeSolo) this.selectTroop(troop, true);
           this.canvas.setPointerCapture(event.pointerId);
           return;
         }
@@ -109,6 +111,7 @@ const pointerMethods = {
       return;
     }
     const wasSelected = this.isInspected(troop);
+    const meleeSolo = this.isTroopInMelee(troop);
     this.drag = {
       troop,
       x: point.x,
@@ -118,9 +121,10 @@ const pointerMethods = {
       ux: troop.x,
       uy: troop.y,
       downAt: performance.now(),
-      soloPick: false,
+      soloPick: meleeSolo,
       wasSelected,
     };
+    if (meleeSolo) this.selectTroop(troop, true);
     this.canvas.setPointerCapture(event.pointerId);
   },
 
@@ -407,10 +411,11 @@ const pointerMethods = {
   },
 
   /**
-   * True when this press should affect only that unit: long-press, or the
-   * unit is already the solo selection.
+   * True when this press should affect only that unit: long-press, melee
+   * contact, or the unit is already the solo selection.
    */
   orderSolo(troop, start) {
+    if (this.isTroopInMelee(troop)) return true;
     if (start && start.soloPick) return true;
     return Boolean(this.inspectedSolo && this.inspectedId === troop.id);
   },
@@ -436,14 +441,14 @@ const pointerMethods = {
 
   selectTroop(troop, solo) {
     this.inspectedId = troop.id;
-    this.inspectedSolo = Boolean(solo);
+    this.inspectedSolo = Boolean(solo) || this.isTroopInMelee(troop);
     this.inspectedTroop();
   },
 
   /**
-   * Tap an unselected unit to inspect its line. Tap the solo-selected
-   * unit again to issue a solo order. Tap any other unit to select that
-   * unit's line (leaving solo on the previous unit).
+   * Tap an unselected unit to inspect its line (or alone if in melee).
+   * Tap the solo-selected unit again to issue a solo order. Tap any other
+   * unit to select that unit's line (leaving solo on the previous unit).
    */
   handleUnitTap(troop) {
     const friendly = troop.side && troop.side.id === "player";
@@ -457,7 +462,7 @@ const pointerMethods = {
       return;
     }
     if (!friendly) return;
-    const solo = Boolean(this.inspectedSolo);
+    const solo = Boolean(this.inspectedSolo) || this.isTroopInMelee(troop);
     if (troop.order === "reform") {
       this.announceOrder(troop, "restore");
       this.onCommand({ type: "order", troopId: troop.id, action: "restore", solo });

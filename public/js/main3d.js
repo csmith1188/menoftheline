@@ -202,7 +202,7 @@ function fillBanks(el, side, clickable) {
     button.disabled = !clickable || !next || !timed;
     if (clickable && next && timed) {
       button.addEventListener("click", () => {
-        if (board.winner || board.status !== "playing" || board.telescope) return;
+        if (board.winner || board.status !== "playing") return;
         if (side.gold < side.bankCost()) return;
         board.onCommand({ type: "bank" });
       });
@@ -212,7 +212,7 @@ function fillBanks(el, side, clickable) {
 }
 
 function syncBanks() {
-  const show = Boolean(board.player) && !board.telescope;
+  const show = Boolean(board.player);
   banksPlayer.classList.toggle("hidden", !show);
   banksEnemy.classList.toggle("hidden", !show);
   if (!show) return;

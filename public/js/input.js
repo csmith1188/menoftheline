@@ -24,6 +24,10 @@ const pointerMethods = {
       this.telescopeSlide = 0;
       let enemyTap = null;
       if (!(this.winner || this.status !== "playing")) {
+        if (this.hitBankAt(this.canvasPoint(event), this.player)) {
+          this.onCommand({ type: "bank" });
+          return;
+        }
         const world = this.worldPoint(event);
         const troop = this.hitAnyTroopAt(world);
         const friendly = troop && troop.side && troop.side.id === "player";
@@ -157,8 +161,9 @@ const pointerMethods = {
       const point = this.screenPoint(event);
       if (this.telescopeDrag) this.moveTelescope(point);
       const world = this.telescopeWorld(point);
+      const overBank = this.hitBankAt(this.canvasPoint(event), this.player);
       const over = this.hitAnyTroopAt(world) || this.hitCheckpointAt(world);
-      this.canvas.style.cursor = over || this.laneAt(world) ? "pointer" : "default";
+      this.canvas.style.cursor = overBank || over || this.laneAt(world) ? "pointer" : "default";
       return;
     }
     if (!this.player) return;

@@ -562,10 +562,12 @@ const boardMethods = {
       this.drawBattlefield(ctx);
       ctx.restore();
       applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
-    this.drawScoreboard(ctx);
-    this.drawUpgradeReadouts(ctx);
-    this.drawTelescopeHud(ctx);
-    return;
+      this.player.drawBanks(ctx);
+      this.enemy.drawBanks(ctx);
+      this.drawScoreboard(ctx);
+      this.drawUpgradeReadouts(ctx);
+      this.drawTelescopeHud(ctx);
+      return;
     }
     applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
     ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);

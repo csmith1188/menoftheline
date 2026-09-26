@@ -1828,8 +1828,8 @@ class Unit {
   }
 
   /**
-   * After ending a pass-through while stacked: ease toward the closest
-   * overlapping collidable by station (forward if they are ahead, back
+   * After ending a pass-through while stacked: ease away from the closest
+   * overlapping collidable by station (back if they are ahead, forward
    * if they are behind). Once a direction is chosen, keep easing that
    * way until clear of every collidable — avoids thrashing when
    * sandwiched. True while still peeling so the unit must not act on
@@ -1847,8 +1847,8 @@ class Unit {
     }
     if (this.peelDir === 0) {
       const along = this.alongSigned(other);
-      // Toward the closer unit: ahead → forward, behind → back, tie → back.
-      this.peelDir = along > 0 ? 1 : -1;
+      // Away from the closer unit: ahead → back, behind → forward, tie → back.
+      this.peelDir = along < 0 ? 1 : -1;
     }
     this.easeAlong(dt, allies, enemies, this.peelDir, true);
     if (!this.collidingAlly(allies)) {
@@ -2917,17 +2917,17 @@ class Checkpoint {
   }
 
   /**
-   * Closest and farthest towns are speed, the next pair are armor,
-   * and the middle town is damage.
+   * Order along the arc: defense, speed, damage, speed, defense.
+   * Same kinds share remaining cost; a second town doubles land/sec into that research.
    */
   upgradeKind() {
     const last = CONFIG.checkpointCount - 1;
     const dist = Math.min(this.index, last - this.index);
     if (dist === 0) {
-      return "speed";
+      return "armor";
     }
     if (dist === 1) {
-      return "armor";
+      return "speed";
     }
     return "damage";
   }
@@ -3542,6 +3542,7 @@ export class GameSim {
 
   /**
    * Invest land into owned producing towns at townProduceRate each.
+   * Same-kind towns share remaining cost and stack investment rate.
    * When land cannot cover every town, fund closest to the keep first.
    */
   tickTownProduction(side, dt) {

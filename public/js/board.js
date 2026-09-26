@@ -38,14 +38,15 @@ export const troopStateMethods = {
 };
 
 export const townStateMethods = {
+  /** Outer pair defense, next pair speed, middle damage. Same kinds share progress. */
   upgradeKind() {
     const last = CONFIG.checkpointCount - 1;
     const dist = Math.min(this.index, last - this.index);
     if (dist === 0) {
-      return "speed";
+      return "armor";
     }
     if (dist === 1) {
-      return "armor";
+      return "speed";
     }
     return "damage";
   },

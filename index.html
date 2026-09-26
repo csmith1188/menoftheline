@@ -2316,17 +2316,17 @@ class Checkpoint {
   }
 
   /**
-   * Closest and farthest towns are speed, the next pair are armor,
-   * and the middle town is damage.
+   * Order along the arc: defense, speed, damage, speed, defense.
+   * Same kinds share remaining cost; a second town doubles land/sec into that research.
    */
   upgradeKind() {
     const last = CONFIG.checkpointCount - 1;
     const dist = Math.min(this.index, last - this.index);
     if (dist === 0) {
-      return "speed";
+      return "armor";
     }
     if (dist === 1) {
-      return "armor";
+      return "speed";
     }
     return "damage";
   }

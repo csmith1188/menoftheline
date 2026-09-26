@@ -381,8 +381,8 @@ function drawGround(ctx) {
 function upgradeKind(index) {
   const last = CONFIG.checkpointCount - 1;
   const dist = Math.min(index, last - index);
-  if (dist === 0) return "speed";
-  if (dist === 1) return "armor";
+  if (dist === 0) return "armor";
+  if (dist === 1) return "speed";
   return "damage";
 }
 
@@ -821,8 +821,8 @@ function drawEconomy(ctx, w, h) {
 
   const stripY = mapH + stripH / 2;
   const tracks = [
-    { kind: "speed", name: "Speed", filled: 2 },
-    { kind: "armor", name: "Armor", filled: 1 },
+    { kind: "armor", name: "Defense", filled: 2 },
+    { kind: "speed", name: "Speed", filled: 1 },
     { kind: "damage", name: "Damage", filled: 0 },
   ];
   const col = w / tracks.length;
@@ -1054,8 +1054,8 @@ const pages = [
     title: "Gold and land",
     artHeight: 300,
     blocks: [
-      { kind: "p", text: "Gold buys units and banks. Alternates also cost land. Speed, armor, and damage upgrades come from towns you own: click a town to invest 1 land per second toward its next rank. When you cannot fund every producing town, the ones closest to your keep get land first. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.5% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
-      { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Outer towns upgrade speed, the next pair armor, and the middle town damage." },
+      { kind: "p", text: "Gold buys units and banks. Alternates also cost land. Defense, speed, and damage upgrades come from towns you own: click a town to invest 1 land per second toward its next rank. Towns of the same upgrade share remaining cost, so a second matching town adds another 1 land per second into that research. When you cannot fund every producing town, the ones closest to your keep get land first. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.5% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
+      { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Towns along the arc upgrade defense, speed, damage, speed, then defense." },
     ],
     draw: drawEconomy,
   },

@@ -5,13 +5,13 @@
 - Reinforced Learning player
 - benefits of far checkpoints?
 - checkpoints can also upgrade unit types? outer track
+    - troop: stoppages. troops don't apply to mass tax. drill sgt major: can't be flanked, increased advance speed
     - skrimisher: automatically fall back when in engagement range and being targetted
-    - troop: stoppages. troops don't apply to mass tax
     - calvary: no hit slow while charging
     - cannon: penetrating shots (do quarter damage)
-    - officer: Sergeants Major. broken units don't move when in range behind an officer?
+    - officer: Sergeants. broken units don't move when in range behind an officer?
 - unlock one of two variants by swiping up or down. can only build that variant. buy again to switch.
-    - irregulars: increased melee and flanking, reduced range, reduced price
+    - professionals: advanced manuovers
     - light: recover fatigue on their own
     - curaissers: half damage, double attacks (more hit fatigue), bonus damage vs falling back / retreating
     - mortar

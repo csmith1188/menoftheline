@@ -3813,13 +3813,13 @@ const Game = {
     ctx.textBaseline = "middle";
     ctx.font = this.uiFont(18);
     ctx.fillStyle = CONFIG.colors.player;
-    ctx.fillText(String(Math.max(0, this.player.capitalHP)), mid - 28 * CONFIG.uiScale, midY);
+    ctx.fillText(String(Math.round(Math.max(0, this.player.capitalHP))), mid - 28 * CONFIG.uiScale, midY);
     ctx.fillStyle = CONFIG.colors.text;
     ctx.font = this.uiFont(14);
     ctx.fillText("—", mid, midY);
     ctx.fillStyle = CONFIG.colors.enemy;
     ctx.font = this.uiFont(18);
-    ctx.fillText(String(Math.max(0, this.enemy.capitalHP)), mid + 28 * CONFIG.uiScale, midY);
+    ctx.fillText(String(Math.round(Math.max(0, this.enemy.capitalHP))), mid + 28 * CONFIG.uiScale, midY);
     ctx.restore();
   },
 

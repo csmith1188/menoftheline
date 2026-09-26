@@ -2,6 +2,33 @@ import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
 import { UNIT_STATS, unitStats, massTaxOf, unitLandCost, isAlternateUnit } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
+/** Per-lane grand strategy modes (cycle order). */
+const TARGETING_MODES = ["bastion", "attrition", "terror"];
+
+/** hp% − fatigue%; Attrition maximizes, Terror minimizes. */
+function targetVitality(unit) {
+  const hpPct = unit.maxHp > 0 ? Math.max(0, unit.hp) / unit.maxHp : 0;
+  const fatPct = unit.maxFatigue > 0 ? unit.fatigue / unit.maxFatigue : 0;
+  return hpPct - fatPct;
+}
+
+/**
+ * True when candidate beats the current best under mode.
+ * Bastion: closer. Attrition: healthier. Terror: weaker.
+ * Distance breaks ties for Attrition/Terror.
+ */
+function isBetterTarget(mode, candD, candVit, bestD, bestVit) {
+  if (mode === "attrition") {
+    if (candVit !== bestVit) return candVit > bestVit;
+    return candD < bestD;
+  }
+  if (mode === "terror") {
+    if (candVit !== bestVit) return candVit < bestVit;
+    return candD < bestD;
+  }
+  return candD < bestD;
+}
+
 /**
  * Shot fired by a troop or cannon. Travels over intervening units and
  * only collides with its chosen target (or the target keep). A shell
@@ -2113,21 +2140,29 @@ class Unit {
   }
 
   /**
-   * Closest living enemy inside a world-space circle. Lane and sublane
-   * do not matter. Units locked in melee are not targeted until they
-   * leave it. Except skirmishers/rifles, units will not fire at officers
-   * while any other target (enemy unit or keep) is in full shooting
-   * range. The enemy keep is a valid target when no unit is closer.
+   * Best living enemy inside maxRange under this lane's grand strategy.
+   * Strategy only reorders eligible targets; it never widens range.
+   * Callers pass openFireRange / shootRange so advance stays at engage
+   * range and halt (or lined volleys) use full attack range. Lane and
+   * sublane do not filter candidates. Units locked in melee are skipped.
+   * Except skirmishers/rifles, units will not fire at officers while any
+   * other target (enemy unit or keep) is in full shooting range. The
+   * enemy keep is a valid target when no unit is preferred. Howitzer
+   * canister picks stay separate.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.attackRange() : maxRange;
     const fullRange = this.attackRange();
     // Rifles keep type "skirmisher", so they may snipe officers too.
     const shyOfOfficers = this.type !== "skirmisher";
+    const mode = (this.side && this.side.targeting && this.side.targeting[this.lane])
+      || "bastion";
     let best = null;
     let bestD = Infinity;
+    let bestVit = 0;
     let bestOfficer = null;
     let bestOfficerD = Infinity;
+    let bestOfficerVit = 0;
     let otherInFullRange = false;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
@@ -2144,15 +2179,18 @@ class Unit {
       if (d > range) {
         continue;
       }
+      const vit = targetVitality(other);
       if (other.type === "officer" && shyOfOfficers) {
-        if (d < bestOfficerD) {
+        if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
+          bestOfficerVit = vit;
           bestOfficer = other;
         }
         continue;
       }
-      if (d < bestD) {
+      if (!best || isBetterTarget(mode, d, vit, bestD, bestVit)) {
         bestD = d;
+        bestVit = vit;
         best = other;
       }
     }
@@ -2941,6 +2979,16 @@ class Side {
     this.banks = 0;
     this.troops = [];
     this.shotCooldown = 0;
+    /** Per-lane fire priority: bastion | attrition | terror. */
+    this.targeting = { top: "bastion", bottom: "bastion" };
+  }
+
+  /** Set grand strategy for a lane. False if lane or mode is invalid. */
+  setTargeting(lane, mode) {
+    if (lane !== "top" && lane !== "bottom") return false;
+    if (TARGETING_MODES.indexOf(mode) < 0) return false;
+    this.targeting[lane] = mode;
+    return true;
   }
 
   /** Land price of the next rank of this upgrade. */
@@ -3142,14 +3190,18 @@ class Side {
   }
 
   /**
-   * Closest enemy troop in cannon range. Units locked in melee are skipped.
-   * Officers are ignored while any other enemy is in full cannon range.
+   * Best enemy troop in cannon range under the top-lane grand strategy
+   * (keeps have no lane of their own). Units locked in melee are skipped.
+   * Officers are ignored while any other enemy is in cannon range.
    */
   capitalTarget(enemies, allies) {
+    const mode = (this.targeting && this.targeting.top) || "bastion";
     let best = null;
     let bestD = Infinity;
+    let bestVit = 0;
     let bestOfficer = null;
     let bestOfficerD = Infinity;
+    let bestOfficerVit = 0;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
@@ -3162,15 +3214,18 @@ class Side {
       if (d > CONFIG.capitalCannonRange) {
         continue;
       }
+      const vit = targetVitality(other);
       if (other.type === "officer") {
-        if (d < bestOfficerD) {
+        if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
+          bestOfficerVit = vit;
           bestOfficer = other;
         }
         continue;
       }
-      if (d < bestD) {
+      if (!best || isBetterTarget(mode, d, vit, bestD, bestVit)) {
         bestD = d;
+        bestVit = vit;
         best = other;
       }
     }
@@ -3304,6 +3359,9 @@ export class GameSim {
       return Boolean(this.grantTroop(side, cmd.lane, cmd.unit));
     }
     if (cmd.type === "bank") return side.tryUnlockBank();
+    if (cmd.type === "targeting") {
+      return side.setTargeting(cmd.lane, cmd.mode);
+    }
     if (cmd.type === "townProduce" || cmd.type === "upgrade") {
       const id = Number(cmd.checkpointId);
       const town = this.checkpoints.find((c) => c.index === id);
@@ -3426,6 +3484,10 @@ export class GameSim {
       speedMultiplier: side.speedMultiplier,
       upgrades: { ...side.upgrades },
       upgradeProgress: { ...side.upgradeProgress },
+      targeting: {
+        top: side.targeting.top,
+        bottom: side.targeting.bottom,
+      },
       troops: side.troops.filter((troop) => troop.hp > 0).map((troop) => ({
         id: troop.id,
         lane: troop.lane,

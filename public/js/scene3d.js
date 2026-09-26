@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
+import { TARGETING_LABELS } from "./board.js";
 
 function labelTexture(lines, opts = {}) {
   const width = opts.width || 256;
@@ -29,6 +30,24 @@ function labelTexture(lines, opts = {}) {
     ctx.font = row.font || opts.font || "bold 36px Trebuchet MS, sans-serif";
     ctx.fillStyle = row.color || opts.color || "#e8eef6";
     ctx.fillText(row.text, width / 2, step * (i + 1));
+  }
+  if (opts.sideArrows) {
+    const mid = height / 2;
+    const edge = Math.max(18, width * 0.08);
+    const s = Math.max(10, height * 0.12);
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(edge - s * 0.55, mid);
+    ctx.lineTo(edge + s * 0.45, mid - s);
+    ctx.lineTo(edge + s * 0.45, mid + s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(width - edge + s * 0.55, mid);
+    ctx.lineTo(width - edge - s * 0.45, mid - s);
+    ctx.lineTo(width - edge - s * 0.45, mid + s);
+    ctx.closePath();
+    ctx.fill();
   }
   const tex = new THREE.CanvasTexture(pad);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -336,6 +355,7 @@ export function createScene(canvas) {
   world.add(hud);
   const buyMeshes = [];
   const unlockMeshes = [];
+  const strategyMeshes = [];
 
   const units = new Map();
   const towns = new Map();
@@ -775,6 +795,51 @@ export function createScene(canvas) {
     }
   }
 
+  function syncStrategyUi(board) {
+    const show = Boolean(board.player) && !board.telescope;
+    const over = Boolean(board.winner) || board.status !== "playing";
+    const lanes = ["top", "bottom"];
+    const fills = { top: "#2a4a3a", bottom: "#4a3a2a" };
+    const strokes = { top: "#6ab890", bottom: "#c4a05a" };
+    while (strategyMeshes.length < lanes.length) {
+      const lane = lanes[strategyMeshes.length];
+      const pad = makePad(80, 40, fills[lane]);
+      strategyMeshes.push(pad);
+      hud.add(pad);
+    }
+    for (let i = 0; i < lanes.length; i += 1) {
+      const lane = lanes[i];
+      const mesh = strategyMeshes[i];
+      mesh.visible = show;
+      if (!show) continue;
+      const box = board.strategyButtonRect(lane);
+      placePad(mesh, box, 15);
+      mesh.scale.set(box.w / 80, 1.1, box.h / 40);
+      mesh.userData.face.scale.x = board.southpaw ? -1 : 1;
+      mesh.material.opacity = over ? 0.45 : 1;
+      mesh.material.transparent = true;
+      const mode = board.targetingMode(lane);
+      const label = TARGETING_LABELS[mode] || mode;
+      const dragging = board.strategyDrag && board.strategyDrag.lane === lane;
+      mesh.material.emissive.set(dragging ? "#ffffff" : "#000000");
+      mesh.material.emissiveIntensity = dragging ? 0.18 : 0;
+      const key = `${label}:${over}:${dragging ? 1 : 0}`;
+      if (mesh.userData.face.userData.key !== key) {
+        setLabel(mesh.userData.face, [
+          { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
+        ], {
+          width: 256,
+          height: 96,
+          fill: fills[lane],
+          stroke: strokes[lane],
+          sideArrows: true,
+          key,
+        });
+        mesh.userData.face.userData.key = key;
+      }
+    }
+  }
+
   function syncScene(board) {
     if (!board.player) return;
     if (board.refreshHoldSelect) board.refreshHoldSelect();
@@ -784,6 +849,7 @@ export function createScene(canvas) {
     syncHover(board);
     syncKeeps(board);
     syncBuysUi(board);
+    syncStrategyUi(board);
     syncTowns(board);
     syncUnits(board);
     syncShots(board);

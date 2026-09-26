@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-09-26",
+    "title": "Grand Strategy",
+    "summary": "Per-lane fire priorities: Bastion, Attrition, and Terror.",
+    "items": [
+      "Two strategy buttons sit under the buy row, one for each lane. Click or swipe right to cycle Bastion → Attrition → Terror; swipe left to go back.",
+      "Bastion aims at the closest eligible target (the previous default).",
+      "Attrition aims at the healthiest eligible target (hp% − fatigue%).",
+      "Terror aims at the weakest eligible target.",
+      "Strategy only reorders targets inside the usual engagement and shoot ranges. Halt and lined volleys still use full range; advancing units still open at engage range.",
+      "Officer rules are unchanged: skirmishers may snipe officers; other units skip them while another target is in full shooting range.",
+      "Howitzers still fire closest per row and ignore lane strategy. Keep guns follow the top lane strategy."
+    ]
+  },
+  {
+    "date": "2026-09-26",
     "title": "Upkeep, Town Research & Grenadiers",
     "summary": "Living units cost gold over time, towns research upgrades with land, and grenadiers ignore bonus flanking damage.",
     "items": [

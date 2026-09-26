@@ -57,6 +57,8 @@ board.telescopeWorld = (screen) => {
 };
 const hitBuyAt = board.hitBuyAt.bind(board);
 board.hitBuyAt = (point) => (board.telescope ? null : hitBuyAt(point));
+const hitStrategyAt = board.hitStrategyAt.bind(board);
+board.hitStrategyAt = (point) => (board.telescope ? null : hitStrategyAt(point));
 board.hitBankAt = () => false;
 // Ground-plane pointers are already in world space; do not shrink thresholds
 // by the 2D telescope screen scale.

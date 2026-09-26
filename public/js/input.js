@@ -80,6 +80,18 @@ const pointerMethods = {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    const strategy = this.hitStrategyAt(point);
+    if (strategy) {
+      this.strategyDrag = {
+        lane: strategy.lane,
+        x: point.x,
+        y: point.y,
+        hx: point.x,
+        hy: point.y,
+      };
+      this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
     if (this.hitBankAt(point, this.player)) {
       this.onCommand({ type: "bank" });
       return;
@@ -162,11 +174,16 @@ const pointerMethods = {
         this.cycleBuyVariant(this.buyDrag.type, swipe);
       }
     }
+    if (this.strategyDrag) {
+      this.strategyDrag.hx = point.x;
+      this.strategyDrag.hy = point.y;
+    }
     if (this.drag) {
       this.drag.hx = point.x;
       this.drag.hy = point.y;
     }
     const overUI = this.hitBuyAt(point)
+      || this.hitStrategyAt(point)
       || this.hitBankAt(point, this.player);
     this.canvas.style.cursor = overUI ? "pointer" : "default";
   },
@@ -250,6 +267,24 @@ const pointerMethods = {
       if (lane) {
         this.onCommand({ type: "buy", lane, unit: this.selectedBuyUnit(start.type) });
       }
+      return;
+    }
+    if (this.strategyDrag) {
+      const start = this.strategyDrag;
+      this.strategyDrag = null;
+      if (this.winner || this.status !== "playing") {
+        return;
+      }
+      const point = this.canvasPoint(event);
+      const swipe = this.strategySwipeDir(start, point);
+      // Click or swipe right → forward; swipe left → back.
+      const dir = swipe === -1 ? -1 : 1;
+      const mode = this.nextTargetingMode(start.lane, dir);
+      if (!this.player.targeting) {
+        this.player.targeting = { top: "bastion", bottom: "bastion" };
+      }
+      this.player.targeting[start.lane] = mode;
+      this.onCommand({ type: "targeting", lane: start.lane, mode });
       return;
     }
     if (!this.drag) {
@@ -589,6 +624,21 @@ const pointerMethods = {
     }
     return dx < 0 ? -1 : 1;
   },
+
+  /**
+   * Horizontal swipe on a grand strategy button.
+   * Returns -1 (left) or 1 (right), or null if not past threshold.
+   */
+  strategySwipeDir(start, point) {
+    const dx = point.x - start.x;
+    const dy = point.y - start.y;
+    const box = this.strategyButtonRect(start.lane);
+    const min = Math.max(16, box.w * 0.25);
+    if (Math.abs(dx) < min || Math.abs(dx) <= Math.abs(dy)) {
+      return null;
+    }
+    return dx < 0 ? -1 : 1;
+  },
 };
 
 export function bindInput(board) {
@@ -602,6 +652,7 @@ export function bindInput(board) {
   function clearTransientPress() {
     board.drag = null;
     board.buyDrag = null;
+    board.strategyDrag = null;
     board.telescopeDrag = null;
     board.telescopeSlide = 0;
     board.lanePress = null;

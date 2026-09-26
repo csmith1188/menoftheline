@@ -1037,6 +1037,7 @@ const pages = [
     blocks: [
       { kind: "p", text: "Units open fire inside engagement range, or at full range while halted. An advancing line that holds to shoot together then uses full range. A lined mate who has opened fire lets the rest of the line join that volley. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
       { kind: "p", text: "Charge and flank raise melee damage. Shots briefly slow advancing or charging units. Halt and reform ignore the slow. Units in melee are not targeted until they leave it." },
+      { kind: "p", text: "Grand strategy buttons sit under the buy row, one per lane. Click or swipe right to cycle Bastion → Attrition → Terror; swipe left to go back. Bastion aims at the closest eligible target, Attrition at the healthiest (hp% − fatigue%), Terror at the weakest. Officer rules still apply: skirmishers prefer officers, other units skip them while another target is in full range. Howitzers still fire closest per row. Keep guns follow the top lane strategy." },
     ],
     draw: drawFighting,
   },

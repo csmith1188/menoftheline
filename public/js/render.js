@@ -8,6 +8,7 @@ import {
   inspectReadout,
   readSouthpaw,
   sideStateMethods,
+  TARGETING_LABELS,
   townStateMethods,
   troopStateMethods,
   useDrawPrototypes,
@@ -565,6 +566,7 @@ const boardMethods = {
     this.drawScoreboard(ctx);
     this.drawUpgradeReadouts(ctx);
     this.drawBuyButtons(ctx);
+    this.drawStrategyButtons(ctx);
     this.drawInspectedUnit(ctx);
     this.drawOrderCallout(ctx);
   },
@@ -838,6 +840,42 @@ const boardMethods = {
         ctx.fillText(`${land}🌿`, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
         ctx.globalAlpha = 1;
       }
+    }
+  },
+
+  /** Per-lane Bastion / Attrition / Terror controls under the buy row. */
+  drawStrategyButtons(ctx) {
+    if (!this.player) return;
+    const over = Boolean(this.winner) || this.status !== "playing";
+    const hover = this.hover;
+    const drag = this.strategyDrag;
+    const lanes = ["top", "bottom"];
+    const fills = { top: "#2a4a3a", bottom: "#4a3a2a" };
+    const strokes = { top: "#6ab890", bottom: "#c4a05a" };
+    for (let i = 0; i < lanes.length; i += 1) {
+      const lane = lanes[i];
+      const box = this.strategyButtonRect(lane);
+      const mode = this.targetingMode(lane);
+      const label = TARGETING_LABELS[mode] || mode;
+      const lit = hover && this.pointInBox(hover, box);
+      const swiping = drag && drag.lane === lane;
+      const mid = box.y + box.h / 2;
+      const edge = 7 * CONFIG.uiScale;
+      ctx.globalAlpha = over ? 0.45 : 1;
+      ctx.fillStyle = fills[lane];
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+      ctx.strokeStyle = (lit || swiping) && !over ? "#ffffff" : strokes[lane];
+      ctx.lineWidth = 2;
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      ctx.fillStyle = "#ffffff";
+      fillSideArrow(ctx, box.x + edge, mid, false);
+      fillSideArrow(ctx, box.x + box.w - edge, mid, true);
+      ctx.fillStyle = CONFIG.colors.gold;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = this.uiFont(12);
+      ctx.fillText(label, box.x + box.w / 2, mid);
+      ctx.globalAlpha = 1;
     }
   },
 };

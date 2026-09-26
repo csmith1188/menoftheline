@@ -2,6 +2,15 @@ import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
 import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
 
+/** Per-lane grand strategy cycle (Bastion → Attrition → Terror). */
+export const TARGETING_MODES = ["bastion", "attrition", "terror"];
+
+export const TARGETING_LABELS = {
+  bastion: "Bastion",
+  attrition: "Attrition",
+  terror: "Terror",
+};
+
 /** +12 or −1.2, one decimal when the tenth place is nonzero. */
 function formatSignedRate(n) {
   const rounded = Math.round(n * 10) / 10;
@@ -307,6 +316,36 @@ export const boardStateMethods = {
     return best;
   },
 
+  /** Grand strategy button under the pointer, or null. */
+  hitStrategyAt(point) {
+    const pad = this.uiMetrics().hitPad;
+    const lanes = ["top", "bottom"];
+    for (let i = 0; i < lanes.length; i += 1) {
+      const lane = lanes[i];
+      const box = this.strategyButtonRect(lane);
+      if (this.pointInBox(point, box, pad)) {
+        return { lane, box };
+      }
+    }
+    return null;
+  },
+
+  /** Current mode for a lane (defaults to bastion). */
+  targetingMode(lane) {
+    const side = this.player;
+    if (!side || !side.targeting) return "bastion";
+    return side.targeting[lane] || "bastion";
+  },
+
+  /** Next/prev mode in Bastion → Attrition → Terror cycle. */
+  nextTargetingMode(lane, dir) {
+    const cur = this.targetingMode(lane);
+    let idx = TARGETING_MODES.indexOf(cur);
+    if (idx < 0) idx = 0;
+    const n = TARGETING_MODES.length;
+    return TARGETING_MODES[(idx + dir + n) % n];
+  },
+
   /** Spawn key currently shown on this buy button. Bases default on. */
   selectedBuyUnit(base) {
     const variant = UNIT_VARIANTS[base];
@@ -342,18 +381,59 @@ export const boardStateMethods = {
     const unlockH = needsLandRow ? Math.round(ui.buyH * 0.28) : 0;
     const gap = unlockH ? 4 * CONFIG.uiScale : 0;
     const h = ui.buyH;
+    const strategyH = Math.round(ui.buyH * 0.42);
+    const strategyGap = 6 * CONFIG.uiScale;
+    const reserveUnlockH = Math.round(ui.buyH * 0.28);
+    const reserveUnlockGap = 4 * CONFIG.uiScale;
     const row = BUY_UNITS.length * ui.buyW + (BUY_UNITS.length - 1) * ui.buyGap;
     const x = CONFIG.canvasWidth / 2 - row / 2;
-    const pad = 12;
+    const pad = 0;
     const minY = CONFIG.playerCapital.y + CONFIG.topLaneHeight / 2 + pad;
     const c = Path.bottomCenter();
     const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
     const dx = Math.min(row / 2, rIn - 8);
     const ringY = c.y + Math.sqrt(Math.max(0, rIn * rIn - dx * dx));
-    const maxY = ringY - pad - h;
-    let y = (minY + maxY) / 2;
+    const maxY = ringY - pad - h - reserveUnlockGap - reserveUnlockH - strategyGap - strategyH;
+    // Pack the buy / strategy cluster toward the bottom of the pocket.
+    let y = maxY;
     y = Math.max(minY, Math.min(y, maxY));
-    return { x, y, h, unlockH, unlockGap: gap, ui };
+    return { x, y, h, unlockH, unlockGap: gap, ui, strategyH, strategyGap, row };
+  },
+
+  /** Two buy-width strategy buttons centered under the buy row.
+   *  Y always assumes the land-cost strip height so the row does not jump
+   *  when alternate buy chips appear or disappear.
+   */
+  strategyRowLayout() {
+    const buy = this.buyRowLayout();
+    const ui = buy.ui;
+    const w = ui.buyW;
+    const gap = ui.buyGap;
+    const unlockH = Math.round(ui.buyH * 0.28);
+    const unlockGap = 4 * CONFIG.uiScale;
+    const row = 2 * w + gap;
+    const x = CONFIG.canvasWidth / 2 - row / 2;
+    const y = buy.y + buy.h + unlockGap + unlockH + buy.strategyGap;
+    return {
+      x,
+      y,
+      w,
+      h: buy.strategyH,
+      gap,
+      ui,
+    };
+  },
+
+  strategyButtonRect(lane) {
+    const layout = this.strategyRowLayout();
+    const index = lane === "bottom" ? 1 : 0;
+    return {
+      x: layout.x + index * (layout.w + layout.gap),
+      y: layout.y,
+      w: layout.w,
+      h: layout.h,
+      lane,
+    };
   },
 
   buyButtonRect(index) {
@@ -1110,6 +1190,10 @@ function makeSide(data, viewId, board, mx) {
   side.speedMultiplier = data.speedMultiplier;
   side.upgrades = { ...data.upgrades };
   side.upgradeProgress = { ...(data.upgradeProgress || { speed: 0, armor: 0, damage: 0 }) };
+  side.targeting = {
+    top: (data.targeting && data.targeting.top) || "bastion",
+    bottom: (data.targeting && data.targeting.bottom) || "bastion",
+  };
   side.troops = data.troops.map((troop) => makeTroop(troop, side, mx));
   return side;
 }
@@ -1220,6 +1304,7 @@ export function createBoardState(canvas) {
     splats: [],
     drag: null,
     buyDrag: null,
+    strategyDrag: null,
     buySelection: {},
     telescope: null,
     telescopeDrag: null,

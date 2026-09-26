@@ -53,12 +53,17 @@ export const sideStateMethods = {
     return CONFIG.upgradeBaseCost + CONFIG.upgradeCostStep * this.upgrades[kind];
   },
 
-  /** True when this upgrade is below the tier cap and can be paid for. */
-  canBuyUpgrade(kind) {
+  /** Land still needed to finish the next rank of this upgrade. */
+  upgradeRemaining(kind) {
     if (this.upgrades[kind] === undefined || this.upgrades[kind] >= CONFIG.upgradeMax) {
-      return false;
+      return 0;
     }
-    return this.land >= this.upgradeCost(kind);
+    return Math.max(0, this.upgradeCost(kind) - (this.upgradeProgress[kind] || 0));
+  },
+
+  /** True when this upgrade is below the tier cap. */
+  canBuyUpgrade(kind) {
+    return this.upgrades[kind] !== undefined && this.upgrades[kind] < CONFIG.upgradeMax;
   },
 
   /** Incoming damage multiplier after armor ranks. */
@@ -97,11 +102,19 @@ export const sideStateMethods = {
     return `${formatSignedRate(this.netIncome())}/s`;
   },
 
-  /** Lane bonus, bank income, and upkeep for the scoreboard's second line. */
+  /** Net land per second after town upgrade investment. */
+  landRateLabel() {
+    const invest = this.landInvestRate || 0;
+    return `${formatSignedRate(this.landIncome - invest)}/s`;
+  },
+
+  /** Lane bonus, bank income, upkeep, and town research land drain. */
   economyDetail() {
     const tax = Math.round(this.massTax() * 10) / 10;
     const taxText = Number.isInteger(tax) ? String(tax) : tax.toFixed(1);
-    return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰`;
+    const invest = Math.round((this.landInvestRate || 0) * 10) / 10;
+    const investText = Number.isInteger(invest) ? String(invest) : invest.toFixed(1);
+    return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰  −${investText}🌿`;
   },
 
   /** Speed, damage, and armor ranks, drawn at the bottom corners. */
@@ -285,38 +298,19 @@ export const boardStateMethods = {
     return best;
   },
 
-  /** Unlock button under a buy slot, when land is high enough and the variant is still locked. */
-  hitVariantUnlockAt(point) {
-    if (!this.player || this.player.land < CONFIG.variantUnlockCost) return null;
-    const pad = this.uiMetrics().hitPad;
-    for (let i = 0; i < BUY_UNITS.length; i += 1) {
-      const base = BUY_UNITS[i].type;
-      const variant = UNIT_VARIANTS[base];
-      if (!variant || this.player.unlockedVariants[variant]) continue;
-      const box = this.variantUnlockRect(i);
-      if (this.pointInBox(point, box, pad)) {
-        return { index: i, base, variant };
-      }
-    }
-    return null;
-  },
-
-  /** Spawn key currently shown on this buy button. Unlocked alternates default on. */
+  /** Spawn key currently shown on this buy button. Bases default on. */
   selectedBuyUnit(base) {
     const variant = UNIT_VARIANTS[base];
-    const unlocked = Boolean(
-      variant && this.player && this.player.unlockedVariants[variant],
-    );
-    if (!unlocked) return base;
+    if (!variant) return base;
     const pick = this.buySelection && this.buySelection[base];
     if (pick === base || pick === variant) return pick;
-    return variant;
+    return base;
   },
 
-  /** Cycle base ↔ unlocked alternate. dir is -1 left or +1 right. */
+  /** Cycle base ↔ alternate. dir is -1 left or +1 right. */
   cycleBuyVariant(base, dir) {
     const variant = UNIT_VARIANTS[base];
-    if (!variant || !this.player || !this.player.unlockedVariants[variant]) return false;
+    if (!variant) return false;
     if (!this.buySelection) this.buySelection = {};
     const options = [base, variant];
     const cur = this.selectedBuyUnit(base);
@@ -326,35 +320,17 @@ export const boardStateMethods = {
     return true;
   },
 
-  /** When a variant is newly unlocked, switch that buy slot to the alternate. */
-  syncBuySelection(prevUnlocked) {
-    if (!this.buySelection) this.buySelection = {};
-    const unlocked = (this.player && this.player.unlockedVariants) || {};
-    for (let i = 0; i < BUY_UNITS.length; i += 1) {
-      const base = BUY_UNITS[i].type;
-      const variant = UNIT_VARIANTS[base];
-      if (!variant || !unlocked[variant]) continue;
-      if (!(prevUnlocked && prevUnlocked[variant])) {
-        this.buySelection[base] = variant;
-      }
-    }
-  },
-
   /**
    * One centered row in the open gap under the top lane.
-   * Unlock chips sit under the row without shifting it.
+   * Land-cost chips sit under slots that show an alternate.
    */
   buyRowLayout() {
     const ui = this.uiMetrics();
-    const needsUnlockRow = Boolean(
+    const needsLandRow = Boolean(
       this.player
-      && this.player.land >= CONFIG.variantUnlockCost
-      && BUY_UNITS.some((unit) => {
-        const variant = UNIT_VARIANTS[unit.type];
-        return variant && !this.player.unlockedVariants[variant];
-      }),
+      && BUY_UNITS.some((unit) => this.selectedBuyUnit(unit.type) !== unit.type),
     );
-    const unlockH = needsUnlockRow ? Math.round(ui.buyH * 0.42) : 0;
+    const unlockH = needsLandRow ? Math.round(ui.buyH * 0.28) : 0;
     const gap = unlockH ? 4 * CONFIG.uiScale : 0;
     const h = ui.buyH;
     const row = BUY_UNITS.length * ui.buyW + (BUY_UNITS.length - 1) * ui.buyGap;
@@ -382,7 +358,8 @@ export const boardStateMethods = {
     };
   },
 
-  variantUnlockRect(index) {
+  /** Non-clickable land-cost strip under a buy slot showing an alternate. */
+  variantLandRect(index) {
     const layout = this.buyRowLayout();
     const ui = layout.ui;
     return {
@@ -1096,11 +1073,12 @@ function makeSide(data, viewId, board, mx) {
   side.income = data.income;
   side.land = data.land;
   side.landIncome = data.landIncome;
+  side.landInvestRate = data.landInvestRate || 0;
   side.capitalHP = data.capitalHP;
   side.banks = data.banks;
   side.speedMultiplier = data.speedMultiplier;
   side.upgrades = { ...data.upgrades };
-  side.unlockedVariants = { ...(data.unlockedVariants || {}) };
+  side.upgradeProgress = { ...(data.upgradeProgress || { speed: 0, armor: 0, damage: 0 }) };
   side.troops = data.troops.map((troop) => makeTroop(troop, side, mx));
   return side;
 }
@@ -1112,6 +1090,7 @@ function makeCheckpoint(data, board) {
   town.x = data.x;
   town.y = data.y;
   town.owner = data.owner;
+  town.producing = Boolean(data.producing);
   return town;
 }
 
@@ -1133,14 +1112,12 @@ export function applySnapshot(board, snap, seat) {
   board.bottomCenter = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
   board.player = makeSide(snap.sides[mine], "player", board, mx);
   board.enemy = makeSide(snap.sides[mine === "player" ? "enemy" : "player"], "enemy", board, mx);
-  const prevUnlocked = board.unlockedVariantsSeen || {};
-  board.syncBuySelection(prevUnlocked);
-  board.unlockedVariantsSeen = { ...(board.player.unlockedVariants || {}) };
   board.checkpoints = snap.checkpoints.map((town) => makeCheckpoint({
     index: town.index,
     x: mx(town.x),
     y: town.y,
     owner: viewOwner(town.owner),
+    producing: town.producing,
   }, board));
   board.projectiles = snap.projectiles.map((shot) => ({ x: mx(shot.x), y: shot.y }));
   board.splats = snap.splats.map((splat) => ({

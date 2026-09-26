@@ -246,6 +246,22 @@ export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
 }
 
+/** True when `type` is an alternate spawn key (grenadier, rifle, …). */
+export function isAlternateUnit(type) {
+  return Boolean(VARIANT_OF_BASE[type]);
+}
+
+/**
+ * Land price to buy an alternate. Bases cost 0 land.
+ * Defaults to unitLandCostRatio of the gold cost unless stats.landCost is set.
+ */
+export function unitLandCost(type) {
+  if (!isAlternateUnit(type)) return 0;
+  const stats = unitStats(type);
+  if (stats.landCost != null) return stats.landCost;
+  return Math.round(stats.cost * CONFIG.unitLandCostRatio);
+}
+
 /**
  * Gold drained per second for the units on the field.
  * Each living unit pays massTaxRate of its gold cost, scaled by remaining health.
@@ -265,7 +281,7 @@ export function massTaxOf(troops) {
   return tax;
 }
 
-/** Base buy type → unlocked alternate spawn key. */
+/** Base buy type → alternate spawn key. */
 export const UNIT_VARIANTS = {
   troop: "grenadier",
   skirmisher: "rifle",
@@ -273,6 +289,10 @@ export const UNIT_VARIANTS = {
   cannon: "howitzer",
   officer: "colorGuard",
 };
+/** Alternate spawn key → base buy type. */
+export const VARIANT_OF_BASE = Object.fromEntries(
+  Object.entries(UNIT_VARIANTS).map(([base, variant]) => [variant, base]),
+);
 /** Short labels for buy buttons and inspect text. */
 export const UNIT_LABELS = {
   troop: "Troop",

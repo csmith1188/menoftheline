@@ -64,9 +64,9 @@ export const CONFIG = {
   // Upgrades
 
   /** Land price of the first rank of speed, armor, or damage. */
-  upgradeBaseCost: 150,
+  upgradeBaseCost: 120,
   /** Extra land added to the upgrade price for each rank already owned. */
-  upgradeCostStep: 150,
+  upgradeCostStep: 0,
   /** Highest rank for speed, armor, and damage. */
   upgradeMax: 5,
   /** Added to the side speed multiplier per speed purchase. */
@@ -79,8 +79,10 @@ export const CONFIG = {
   armorPerUpgrade: 0.1,
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
-  /** Land price to unlock one unit variant for the match. */
-  variantUnlockCost: 350,
+  /** Alternate unit land price as a fraction of its gold cost. */
+  unitLandCostRatio: 0.2,
+  /** Land invested per second by one producing town. */
+  townProduceRate: 1,
 
   // Interface
 

@@ -817,7 +817,7 @@ function drawEconomy(ctx, w, h) {
   const buyAt = toScreen(frame, buy.x, buy.y);
   const costY = Math.max(14, buyAt.y - buy.r * frame.scale - 8);
   ink(ctx, `${CONFIG.upgradeBaseCost}🌿`, buyAt.x, costY, CONFIG.colors.gold, 13);
-  ink(ctx, "click to upgrade", buyAt.x, Math.min(mapH - 6, buyAt.y + buy.r * frame.scale + 12), CONFIG.colors.text, 11);
+  ink(ctx, "click to invest 1/s", buyAt.x, Math.min(mapH - 6, buyAt.y + buy.r * frame.scale + 12), CONFIG.colors.text, 11);
 
   const stripY = mapH + stripH / 2;
   const tracks = [
@@ -909,7 +909,7 @@ function drawVariants(ctx, w, h) {
       name: UNIT_LABELS[type] || type,
     };
   });
-  drawRoster(ctx, w, h, roster, "Unlock with land · drag sideways");
+  drawRoster(ctx, w, h, roster, "Gold + land · drag sideways");
 }
 
 function drawFatigue(ctx, w, h) {
@@ -961,7 +961,7 @@ const pages = [
     blocks: [
       { kind: "p", text: "The top lane is straight rows. Your share of that lane pays gold. Units count more the farther they push and the more health they have. Broken units do not count." },
       { kind: "p", text: "The bottom lane is curved rows and pays \"land\" the same way. An empty lane is split." },
-      { kind: "p", text: "Towns sit inside the bottom curve. The last unit through a town claims it. Click a town you own to buy its upgrade. The pale bars near each keep are cover, and units on them take less damage." },
+      { kind: "p", text: "Towns sit inside the bottom curve. The last unit through a town claims it. Click a town you own to invest land toward its upgrade at 1 per second. Click again to stop. Production ends if you lose the town. The pale bars near each keep are cover, and units on them take less damage." },
     ],
     draw: drawLanes,
   },
@@ -988,7 +988,7 @@ const pages = [
     title: "Variants",
     artHeight: 300,
     blocks: [
-      { kind: "p", text: "Each unit has an alternate unlocked with land for the match. Drag sideways on a buy button to switch. Alternates wear a white square." },
+      { kind: "p", text: "Each unit has an alternate available from the start. Drag sideways on a buy button to switch. Alternates wear a white square and cost gold plus land (default 20% of their gold cost)." },
       {
         kind: "ul",
         items: [
@@ -1053,8 +1053,8 @@ const pages = [
     title: "Gold and land",
     artHeight: 300,
     blocks: [
-      { kind: "p", text: "Gold buys units and banks. Land buys upgrades and unit variants. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.1% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
-      { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Click a town you own to upgrade speed, armor, or damage for your army." },
+      { kind: "p", text: "Gold buys units and banks. Alternates also cost land. Speed, armor, and damage upgrades come from towns you own: click a town to invest 1 land per second toward its next rank. When you cannot fund every producing town, the ones closest to your keep get land first. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.5% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
+      { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Outer towns upgrade speed, the next pair armor, and the middle town damage." },
     ],
     draw: drawEconomy,
   },

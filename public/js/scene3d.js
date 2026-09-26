@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
 
 function labelTexture(lines, opts = {}) {
@@ -586,9 +586,7 @@ export function createScene(canvas) {
           ? CONFIG.colors.enemy
           : CONFIG.colors.neutral;
       mesh.material.color.set(color);
-      const kind = town.upgradeKind();
-      const affordable = town.owner === "player" && board.player && board.player.canBuyUpgrade(kind);
-      mesh.userData.halo.visible = Boolean(affordable);
+      mesh.userData.halo.visible = Boolean(town.owner === "player" && town.producing);
     }
     for (const [id, mesh] of towns) {
       if (live.has(id)) continue;
@@ -704,7 +702,6 @@ export function createScene(canvas) {
   function syncBuysUi(board) {
     const show = Boolean(board.player) && !board.telescope;
     const over = Boolean(board.winner) || board.status !== "playing";
-    const showUnlock = board.player && board.player.land >= CONFIG.variantUnlockCost;
     while (buyMeshes.length < BUY_UNITS.length) {
       const unit = BUY_UNITS[buyMeshes.length];
       const pad = makePad(80, 64, unit.fill);
@@ -729,7 +726,8 @@ export function createScene(canvas) {
       mesh.userData.face.scale.x = board.southpaw ? -1 : 1;
       const spawn = board.selectedBuyUnit(unit.type);
       const stats = unitStats(spawn);
-      const can = !over && board.player.gold >= stats.cost;
+      const land = unitLandCost(spawn);
+      const can = !over && board.player.gold >= stats.cost && board.player.land >= land;
       const lane = board.buyDrag && board.buyDrag.index === i ? board.buyDrag.lane : null;
       const alt = spawn !== unit.type;
       mesh.material.color.set(alt ? "#ffffff" : unit.fill);
@@ -738,7 +736,7 @@ export function createScene(canvas) {
       mesh.material.emissive.set(lane ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = lane ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
-      const key = `${label}:${stats.cost}:${can}:${lane || ""}:${alt}`;
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -753,11 +751,10 @@ export function createScene(canvas) {
         });
         mesh.userData.face.userData.key = key;
       }
-      const variant = UNIT_VARIANTS[unit.type];
-      const needUnlock = Boolean(showUnlock && variant && !board.player.unlockedVariants[variant]);
-      unlock.visible = needUnlock;
-      if (!needUnlock) continue;
-      const ubox = board.variantUnlockRect(i);
+      const showLand = Boolean(alt && land > 0);
+      unlock.visible = showLand;
+      if (!showLand) continue;
+      const ubox = board.variantLandRect(i);
       if (ubox.h <= 0) {
         unlock.visible = false;
         continue;
@@ -765,10 +762,13 @@ export function createScene(canvas) {
       placePad(unlock, ubox, 14);
       unlock.scale.set(ubox.w / 80, 1, Math.max(0.4, ubox.h / 28));
       unlock.userData.face.scale.x = board.southpaw ? -1 : 1;
-      const uKey = `${CONFIG.variantUnlockCost}:${over}`;
+      const canLand = !over && board.player.land >= land;
+      unlock.material.opacity = canLand ? 1 : 0.45;
+      unlock.material.transparent = true;
+      const uKey = `${land}:${canLand}`;
       if (unlock.userData.face.userData.key !== uKey) {
         setLabel(unlock.userData.face, [
-          { text: `${CONFIG.variantUnlockCost} land`, font: "bold 28px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
+          { text: `+${land} land`, font: "bold 28px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
         ], { width: 256, height: 96, fill: "#2a3340", stroke: unit.stroke, key: uKey });
         unlock.userData.face.userData.key = uKey;
       }

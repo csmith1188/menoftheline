@@ -1,5 +1,5 @@
 import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
-import { UNIT_STATS, unitStats, UNIT_VARIANTS, massTaxOf } from "../shared/units.js";
+import { UNIT_STATS, unitStats, massTaxOf, unitLandCost, isAlternateUnit } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
 /**
@@ -2855,6 +2855,7 @@ class Checkpoint {
     this.x = x;
     this.y = y;
     this.owner = null;
+    this.producing = false;
   }
 
   /**
@@ -2894,6 +2895,7 @@ class Checkpoint {
       return false;
     }
     this.owner = troop.side.id;
+    this.producing = false;
     return true;
   }
 
@@ -2914,7 +2916,8 @@ class Side {
     this.capitalHP = CONFIG.capitalHP;
     this.speedMultiplier = 1;
     this.upgrades = { speed: 0, armor: 0, damage: 0 };
-    this.unlockedVariants = {};
+    this.upgradeProgress = { speed: 0, armor: 0, damage: 0 };
+    this.landInvestRate = 0;
     this.banks = 0;
     this.troops = [];
     this.shotCooldown = 0;
@@ -2957,31 +2960,26 @@ class Side {
     return massTaxOf(this.troops);
   }
 
-  /** Gold price of a troop, skirmisher, dragoon, cannon, or officer. */
-  /** Gold price of a unit or its unlocked alternate. */
+  /** Gold price of a unit or its alternate. */
   unitCost(type) {
     return unitStats(type).cost;
   }
 
-  /** True when this side may spawn this unit key (base or unlocked variant). */
-  canSpawnUnit(type) {
-    if (UNIT_KINDS[type] === undefined) return false;
-    if (UNIT_VARIANTS[type]) return true;
-    return Boolean(this.unlockedVariants[type]);
+  /** Land price of an alternate (0 for base units). */
+  unitLandCost(type) {
+    return unitLandCost(type);
   }
 
-  /** Spend land to unlock the alternate for a base buy type. */
-  tryUnlockVariant(base) {
-    const variant = UNIT_VARIANTS[base];
-    if (!variant || this.unlockedVariants[variant]) {
-      return false;
-    }
-    const cost = CONFIG.variantUnlockCost;
-    if (this.land < cost) {
-      return false;
-    }
-    this.land -= cost;
-    this.unlockedVariants[variant] = true;
+  /** True when this side may spawn this unit key (base or alternate). */
+  canSpawnUnit(type) {
+    return UNIT_KINDS[type] !== undefined;
+  }
+
+  /** True when gold (and land for alternates) covers the buy price. */
+  canAffordUnit(type) {
+    if (!this.canSpawnUnit(type)) return false;
+    if (this.gold < this.unitCost(type)) return false;
+    if (isAlternateUnit(type) && this.land < this.unitLandCost(type)) return false;
     return true;
   }
 
@@ -3087,32 +3085,39 @@ class Side {
   }
 
   /**
-   * Spend gold to spawn a troop, skirmisher, dragoon, cannon, or officer.
+   * Spend gold (and land for alternates) to spawn a unit.
    * lane is "top" or "bottom". Returns the unit, or null if unaffordable.
    */
   tryBuy(lane, nextId, type) {
-    if (!this.canSpawnUnit(type)) {
+    if (!this.canAffordUnit(type)) {
       return null;
     }
     const cost = this.unitCost(type);
-    if (this.gold < cost) {
-      return null;
-    }
+    const land = this.unitLandCost(type);
     this.gold -= cost;
+    this.land -= land;
     const troop = createUnit(nextId, this, lane, this.pickSublane(lane), type);
     this.troops.push(troop);
     return troop;
   }
 
-  /** Spend land on speed, armor, or damage. Caps at five ranks. */
-  tryBuyUpgrade(kind) {
-    if (!this.canBuyUpgrade(kind)) {
+  /** Remaining land needed to finish the next rank of this upgrade kind. */
+  upgradeRemaining(kind) {
+    if (this.upgrades[kind] === undefined || this.upgrades[kind] >= CONFIG.upgradeMax) {
+      return 0;
+    }
+    return Math.max(0, this.upgradeCost(kind) - (this.upgradeProgress[kind] || 0));
+  }
+
+  /** Toggle a town into or out of upgrade production. */
+  tryToggleTownProduce(town) {
+    if (!town || town.owner !== this.id) return false;
+    const kind = town.upgradeKind();
+    if (this.upgrades[kind] >= CONFIG.upgradeMax) {
+      town.producing = false;
       return false;
     }
-    const cost = this.upgradeCost(kind);
-    this.land -= cost;
-    this.upgrades[kind] += 1;
-    this.speedMultiplier = 1 + CONFIG.speedUpgradeAmount * this.upgrades.speed;
+    town.producing = !town.producing;
     return true;
   }
 
@@ -3279,14 +3284,11 @@ export class GameSim {
       return Boolean(this.grantTroop(side, cmd.lane, cmd.unit));
     }
     if (cmd.type === "bank") return side.tryUnlockBank();
-    if (cmd.type === "unlockVariant") {
-      return side.tryUnlockVariant(cmd.base);
-    }
-    if (cmd.type === "upgrade") {
+    if (cmd.type === "townProduce" || cmd.type === "upgrade") {
       const id = Number(cmd.checkpointId);
       const town = this.checkpoints.find((c) => c.index === id);
       if (!town || town.owner !== side.id) return false;
-      return side.tryBuyUpgrade(town.upgradeKind());
+      return side.tryToggleTownProduce(town);
     }
     if (cmd.type === "order") {
       const troopId = Number(cmd.troopId);
@@ -3369,6 +3371,7 @@ export class GameSim {
         x: town.x,
         y: town.y,
         owner: town.owner,
+        producing: Boolean(town.producing),
       })),
       projectiles: this.projectiles.map((shot) => ({
         x: shot.x,
@@ -3397,11 +3400,12 @@ export class GameSim {
       income: side.income,
       land: side.land,
       landIncome: side.landIncome,
+      landInvestRate: side.landInvestRate,
       capitalHP: side.capitalHP,
       banks: side.banks,
       speedMultiplier: side.speedMultiplier,
       upgrades: { ...side.upgrades },
-      unlockedVariants: { ...side.unlockedVariants },
+      upgradeProgress: { ...side.upgradeProgress },
       troops: side.troops.filter((troop) => troop.hp > 0).map((troop) => ({
         id: troop.id,
         lane: troop.lane,
@@ -3441,7 +3445,7 @@ export class GameSim {
   }
 
   /**
-   * Award passive gold and land, then drain mass tax.
+   * Award passive gold and land, then drain mass tax and town upgrade investment.
    * Tax cannot push a treasury below zero.
    */
   tickIncome(dt) {
@@ -3450,6 +3454,62 @@ export class GameSim {
     this.enemy.gold = Math.max(0, this.enemy.gold + (this.enemy.income - this.enemy.massTax()) * dt);
     this.player.land += this.player.landIncome * dt;
     this.enemy.land += this.enemy.landIncome * dt;
+    this.tickTownProduction(this.player, dt);
+    this.tickTownProduction(this.enemy, dt);
+  }
+
+  /**
+   * Invest land into owned producing towns at townProduceRate each.
+   * When land cannot cover every town, fund closest to the keep first.
+   */
+  tickTownProduction(side, dt) {
+    side.landInvestRate = 0;
+    const rate = CONFIG.townProduceRate;
+    const towns = [];
+    for (let i = 0; i < this.checkpoints.length; i += 1) {
+      const town = this.checkpoints[i];
+      if (town.owner !== side.id || !town.producing) continue;
+      const kind = town.upgradeKind();
+      if (side.upgrades[kind] >= CONFIG.upgradeMax) {
+        town.producing = false;
+        continue;
+      }
+      towns.push(town);
+    }
+    towns.sort((a, b) => distance(a, side.capital) - distance(b, side.capital));
+    let invested = 0;
+    for (let i = 0; i < towns.length; i += 1) {
+      if (side.land <= 0) break;
+      const town = towns[i];
+      const kind = town.upgradeKind();
+      if (side.upgrades[kind] >= CONFIG.upgradeMax) {
+        town.producing = false;
+        continue;
+      }
+      const spend = Math.min(rate * dt, side.land);
+      if (spend <= 0) break;
+      side.land -= spend;
+      invested += spend;
+      side.upgradeProgress[kind] = (side.upgradeProgress[kind] || 0) + spend;
+      while (
+        side.upgrades[kind] < CONFIG.upgradeMax
+        && side.upgradeProgress[kind] >= side.upgradeCost(kind)
+      ) {
+        side.upgradeProgress[kind] -= side.upgradeCost(kind);
+        side.upgrades[kind] += 1;
+        side.speedMultiplier = 1 + CONFIG.speedUpgradeAmount * side.upgrades.speed;
+      }
+      if (side.upgrades[kind] >= CONFIG.upgradeMax) {
+        side.upgradeProgress[kind] = 0;
+        for (let t = 0; t < this.checkpoints.length; t += 1) {
+          const other = this.checkpoints[t];
+          if (other.owner === side.id && other.upgradeKind() === kind) {
+            other.producing = false;
+          }
+        }
+      }
+    }
+    side.landInvestRate = dt > 0 ? invested / dt : 0;
   }
 
   /** Move, fight, capture, and drop dead troops for one side. */

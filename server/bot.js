@@ -163,22 +163,16 @@ export class BotController {
     }
   }
 
-  /** Spend land on an owned town's upgrade when it can afford one. */
+  /** Turn on production for owned non-maxed towns (closest to keep first). */
   buyUpgrades(self) {
-    let best = null;
-    let bestCost = Infinity;
-    const towns = self.sim.checkpoints;
-    for (let i = 0; i < towns.length; i += 1) {
-      const town = towns[i];
-      if (town.owner !== self.id) continue;
-      const kind = town.upgradeKind();
-      if (self.upgrades[kind] >= CONFIG.upgradeMax) continue;
-      const cost = self.upgradeCost(kind);
-      if (cost < bestCost && self.canBuyUpgrade(kind)) {
-        bestCost = cost;
-        best = kind;
-      }
-    }
-    if (best) self.tryBuyUpgrade(best);
+    const towns = self.sim.checkpoints
+      .filter((town) => town.owner === self.id && !town.producing)
+      .filter((town) => self.upgrades[town.upgradeKind()] < CONFIG.upgradeMax)
+      .sort((a, b) => {
+        const da = Math.hypot(a.x - self.capital.x, a.y - self.capital.y);
+        const db = Math.hypot(b.x - self.capital.x, b.y - self.capital.y);
+        return da - db;
+      });
+    if (towns.length) self.tryToggleTownProduce(towns[0]);
   }
 }

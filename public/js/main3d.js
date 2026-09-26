@@ -56,9 +56,7 @@ board.telescopeWorld = (screen) => {
   return point;
 };
 const hitBuyAt = board.hitBuyAt.bind(board);
-const hitUnlockAt = board.hitVariantUnlockAt.bind(board);
 board.hitBuyAt = (point) => (board.telescope ? null : hitBuyAt(point));
-board.hitVariantUnlockAt = (point) => (board.telescope ? null : hitUnlockAt(point));
 board.hitBankAt = () => false;
 // Ground-plane pointers are already in world space; do not shrink thresholds
 // by the 2D telescope screen scale.
@@ -100,7 +98,7 @@ function sideLine(side) {
   if (!side) return "";
   const gold = Math.floor(side.gold);
   const land = Math.floor(side.land);
-  const econ = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 +${side.landIncome}/s`;
+  const econ = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 ${side.landRateLabel()}`;
   const detail = side.economyDetail();
   return `${econ}<br><span class="mass-tax${side.netIncome() < 0 ? " over" : ""}">${detail}</span>`;
 }

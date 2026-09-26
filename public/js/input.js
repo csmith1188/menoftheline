@@ -63,13 +63,6 @@ const pointerMethods = {
     }
     event.preventDefault();
     const point = this.canvasPoint(event);
-    const unlock = this.hitVariantUnlockAt(point);
-    if (unlock) {
-      if (!this.buySelection) this.buySelection = {};
-      this.buySelection[unlock.base] = unlock.variant;
-      this.onCommand({ type: "unlockVariant", base: unlock.base });
-      return;
-    }
     const buy = this.hitBuyAt(point);
     if (buy) {
       this.buyDrag = {
@@ -169,8 +162,7 @@ const pointerMethods = {
       this.drag.hx = point.x;
       this.drag.hy = point.y;
     }
-    const overUI = this.hitVariantUnlockAt(point)
-      || this.hitBuyAt(point)
+    const overUI = this.hitBuyAt(point)
       || this.hitBankAt(point, this.player);
     this.canvas.style.cursor = overUI ? "pointer" : "default";
   },
@@ -197,7 +189,7 @@ const pointerMethods = {
         if (!(this.winner || this.status !== "playing")) {
           const town = this.hitCheckpointAt(world);
           if (town && town.owner === "player") {
-            this.onCommand({ type: "upgrade", checkpointId: town.index });
+            this.onCommand({ type: "townProduce", checkpointId: town.index });
             return;
           }
           const enemy = this.enemyTapTroop(start.enemyTap);
@@ -262,7 +254,7 @@ const pointerMethods = {
       }
       const town = this.hitCheckpoint(event);
       if (town && town.owner === "player") {
-        this.onCommand({ type: "upgrade", checkpointId: town.index });
+        this.onCommand({ type: "townProduce", checkpointId: town.index });
       }
       return;
     }
@@ -577,12 +569,11 @@ const pointerMethods = {
   },
 
   /**
-   * Horizontal swipe on a buy button with an unlocked variant.
+   * Horizontal swipe on a buy button with an alternate.
    * Returns -1 (left) or 1 (right), once past the drag threshold.
    */
   buyVariantFromSwipe(start, point) {
-    const key = UNIT_VARIANTS[start.type];
-    if (!key || !this.player || !this.player.unlockedVariants[key]) {
+    if (!UNIT_VARIANTS[start.type]) {
       return null;
     }
     const dx = point.x - start.x;

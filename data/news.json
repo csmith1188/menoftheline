@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-09-26",
+    "title": "Town Research & Alternate Costs",
+    "summary": "Alternates are free to unlock but cost land to buy, and towns now research upgrades over time instead of a lump-sum purchase.",
+    "items": [
+      "Unit alternates start unlocked. Swipe sideways on a buy button to switch; buy buttons start on the standard unit.",
+      "Alternates cost gold plus land (default 20% of their gold cost). A +land chip under the buy button shows that price when the alternate is selected.",
+      "Click a town you own to invest 1 land per second toward its upgrade. Click again to stop. Production ends if you lose the town; a new owner does not inherit it.",
+      "When you cannot fund every producing town, land goes to the towns closest to your keep first. Research keeps going after each rank until you stop or hit the cap.",
+      "The scoreboard shows net land per second, and the economy row lists the research land drain.",
+      "Move-order flashes appear above the unit selection readout."
+    ]
+  },
+  {
     "date": "2026-09-25",
     "title": "Upkeep & Scoreboard",
     "summary": "Living units now cost gold over time, and the scoreboard shows where that gold comes from and where it goes.",

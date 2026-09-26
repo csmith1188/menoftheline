@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import {
   applySnapshot,
@@ -222,8 +222,7 @@ const viewTownMethods = {
     ctx.strokeStyle = "#0d1218";
     ctx.stroke();
 
-    if (this.owner === "player" && this.board.player
-        && this.board.player.canBuyUpgrade(this.upgradeKind())) {
+    if (this.owner === "player" && this.producing) {
       ctx.beginPath();
       ctx.arc(this.x, this.y, r + 5 * CONFIG.uiScale, 0, Math.PI * 2);
       ctx.strokeStyle = "#ffffff";
@@ -241,11 +240,12 @@ const viewTownMethods = {
     this.drawUpgradeCost(ctx, kind, r);
   },
 
-  /** Land price of this town's upgrade, just above the circle. */
+  /** Remaining land to the next rank, just above the circle. */
   drawUpgradeCost(ctx, kind, r) {
-    if (!this.board.player) return;
+    if (!this.board.player || this.owner !== "player") return;
     const maxed = this.board.player.upgrades[kind] >= CONFIG.upgradeMax;
-    const cost = maxed ? "MAX" : `${this.board.player.upgradeCost(kind)}🌿`;
+    const remain = Math.ceil(this.board.player.upgradeRemaining(kind));
+    const cost = maxed ? "MAX" : `${remain}🌿`;
     const y = this.y - r - 6 * CONFIG.uiScale;
     ctx.save();
     ctx.font = this.board.uiFont(13);
@@ -254,7 +254,7 @@ const viewTownMethods = {
     ctx.lineWidth = 3;
     ctx.strokeStyle = "#0d1218";
     ctx.strokeText(cost, this.x, y);
-    ctx.fillStyle = CONFIG.colors.gold;
+    ctx.fillStyle = this.producing ? "#ffffff" : CONFIG.colors.gold;
     ctx.fillText(cost, this.x, y);
     ctx.restore();
   }
@@ -662,11 +662,18 @@ const boardMethods = {
     }
     const fade = left < 280 ? left / 280 : 1;
     const layout = this.buyRowLayout();
-    const y = layout.y + layout.h + 10 * CONFIG.uiScale;
+    const info = inspectReadout(this);
+    const gap = 6 * CONFIG.uiScale;
+    let y = layout.y - gap;
+    if (info) {
+      y -= 14 * CONFIG.uiScale;
+      if (info.bonuses) y -= 14 * CONFIG.uiScale;
+    }
+    y -= 8 * CONFIG.uiScale;
     ctx.save();
     ctx.globalAlpha = fade;
     ctx.textAlign = "center";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "bottom";
     ctx.font = this.uiFont(18);
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
@@ -705,7 +712,7 @@ const boardMethods = {
   drawSideStats(ctx, side, x, midY, align) {
     const gold = Math.floor(side.gold);
     const land = Math.floor(side.land);
-    const line1 = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 +${side.landIncome}/s`;
+    const line1 = `${gold}💰 ${side.goldRateLabel()}   ${land}🌿 ${side.landRateLabel()}`;
     const line2 = side.economyDetail();
     ctx.save();
     ctx.textAlign = align;
@@ -744,7 +751,6 @@ const boardMethods = {
     const hover = this.hover;
     const over = Boolean(this.winner) || this.status !== "playing";
     const drag = this.buyDrag;
-    const showUnlock = this.player && this.player.land >= CONFIG.variantUnlockCost;
     for (let i = 0; i < BUY_UNITS.length; i += 1) {
       const unit = BUY_UNITS[i];
       const variant = UNIT_VARIANTS[unit.type];
@@ -752,7 +758,10 @@ const boardMethods = {
       const stats = unitStats(spawn);
       const box = this.buyButtonRect(i);
       const cost = stats.cost;
-      const can = !over && this.player.gold >= cost;
+      const land = unitLandCost(spawn);
+      const can = !over
+        && this.player.gold >= cost
+        && this.player.land >= land;
       const lit = hover
         && hover.x >= box.x && hover.x <= box.x + box.w
         && hover.y >= box.y && hover.y <= box.y + box.h;
@@ -780,7 +789,7 @@ const boardMethods = {
       fillChevron(ctx, cx, box.y + box.h * 0.14, true);
       ctx.fillStyle = lane === "bottom" ? "#ffffff" : "#e8c36a";
       fillChevron(ctx, cx, box.y + box.h * 0.86, false);
-      if (variant && this.player.unlockedVariants[variant]) {
+      if (variant) {
         const edge = 7 * CONFIG.uiScale;
         ctx.fillStyle = "#ffffff";
         fillSideArrow(ctx, box.x + edge, mid, false);
@@ -796,23 +805,21 @@ const boardMethods = {
       ctx.fillText(`${cost}💰`, cx, mid + 9 * CONFIG.uiScale);
       ctx.globalAlpha = 1;
 
-      if (showUnlock && variant && !this.player.unlockedVariants[variant]) {
-        const ubox = this.variantUnlockRect(i);
-        const canUnlock = !over && this.player.land >= CONFIG.variantUnlockCost;
-        const uLit = hover
-          && hover.x >= ubox.x && hover.x <= ubox.x + ubox.w
-          && hover.y >= ubox.y && hover.y <= ubox.y + ubox.h;
-        ctx.globalAlpha = canUnlock ? 1 : 0.45;
+      if (spawn !== unit.type && land > 0) {
+        const ubox = this.variantLandRect(i);
+        if (ubox.h <= 0) continue;
+        const canLand = !over && this.player.land >= land;
+        ctx.globalAlpha = canLand ? 1 : 0.45;
         ctx.fillStyle = "#2a3340";
         ctx.fillRect(ubox.x, ubox.y, ubox.w, ubox.h);
-        ctx.strokeStyle = canUnlock && uLit ? "#ffffff" : unit.stroke;
+        ctx.strokeStyle = unit.stroke;
         ctx.lineWidth = 2;
         ctx.strokeRect(ubox.x, ubox.y, ubox.w, ubox.h);
         ctx.fillStyle = CONFIG.colors.gold;
         ctx.font = this.uiFont(10);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(`${CONFIG.variantUnlockCost}🌿`, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
+        ctx.fillText(`${land}🌿`, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
         ctx.globalAlpha = 1;
       }
     }

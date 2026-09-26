@@ -1,21 +1,25 @@
 # Bugs
 - starts in 30 but counts to 15
 
+# Ideas
+- grand strategy button
+    - one for each lane
+    - Bastion: always target closest
+    - Attrition: always target healthiest (hp/fatigue)
+    - Terror: Always target most weakest
+- training:
+    - adjust game speed
+    - choose bot level and strategy
+- terrain:
+    - hills -> nuetral forts
+    - woods -> block LoS and slow
+    - river -> allow infantry, blocks horse and gun
+    - peaks -> block los unless inside, slow infantry, blocks horse and gun
+    - bridge -> cannot switch lanes
+
 # Features
 - Reinforced Learning player
 - benefits of far checkpoints?
-- checkpoints can also upgrade unit types? outer track
-    - troop: stoppages. troops don't apply to mass tax. drill sgt major: can't be flanked, increased advance speed
-    - skrimisher: automatically fall back when in engagement range and being targetted
-    - calvary: no hit slow while charging
-    - cannon: penetrating shots (do quarter damage)
-    - officer: Sergeants. broken units don't move when in range behind an officer?
-- unlock one of two variants by swiping up or down. can only build that variant. buy again to switch.
-    - professionals: advanced manuovers
-    - light: recover fatigue on their own
-    - curaissers: half damage, double attacks (more hit fatigue), bonus damage vs falling back / retreating
-    - mortar
-    - musicians
 
 - unlocks should "negate" other unlocks
     - i.e. grenadiers can't be flanked, so lancers do more frontal damage

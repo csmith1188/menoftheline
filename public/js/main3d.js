@@ -155,12 +155,15 @@ function bankRowKey(side, clickable) {
     const open = i < side.banks;
     const next = i === side.banks;
     const timed = side.bankUnlockedByTime(i);
-    const ready = next && timed && side.gold >= side.bankCost();
+    const offered = next && timed;
+    const ready = offered && side.gold >= side.bankCost();
     const label = open
       ? "open"
-      : timed
+      : offered
         ? String(side.bankCost())
-        : side.bankCooldownLabel(i);
+        : timed
+          ? "locked"
+          : side.bankCooldownLabel(i);
     parts.push(`${i}:${label}:${ready ? 1 : 0}:${next ? 1 : 0}`);
   }
   return parts.join("|");
@@ -179,12 +182,22 @@ function fillBanks(el, side, clickable) {
     const open = i < side.banks;
     const next = i === side.banks;
     const timed = side.bankUnlockedByTime(i);
-    const ready = next && timed && side.gold >= side.bankCost();
+    const offered = next && timed;
+    const ready = offered && side.gold >= side.bankCost();
     button.classList.toggle("open", open);
-    button.classList.toggle("ready", ready && clickable);
+    button.classList.toggle("priced", offered);
+    button.classList.toggle("ready", ready);
     if (open) button.textContent = "🏛️";
-    else if (!timed) button.textContent = side.bankCooldownLabel(i);
-    else button.textContent = String(side.bankCost());
+    else if (offered) {
+      const mark = document.createElement("span");
+      mark.className = "bank-mark";
+      mark.textContent = "🏛️";
+      const price = document.createElement("span");
+      price.className = "bank-price";
+      price.textContent = `${side.bankCost()}💰`;
+      button.append(mark, price);
+    } else if (!timed) button.textContent = side.bankCooldownLabel(i);
+    else button.textContent = "🏛️";
     // Next slot stays enabled once its unlock time hits; click handler checks gold/status.
     button.disabled = !clickable || !next || !timed;
     if (clickable && next && timed) {

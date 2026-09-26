@@ -3309,6 +3309,9 @@ export class GameSim {
     this.winReason = null;
     this.elapsed = 0;
     this.tick = 0;
+    /** Eased lane shares. Income and the drawn line both use these. */
+    this.shownTop = 0.5;
+    this.shownBottom = 0.5;
 
     const center = Path.bottomCenter();
     const innerEdge = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - CONFIG.bottomSublaneWidth / 2;
@@ -3441,8 +3444,8 @@ export class GameSim {
       elapsed: this.elapsed,
       winner: this.winner,
       winReason: this.winReason,
-      topCenter: this.topLaneCenterT(),
-      bottomCenter: this.bottomLaneCenterT(),
+      topCenter: this.shownTop,
+      bottomCenter: this.shownBottom,
       sounds: this.sounds.map((sound) => ({ ...sound })),
       checkpoints: this.checkpoints.map((town) => ({
         index: town.index,
@@ -3514,12 +3517,27 @@ export class GameSim {
 
 
   /**
-   * Apply the live lane-center splits to gold and land income, then
+   * Glide the drawn lane shares toward the live push. A hit, break, or
+   * death changes the target at once; the line and the payout catch up.
+   */
+  easeLaneCenters(dt) {
+    const tau = CONFIG.laneCenterEase;
+    const k = !(tau > 0) ? 1 : 1 - Math.exp(-dt / tau);
+    const top = this.laneCenterT("top");
+    const bottom = this.laneCenterT("bottom");
+    this.shownTop += (top - this.shownTop) * k;
+    this.shownBottom += (bottom - this.shownBottom) * k;
+    if (Math.abs(top - this.shownTop) < 1e-4) this.shownTop = top;
+    if (Math.abs(bottom - this.shownBottom) < 1e-4) this.shownBottom = bottom;
+  }
+
+  /**
+   * Apply the eased lane-center splits to gold and land income, then
    * award both for this step.
    */
   refreshIncomes() {
-    const top = this.topLaneCenterT();
-    const bottom = this.bottomLaneCenterT();
+    const top = this.shownTop;
+    const bottom = this.shownBottom;
     this.player.refreshIncome(top);
     this.enemy.refreshIncome(1 - top);
     this.player.refreshLand(bottom);
@@ -3531,6 +3549,7 @@ export class GameSim {
    * Tax cannot push a treasury below zero.
    */
   tickIncome(dt) {
+    this.easeLaneCenters(dt);
     this.refreshIncomes();
     this.player.gold = Math.max(0, this.player.gold + (this.player.income - this.player.massTax()) * dt);
     this.enemy.gold = Math.max(0, this.enemy.gold + (this.enemy.income - this.enemy.massTax()) * dt);

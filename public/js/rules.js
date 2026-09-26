@@ -1,9 +1,9 @@
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
+import { UNIT_STATS, unitStats } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { applySouthpaw, readSouthpaw } from "./render.js";
 
-/** Rules booklet. Diagrams read live values from config.js and units.js. */
+/** In-match how-to guide. Diagrams read live values from config.js and units.js. */
 
 function ink(ctx, text, x, y, color, size, align, baseline) {
   ctx.font = `${size}px Trebuchet MS, Segoe UI, sans-serif`;
@@ -161,24 +161,6 @@ function placeX(side, sublane, x, type, order) {
   return place(side, "top", sublane, progress, type, order);
 }
 
-function rangedHit(from, to, type) {
-  const stats = unitStats(type);
-  const dist = Math.hypot(to.x - from.x, to.y - from.y);
-  const falloff = Math.max(CONFIG.minDamageFactor, 1 - dist / Math.max(stats.range, 1));
-  return Math.round(stats.rangedDamage * falloff);
-}
-
-function meleeHit(type, flags) {
-  const stats = unitStats(type);
-  let damage = stats.meleeDamage;
-  if (flags.charge) damage *= stats.chargeMultiplier;
-  if (flags.flank) damage *= stats.flankMultiplier;
-  if (stats.lineBonus) {
-    damage *= 1 + (flags.lineMates || 0) * stats.lineBonus;
-  }
-  return Math.round(Math.trunc(damage * 100) / 100);
-}
-
 function orderStroke(order) {
   if (order === "halt") return CONFIG.colors.halt;
   if (order === "reform") return CONFIG.colors.reform;
@@ -291,25 +273,6 @@ function drawShot(ctx, x, y) {
   ctx.arc(x, y, shell.projectileSize, 0, Math.PI * 2);
   ctx.fillStyle = shell.projectileColor;
   ctx.fill();
-}
-
-function drawSplat(ctx, x, y, amount, kind) {
-  const num = String(Math.round(amount));
-  const text = kind === "heal" ? `+${num}` : num;
-  ctx.save();
-  ctx.font = "bold 14px Trebuchet MS, Segoe UI, sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = CONFIG.colors.splatStroke;
-  ctx.strokeText(text, x, y - 18);
-  ctx.fillStyle = kind === "melee"
-    ? CONFIG.colors.splatMelee
-    : kind === "heal"
-      ? CONFIG.colors.splatHeal
-      : CONFIG.colors.splatShoot;
-  ctx.fillText(text, x, y - 18);
-  ctx.restore();
 }
 
 function drawKeep(ctx, side) {
@@ -522,21 +485,6 @@ function drawLaneMarks(ctx, frame, topT, bottomT) {
   );
 }
 
-function highlightSublane(ctx, sublane, x1, x2) {
-  const y = CONFIG.playerCapital.y
-    + Path.sublaneNorm(sublane, CONFIG.topSublaneCount) * CONFIG.topSublaneSpread;
-  ctx.save();
-  ctx.strokeStyle = CONFIG.colors.laneHover;
-  ctx.globalAlpha = 0.55;
-  ctx.lineWidth = CONFIG.topSublaneWidth;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(x1, y);
-  ctx.lineTo(x2, y);
-  ctx.stroke();
-  ctx.restore();
-}
-
 function worldArrow(ctx, x1, y1, x2, y2, color) {
   ctx.save();
   ctx.strokeStyle = color;
@@ -667,399 +615,6 @@ function drawSpeedLadder(ctx, rect) {
   }
   inkFit(ctx, "back: fall back · forward: charge", rect.x + rect.w / 2, rect.y + rect.h - 12, CONFIG.colors.gold, 12, rect.w - 16);
 }
-
-function drawOrders(ctx, w, h) {
-  clear(ctx, w, h);
-  const panels = cells(w, h, 2, 2);
-  drawSpeedLadder(ctx, panels[0]);
-
-  const reforming = placeX("player", 2, 500, "troop", "reform");
-  vignette(ctx, panels[1], around([reforming], 70, 36), "Click · Halt, reform, advance", () => {
-    drawGround(ctx);
-    ctx.save();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(reforming.x, reforming.y, 22, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-    drawUnit(ctx, reforming);
-  });
-
-  const charger = placeX("player", 2, 470, "troop", "charge");
-  const chargeFoe = placeX("enemy", 2, 560, "troop");
-  vignette(ctx, panels[2], around([charger, chargeFoe], 70, 36), "Swipe forward · charge", () => {
-    drawGround(ctx);
-    worldArrow(ctx, charger.x - 36, charger.y - 28, chargeFoe.x - 16, charger.y - 28, CONFIG.colors.charge);
-    drawUnit(ctx, charger);
-    drawUnit(ctx, chargeFoe);
-  });
-
-  const slider = placeX("player", 2, 500, "troop");
-  vignette(ctx, panels[3], around([slider], 80, 20), "Swipe up or down · shift row", () => {
-    drawGround(ctx);
-    highlightSublane(ctx, 1, slider.x - 90, slider.x + 90);
-    worldArrow(ctx, slider.x + 26, slider.y - 4, slider.x + 26, slider.y - 28, CONFIG.colors.laneHover);
-    drawUnit(ctx, slider);
-  });
-}
-
-function drawLines(ctx, w, h) {
-  clear(ctx, w, h);
-  const panels = cells(w, h, 2, 1);
-  const formed = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "troop", "reform"));
-  vignette(ctx, panels[0], around(formed, 56, 28), "One line · stronger melee", () => {
-    drawGround(ctx);
-    for (let i = 0; i < formed.length; i += 1) drawUnit(ctx, formed[i]);
-  });
-
-  const leftLine = [
-    place("player", "top", 0, 0.5, "troop", "halt"),
-    place("player", "top", 1, 0.5, "troop", "halt"),
-  ];
-  const rightLine = [
-    place("player", "top", 3, 0.5, "troop", "reform"),
-    place("player", "top", 4, 0.5, "troop", "reform"),
-  ];
-  const split = leftLine.concat(rightLine);
-  vignette(ctx, panels[1], around(split, 56, 24), "An empty row splits them", () => {
-    drawGround(ctx);
-    highlightSublane(ctx, 2, split[0].x - 70, split[0].x + 70);
-    for (let i = 0; i < split.length; i += 1) drawUnit(ctx, split[i]);
-  });
-}
-
-function drawFighting(ctx, w, h) {
-  clear(ctx, w, h);
-  const panels = cells(w, h, 3, 1);
-  const rear = placeX("player", 1, 500, "troop");
-  const front = placeX("player", 2, 508, "troop");
-  const shotFoe = placeX("enemy", 2, 608, "troop");
-  const shooters = [rear, front, shotFoe];
-  vignette(ctx, panels[0], around(shooters, 36, 28), "Shot", () => {
-    drawGround(ctx);
-    drawUnit(ctx, rear);
-    drawUnit(ctx, front);
-    drawUnit(ctx, shotFoe);
-    drawShot(ctx, (front.x + shotFoe.x) / 2, front.y - 14);
-    drawSplat(ctx, shotFoe.x, shotFoe.y, rangedHit(front, shotFoe, "troop"), "shoot");
-  });
-
-  const chargeFoe = placeX("enemy", 2, 560, "troop");
-  const charger = placeX("player", 2, 538, "troop", "charge");
-  vignette(ctx, panels[1], around([charger, chargeFoe], 48, 32), "Charge", () => {
-    drawGround(ctx);
-    drawUnit(ctx, charger);
-    drawUnit(ctx, chargeFoe);
-    drawSplat(ctx, chargeFoe.x, chargeFoe.y, meleeHit("troop", { charge: true }), "melee");
-  });
-
-  const flankFoe = placeX("enemy", 2, 560, "troop");
-  const holder = placeX("player", 2, 538, "troop", "charge");
-  const dragoon = placeX("player", 3, 560, "dragoon", "charge");
-  vignette(ctx, panels[2], around([holder, flankFoe, dragoon], 46, 24), "Flank", () => {
-    drawGround(ctx);
-    highlightSublane(ctx, dragoon.sublane, dragoon.x - 80, dragoon.x + 80);
-    drawUnit(ctx, holder);
-    drawUnit(ctx, flankFoe);
-    drawUnit(ctx, dragoon);
-    drawSplat(
-      ctx,
-      dragoon.x,
-      dragoon.y,
-      meleeHit("dragoon", { charge: true, flank: true }),
-      "melee",
-    );
-  });
-}
-
-function drawRankDots(ctx, x, y, filled, max, gap) {
-  const r = 3.5;
-  const total = (max - 1) * gap;
-  const start = x - total / 2;
-  for (let i = 0; i < max; i += 1) {
-    const cx = start + i * gap;
-    ctx.beginPath();
-    ctx.arc(cx, y, r, 0, Math.PI * 2);
-    if (i < filled) {
-      ctx.fillStyle = CONFIG.colors.gold;
-      ctx.fill();
-    } else {
-      ctx.fillStyle = "#2a3648";
-      ctx.fill();
-      ctx.strokeStyle = "#6a7a8c";
-      ctx.lineWidth = 1.25;
-      ctx.stroke();
-    }
-  }
-}
-
-function drawEconomy(ctx, w, h) {
-  clear(ctx, w, h);
-  const stripH = 64;
-  const mapH = Math.max(140, h - stripH - 8);
-  const owners = ["player", "player", "player", "enemy", null];
-  const spots = townSpots();
-  const pick = Math.floor(CONFIG.checkpointCount / 2);
-  const box = { l: 80, t: 260, r: 880, b: 610 };
-  const frame = withWorld(ctx, { x: 0, y: 0, w, h: mapH }, box, { t: 6, r: 10, b: 6, l: 10 }, () => {
-    drawGround(ctx);
-    drawKeep(ctx, "player");
-    drawKeep(ctx, "enemy");
-    for (let i = 0; i < spots.length; i += 1) {
-      drawTownMarker(ctx, spots[i], owners[i], i === pick);
-    }
-    const claimer = place("player", "bottom", 1, 0.52, "troop");
-    drawUnit(ctx, claimer);
-  });
-
-  const buy = spots[pick];
-  const buyAt = toScreen(frame, buy.x, buy.y);
-  const costY = Math.max(14, buyAt.y - buy.r * frame.scale - 8);
-  ink(ctx, `${CONFIG.upgradeBaseCost}🌿`, buyAt.x, costY, CONFIG.colors.gold, 13);
-  ink(ctx, "click to invest 1/s", buyAt.x, Math.min(mapH - 6, buyAt.y + buy.r * frame.scale + 12), CONFIG.colors.text, 11);
-
-  const stripY = mapH + stripH / 2;
-  const tracks = [
-    { kind: "armor", name: "Defense", filled: 2 },
-    { kind: "speed", name: "Speed", filled: 1 },
-    { kind: "damage", name: "Damage", filled: 0 },
-  ];
-  const col = w / tracks.length;
-  for (let i = 0; i < tracks.length; i += 1) {
-    const track = tracks[i];
-    const cx = col * i + col / 2;
-    ctx.beginPath();
-    ctx.arc(cx - 36, stripY, 11, 0, Math.PI * 2);
-    ctx.fillStyle = CONFIG.colors.player;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#0d1218";
-    ctx.stroke();
-    drawKindGlyph(ctx, cx - 36, stripY, 7.5, track.kind, CONFIG.colors.text);
-    ink(ctx, track.name, cx + 2, stripY - 7, CONFIG.colors.text, 12, "left");
-    drawRankDots(ctx, cx + 22, stripY + 9, track.filled, CONFIG.upgradeMax, 11);
-  }
-}
-
-function drawRoster(ctx, w, h, roster, banner) {
-  clear(ctx, w, h);
-  const bw = Math.min(280, w - 24);
-  const bh = 36;
-  const bx = (w - bw) / 2;
-  const by = 8;
-  ctx.fillStyle = "#2a4158";
-  ctx.fillRect(bx, by, bw, bh);
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
-  inkFit(ctx, banner, bx + bw / 2, by + bh / 2, "#ffffff", 14, bw - 16);
-
-  const col = w / roster.length;
-  const cy = by + bh + (h - by - bh) * 0.34;
-  let maxRange = 1;
-  for (let i = 0; i < roster.length; i += 1) {
-    maxRange = Math.max(maxRange, unitStats(roster[i].type).range);
-  }
-  const shellColor = UNIT_STATS.troop.projectileColor;
-  for (let i = 0; i < roster.length; i += 1) {
-    const info = roster[i];
-    const stats = unitStats(info.type);
-    const cx = col * i + col / 2;
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(2, 2);
-    drawUnit(ctx, {
-      x: 0,
-      y: 0,
-      side: "player",
-      type: info.base || info.type,
-      variant: info.type,
-      alternate: Boolean(info.alternate),
-      order: null,
-    });
-    ctx.restore();
-    inkFit(ctx, info.name, cx, cy + 32, CONFIG.colors.text, 13, col - 6);
-    inkFit(ctx, `${stats.cost}💰`, cx, cy + 48, CONFIG.colors.gold, 12, col - 6);
-    inkFit(ctx, `${stats.hp} HP`, cx, cy + 64, CONFIG.colors.text, 11, col - 6);
-    const maxBar = Math.min(col * 0.7, 96);
-    const bar = maxBar * (stats.range / maxRange);
-    ctx.fillStyle = "#3a3420";
-    ctx.fillRect(cx - maxBar / 2, cy + 78, maxBar, 4);
-    ctx.fillStyle = shellColor;
-    ctx.fillRect(cx - maxBar / 2, cy + 78, bar, 4);
-    inkFit(ctx, `${stats.range} range`, cx, cy + 92, shellColor, 11, col - 4);
-  }
-}
-
-function drawUnits(ctx, w, h) {
-  drawRoster(ctx, w, h, BUY_UNITS.map((unit) => ({
-    type: unit.type,
-    name: UNIT_LABELS[unit.type] || unit.label,
-  })), "Drag up · top    Drag down · bottom");
-}
-
-function drawVariants(ctx, w, h) {
-  const roster = BUY_UNITS.map((unit) => {
-    const type = UNIT_VARIANTS[unit.type];
-    return {
-      type,
-      base: unit.type,
-      alternate: true,
-      name: UNIT_LABELS[type] || type,
-    };
-  });
-  drawRoster(ctx, w, h, roster, "Gold + land · drag sideways");
-}
-
-function drawFatigue(ctx, w, h) {
-  clear(ctx, w, h);
-  const panels = cells(w, h, 2, 1);
-  const worn = placeX("player", 2, 500, "troop");
-  worn.hp = Math.round(UNIT_STATS.troop.hp * 0.25);
-  worn.fatigue = Math.round(UNIT_STATS.troop.fatigue * 0.8);
-  vignette(ctx, panels[0], around([worn], 70, 36), "Fatigue above health can break", () => {
-    drawGround(ctx);
-    drawUnit(ctx, worn);
-  });
-
-  const off = placeX("player", 2, 470, "officer");
-  const ally = placeX("player", 1, 500, "troop");
-  ally.fatigue = Math.round(UNIT_STATS.troop.fatigue * 0.55);
-  vignette(ctx, panels[1], around([off, ally], 80, 40), "Officer restores nearby fatigue", () => {
-    drawGround(ctx);
-    ctx.save();
-    ctx.strokeStyle = CONFIG.colors.gold;
-    ctx.globalAlpha = 0.7;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(off.x, off.y, UNIT_STATS.officer.restoreRange, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-    drawUnit(ctx, off);
-    drawUnit(ctx, ally);
-  });
-}
-
-const pages = [
-  {
-    title: "Keeps",
-    artHeight: 230,
-    blocks(southpaw) {
-      const you = southpaw ? "right" : "left";
-      const them = southpaw ? "left" : "right";
-      return [
-        { kind: "p", text: `Destroy the enemy keep. Yours is blue, on the ${you}. Theirs is red, on the ${them}. Health is shown at the top of the board.` },
-        { kind: "p", text: "Each keep shoots nearby enemies on its own. Units that reach a keep can strike it. The match ends when a keep falls." },
-      ];
-    },
-    draw: drawKeeps,
-  },
-  {
-    title: "Lanes",
-    aspect: 1.45,
-    blocks: [
-      { kind: "p", text: "The top lane is straight rows. Your share of that lane pays gold. Units count more the farther they push and the more health they have. Broken units do not count." },
-      { kind: "p", text: "The bottom lane is curved rows and pays \"land\" the same way. An empty lane is split." },
-      { kind: "p", text: "Towns sit inside the bottom curve. The last unit through a town claims it. Click a town you own to invest land toward its upgrade at 1 per second. Click again to stop. Production ends if you lose the town. The pale bars near each keep are cover, and units on them take less damage." },
-    ],
-    draw: drawLanes,
-  },
-  {
-    title: "Units",
-    artHeight: 300,
-    blocks: [
-      { kind: "p", text: "Drag up from a buy button for the top lane, or down for the bottom." },
-      {
-        kind: "ul",
-        items: [
-          "Troops: Are more durable, and do more damage when in a line.",
-          "Skirmishers: Harass, slow, and break enemy lines. Snipe officers.",
-          "Dragoons: Fast units that do bonus flank damage, but have poor shooting.",
-          "Cannons: Long-range splash damage.",
-          "Officers: Holds discipline by restoring nearby fatigue. Lead better from the front of the line. Enemy fire skips them except skirmishers/rifles while other targets are in full shooting range.",
-        ],
-      },
-      { kind: "p", text: "Units block each other on the same row. When blocked ahead they look for any row they can enter without overlapping a friendly, prefer the one with the most open space ahead, and step one adjacent row at a time toward it — easing back only when the next step is occupied. That lets them move around formed lines instead of bouncing between rows. Fall back and retreat pass through friendlies; charging cavalry do too. When a unit stops passing through while stacked (for example cavalry halting after a charge), it eases away from the closest overlapping friendly until clear before it acts on its order. Skirmishers and officers on advance pass through other types, but not through each other. Except skirmishers and rifles, units will not fire at officers while another target is in full shooting range." },
-    ],
-    draw: drawUnits,
-  },
-  {
-    title: "Variants",
-    artHeight: 300,
-    blocks: [
-      { kind: "p", text: "Each unit has an alternate available from the start. Drag sideways on a buy button to switch. Alternates wear a white square and cost gold plus land (default 20% of their gold cost)." },
-      {
-        kind: "ul",
-        items: [
-          "Grenadier: Tougher troops. Bonus flanking damage does not apply to them.",
-          "Rifle: Longer, harder shot with a slower reload.",
-          "Lancer: Do regular flank damage but increased charge damage.",
-          "Howitzer: Shorter gun. Fires one shell at the closest in-range target in each row.",
-          "Color: Restores nearby fatigue, and that restore also heals. Bolsters attack and speed. Units behind the color recover faster.",
-        ],
-      },
-    ],
-    draw: drawVariants,
-  },
-  {
-    title: "Orders",
-    artHeight: 320,
-    blocks: [
-      { kind: "p", text: "Click a unit to halt its line, then reform, then advance. Giving an order selects that line. Long press a unit to select it alone — further clicks and swipes stay on that unit until you click another unit (which selects that unit's line). Swipe a solo unit up or down onto a row; swipe a line up or down and each unit switches one row that way. Broken and retreating units cannot switch." },
-      { kind: "p", text: "Units in melee can be given orders, but those orders wait until the fight breaks. Reform and fall back start at once. They can leave by falling back, or by switching to a row that is not next to theirs. A fall back that leaves the fight becomes a retreat, and the unit is not broken. A charging unit still does charge damage while it is in melee, and swiping back then falls back instead of advancing." },
-      {
-        kind: "ul",
-        items: [
-          "Halt: Stay in place. Recover fatigue and shoot full distance. Still collides with friendlies.",
-          "Reform: Slow down to form a line. Do not shoot. Sidesteps blockers like an advance.",
-          "Advance: Walk and shoot. When blocked, pick the clearest open row ahead and step toward it; ease back only if the next step is occupied.",
-          "Charge: Swipe forward. Stop shooting, run faster, and do bonus melee damage, but fatigue rises. A forward swipe while halted advances instead. Cavalry pass through friendlies while charging.",
-          "Fall back: Swipe back. Disengage and withdraw through friendlies while firing. A back swipe while charging advances instead.",
-          "Retreat: Broken units only. They run back until fatigue is full, then fall back until fatigue is half their current health. You cannot order a retreat.",
-        ],
-      },
-    ],
-    draw: drawOrders,
-  },
-  {
-    title: "Lines",
-    artHeight: 240,
-    blocks: [
-      { kind: "p", text: "A line is same-type units in neighboring rows, one per row. An empty row splits them. An order applies to the whole line." },
-      { kind: "p", text: "Advancing lines hold and shoot together once anyone has opened fire. Reforming lines slow and square up. Units who get into line with another unit gain that unit's order." },
-    ],
-    draw: drawLines,
-  },
-  {
-    title: "Fighting",
-    artHeight: 250,
-    blocks: [
-      { kind: "p", text: "Units open fire inside engagement range, or at full range while halted. An advancing line that holds to shoot together then uses full range. A lined mate who has opened fire lets the rest of the line join that volley. Shots weaken with distance. Melee does not. Yellow numbers are shots, red are melee." },
-      { kind: "p", text: "Charge and flank raise melee damage. Shots briefly slow advancing or charging units. Halt and reform ignore the slow. Units in melee are not targeted until they leave it." },
-      { kind: "p", text: "Grand strategy buttons sit under the buy row, one per lane. Click or swipe right to cycle Bastion → Attrition → Terror; swipe left to go back. Bastion aims at the closest eligible target, Attrition at the healthiest (hp% − fatigue%), Terror at the weakest. Officer rules still apply: skirmishers prefer officers, other units skip them while another target is in full range. Howitzers still fire closest per row. Keep guns follow the top lane strategy." },
-    ],
-    draw: drawFighting,
-  },
-  {
-    title: "Fatigue",
-    artHeight: 240,
-    blocks: [
-      { kind: "p", text: "The blue bar is fatigue. Charging, retreating, fighting in melee, and getting hit increase it. Halting, being near an officer, or standing in your keep decrease it." },
-      { kind: "p", text: "When your fatigue is fuller than your health, hits can break the unit. Broken units retreat until fatigue is full, then fall back until fatigue is half their current health. They stop fighting and ignore orders until they rally." },
-    ],
-    draw: drawFatigue,
-  },
-  {
-    title: "Gold and land",
-    artHeight: 300,
-    blocks: [
-      { kind: "p", text: "Gold buys units and banks. Alternates also cost land. Defense, speed, and damage upgrades come from towns you own: click a town to invest 1 land per second toward its next rank. Towns of the same upgrade share remaining cost, so a second matching town adds another 1 land per second into that research. When you cannot fund every producing town, the ones closest to your keep get land first. You earn base gold, a share of the top lane, and bank income. Land comes from your share of the bottom lane. Each living unit pays mass tax: 0.5% of its gold cost per second, scaled by its remaining health. Wounded units cost less, and the tax cannot drop gold below zero." },
-      { kind: "p", text: "Banks unlock over time and can be purchased to raise gold income. Towns along the arc upgrade defense, speed, damage, speed, then defense." },
-    ],
-    draw: drawEconomy,
-  },
-];
 
 /** Short in-match controls guide (settings menu). */
 function drawHowtoButtons(ctx, w, h) {
@@ -1350,9 +905,7 @@ function fillCopy(copy, blocks) {
 
 export function bindRules(options) {
   const onOpen = options && options.onOpen;
-  const pageMode = Boolean(options && options.page);
-  const pagesToUse = pageMode ? pages : howtoPages;
-  const openBtn = document.getElementById("howto") || document.getElementById("book");
+  const openBtn = document.getElementById("howto");
   const overlay = document.getElementById("rules");
   const title = document.getElementById("rules-title");
   const art = document.getElementById("rules-art");
@@ -1365,7 +918,7 @@ export function bindRules(options) {
   let index = 0;
 
   function sizeArt() {
-    const page = pagesToUse[index];
+    const page = howtoPages[index];
     const w = art.clientWidth || overlay.clientWidth || 640;
     const h = page.aspect
       ? Math.round(Math.max(200, Math.min(460, w / page.aspect)))
@@ -1384,25 +937,22 @@ export function bindRules(options) {
     const ctx = art.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     applySouthpaw(ctx, w, readSouthpaw());
-    pagesToUse[index].draw(ctx, w, h);
+    howtoPages[index].draw(ctx, w, h);
   }
 
   function render() {
-    const page = pagesToUse[index];
+    const page = howtoPages[index];
     title.textContent = page.title;
-    const blocks = typeof page.blocks === "function" ? page.blocks(readSouthpaw()) : page.blocks;
-    fillCopy(copy, blocks);
-    pageLabel.textContent = `${index + 1} / ${pagesToUse.length}`;
+    fillCopy(copy, page.blocks);
+    pageLabel.textContent = `${index + 1} / ${howtoPages.length}`;
     prev.disabled = index === 0;
-    next.disabled = index === pagesToUse.length - 1;
-    const nav = overlay.querySelector(".rules-nav");
-    if (nav) nav.classList.toggle("hidden", pagesToUse.length < 2);
+    next.disabled = index === howtoPages.length - 1;
     dots.replaceChildren();
-    for (let i = 0; i < pagesToUse.length; i += 1) {
+    for (let i = 0; i < howtoPages.length; i += 1) {
       const dot = document.createElement("button");
       dot.type = "button";
       dot.className = "rules-dot";
-      dot.setAttribute("aria-label", pagesToUse[i].title);
+      dot.setAttribute("aria-label", howtoPages[i].title);
       dot.setAttribute("aria-current", i === index ? "true" : "false");
       dot.addEventListener("click", () => go(i));
       dots.appendChild(dot);
@@ -1411,15 +961,13 @@ export function bindRules(options) {
   }
 
   function go(nextIndex) {
-    index = Math.max(0, Math.min(pagesToUse.length - 1, nextIndex));
+    index = Math.max(0, Math.min(howtoPages.length - 1, nextIndex));
     render();
     const card = overlay.querySelector(".rules-card") || overlay;
     card.scrollTop = 0;
-    if (pageMode) window.scrollTo(0, 0);
   }
 
   function hide() {
-    if (pageMode) return;
     overlay.classList.add("hidden");
     if (openBtn) openBtn.setAttribute("aria-expanded", "false");
   }
@@ -1431,20 +979,18 @@ export function bindRules(options) {
     if (openBtn) openBtn.setAttribute("aria-expanded", "true");
     render();
     requestAnimationFrame(paint);
-    if (wasHidden && !pageMode) overlay.focus();
+    if (wasHidden) overlay.focus();
   }
 
   if (openBtn) openBtn.addEventListener("click", show);
   if (close) close.addEventListener("click", hide);
   prev.addEventListener("click", () => go(index - 1));
   next.addEventListener("click", () => go(index + 1));
-  if (!pageMode) {
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) hide();
-    });
-  }
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) hide();
+  });
   document.addEventListener("keydown", (event) => {
-    if (!pageMode && overlay.classList.contains("hidden")) return;
+    if (overlay.classList.contains("hidden")) return;
     if (event.key === "Escape") {
       hide();
       return;
@@ -1460,8 +1006,6 @@ export function bindRules(options) {
   window.addEventListener("resize", () => {
     if (!overlay.classList.contains("hidden")) paint();
   });
-
-  if (pageMode) show();
 
   return {
     close: hide,

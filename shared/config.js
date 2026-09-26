@@ -45,6 +45,12 @@ export const CONFIG = {
   centerIncome: 10,
   /** Land per second split by the bottom-lane center ratio. */
   centerLand: 10,
+  /**
+   * Time constant, in seconds, for the lane-center line. Each interval
+   * of this length closes about two thirds of the gap after a sudden
+   * change in push. Gold and land use this eased share.
+   */
+  laneCenterEase: 0.4,
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
@@ -59,7 +65,7 @@ export const CONFIG = {
    */
   massTaxRate: 0.005,
   /** Match time (seconds) when each bank becomes purchasable. */
-  bankUnlockAt: [0, 120, 240],
+  bankUnlockAt: [0, 2, 4],
 
   // Upgrades
 
@@ -110,7 +116,7 @@ export const CONFIG = {
   /** Farthest the keep gun can shoot, in pixels. */
   capitalCannonRange: 200,
   /** Shell damage of the keep gun before falloff. */
-  capitalCannonDamage: 50,
+  capitalCannonDamage: 30,
   /** Seconds between keep-gun shots. */
   capitalCannonAttackCooldown: 0.5,
 

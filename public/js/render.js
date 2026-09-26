@@ -292,13 +292,14 @@ const viewSideMethods = {
       const open = i < this.banks;
       const next = i === this.banks;
       const timed = this.bankUnlockedByTime(i);
-      const ready = next && timed && this.gold >= nextCost;
+      const offered = next && timed;
+      const ready = offered && this.gold >= nextCost;
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
       ctx.fillStyle = open ? CONFIG.colors.gold : "#2a3340";
-      ctx.strokeStyle = ready ? "#ffffff" : "#0d1218";
-      ctx.lineWidth = 2;
       ctx.fillRect(box.x, box.y, box.w, box.h);
+      ctx.strokeStyle = ready ? "#ffffff" : "#0d1218";
+      ctx.lineWidth = ready ? 3 : 2;
       ctx.strokeRect(box.x, box.y, box.w, box.h);
       if (!open && !timed) {
         const at = CONFIG.bankUnlockAt[i] || 1;
@@ -317,10 +318,24 @@ const viewSideMethods = {
         ctx.fill();
         ctx.restore();
       }
-      ctx.font = this.board.uiFont(18);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("🏛️", cx, cy);
+      ctx.fillStyle = CONFIG.colors.text;
+      if (offered) {
+        ctx.font = this.board.uiFont(14);
+        ctx.fillText("🏛️", cx, box.y + box.h * 0.34);
+        const price = `${nextCost}💰`;
+        const priceY = box.y + box.h * 0.74;
+        ctx.font = this.board.uiFont(10);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#0d1218";
+        ctx.strokeText(price, cx, priceY);
+        ctx.fillStyle = CONFIG.colors.gold;
+        ctx.fillText(price, cx, priceY);
+      } else {
+        ctx.font = this.board.uiFont(18);
+        ctx.fillText("🏛️", cx, cy);
+      }
     }
   }
 };
@@ -528,6 +543,7 @@ const boardMethods = {
   /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
   render() {
     if (!this.player) return;
+    this.presentLaneCenters();
     if (this.refreshHoldSelect) this.refreshHoldSelect();
     const ctx = this.ctx;
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5);

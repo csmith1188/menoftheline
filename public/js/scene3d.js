@@ -842,6 +842,7 @@ export function createScene(canvas) {
 
   function syncScene(board) {
     if (!board.player) return;
+    if (board.presentLaneCenters) board.presentLaneCenters();
     if (board.refreshHoldSelect) board.refreshHoldSelect();
     fitBoardMetrics(board);
     frameCamera(board);

@@ -188,6 +188,19 @@ export const boardStateMethods = {
     return `${weight || "bold"} ${size}px Trebuchet MS, sans-serif`;
   },
 
+  /**
+   * Glide the drawn lane lines from the previous snapshot share to the
+   * latest one. Gold and land labels on the line read these values.
+   */
+  presentLaneCenters(now = performance.now()) {
+    const fromAt = this.laneCenterFromAt;
+    const toAt = this.laneCenterToAt;
+    if (!fromAt || !toAt || toAt <= fromAt) return;
+    const u = Math.min(1, (now - fromAt) / (toAt - fromAt));
+    this.topCenter = this.topCenterFrom + (this.topCenterTo - this.topCenterFrom) * u;
+    this.bottomCenter = this.bottomCenterFrom + (this.bottomCenterTo - this.bottomCenterFrom) * u;
+  },
+
   /** Drawn control sizes plus extra hit padding so taps reach 44 CSS px. */
   uiMetrics() {
     const scale = this.cssScale || 1;
@@ -1251,8 +1264,22 @@ export function applySnapshot(board, snap, seat) {
   board.winReason = snap.winReason || null;
   board.status = snap.status;
   applyCountdownTiming(board, snap);
-  board.topCenter = mirror ? 1 - snap.topCenter : snap.topCenter;
-  board.bottomCenter = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
+  const top = mirror ? 1 - snap.topCenter : snap.topCenter;
+  const bottom = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
+  board.presentLaneCenters();
+  const now = performance.now();
+  const first = !board.laneCenterFromAt;
+  const gap = board.laneCenterToAt > board.laneCenterFromAt
+    ? board.laneCenterToAt - board.laneCenterFromAt
+    : 50;
+  board.topCenterFrom = first ? top : board.topCenter;
+  board.bottomCenterFrom = first ? bottom : board.bottomCenter;
+  board.topCenterTo = top;
+  board.bottomCenterTo = bottom;
+  board.topCenter = board.topCenterFrom;
+  board.bottomCenter = board.bottomCenterFrom;
+  board.laneCenterFromAt = now;
+  board.laneCenterToAt = first ? now : now + Math.min(250, Math.max(16, gap));
   board.player = makeSide(snap.sides[mine], "player", board, mx);
   board.enemy = makeSide(snap.sides[mine === "player" ? "enemy" : "player"], "enemy", board, mx);
   board.checkpoints = snap.checkpoints.map((town) => makeCheckpoint({
@@ -1327,6 +1354,12 @@ export function createBoardState(canvas) {
     southpaw: readSouthpaw(),
     topCenter: 0.5,
     bottomCenter: 0.5,
+    topCenterFrom: 0.5,
+    bottomCenterFrom: 0.5,
+    topCenterTo: 0.5,
+    bottomCenterTo: 0.5,
+    laneCenterFromAt: 0,
+    laneCenterToAt: 0,
     onCommand() {},
   });
 }

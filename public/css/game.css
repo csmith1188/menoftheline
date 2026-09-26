@@ -641,8 +641,26 @@ body {
   color: #1a1510;
 }
 
+.banks button.priced {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.banks button.priced .bank-mark {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .banks button.ready {
+  border-color: #ffffff;
   outline: 2px solid #ffffff;
+  outline-offset: -2px;
 }
 
 .banks button:disabled {

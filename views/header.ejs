@@ -4,6 +4,7 @@
     <% if (viewer) { %>
       <a href="/profile/<%= viewer.formbar_id %>"><%= viewer.name %></a>
       <span class="tickets"><%= viewer.tickets %> tickets<% if (viewer.held > 0) { %> (<%= viewer.held %> in use)<% } %></span>
+      <button type="button" class="nav-link" id="suggest-open">Suggest</button>
       <a href="/logout">Log out</a>
     <% } else { %>
       <a href="/login">Log in with Formbar</a>

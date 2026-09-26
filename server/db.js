@@ -102,6 +102,16 @@ export async function initDb() {
     tickets INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   )`);
+  await run(`CREATE TABLE IF NOT EXISTS suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    formbar_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    is_bug INTEGER NOT NULL DEFAULT 0,
+    repro TEXT,
+    created_at INTEGER NOT NULL,
+    archived_at INTEGER
+  )`);
   await run("UPDATE accounts SET held = 0");
 }
 
@@ -314,4 +324,47 @@ export async function systemStats() {
     ranked: games.ranked,
     digipogs: spent.digipogs,
   };
+}
+
+export async function createSuggestion({ formbarId, name, body, isBug, repro }) {
+  const result = await run(
+    `INSERT INTO suggestions (formbar_id, name, body, is_bug, repro, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      formbarId,
+      name,
+      body,
+      isBug ? 1 : 0,
+      isBug ? repro : null,
+      Date.now(),
+    ],
+  );
+  return result.lastID;
+}
+
+export async function listSuggestions({ archived = false } = {}) {
+  if (archived) {
+    return all(
+      `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at
+       FROM suggestions
+       WHERE archived_at IS NOT NULL
+       ORDER BY archived_at DESC, id DESC`,
+    );
+  }
+  return all(
+    `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at
+     FROM suggestions
+     WHERE archived_at IS NULL
+     ORDER BY created_at DESC, id DESC`,
+  );
+}
+
+export async function archiveSuggestion(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
+  const result = await run(
+    "UPDATE suggestions SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+    [Date.now(), suggestionId],
+  );
+  return result.changes > 0;
 }

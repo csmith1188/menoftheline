@@ -41,5 +41,6 @@
       <% } %>
     <% } %>
   </div>
+  <%- include("suggestion-modal", { nextPath: account ? "/profile/" + account.formbar_id : "/" }) %>
 </body>
 </html>

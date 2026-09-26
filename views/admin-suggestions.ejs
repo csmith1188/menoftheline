@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121821">
+  <title>Suggestions · Men Of The Line</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Suggestions</h2>
+      <% if (!suggestions.length) { %>
+        <p class="hint">No open suggestions.</p>
+      <% } else { %>
+        <ul class="list">
+          <% suggestions.forEach(function (item) { %>
+            <li class="card">
+              <div class="suggest-meta">
+                <a href="/profile/<%= item.formbar_id %>"><%= item.name %></a>
+                <span class="hint"><%= new Date(item.created_at).toLocaleString() %></span>
+                <% if (item.is_bug) { %><span class="bug-tag">Bug</span><% } %>
+              </div>
+              <p class="suggest-body"><%= item.body %></p>
+              <% if (item.is_bug && item.repro) { %>
+                <p class="hint">How did you create the bug?</p>
+                <p class="suggest-repro"><%= item.repro %></p>
+              <% } %>
+              <form method="post" action="/admin/suggestions/<%= item.id %>/archive">
+                <button type="submit">Archive</button>
+              </form>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/admin/suggestions" }) %>
+</body>
+</html>

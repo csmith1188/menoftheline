@@ -20,10 +20,6 @@
 # Feature
 - music
 - Reinforced Learning player
-- Suggestion box
-    - requires login
-    - "bug" cbeckbox requires a new text area: "how did you create the bug?"
-    - admin link to new page to view and archive submissions
 
 # UI
 - 3d should always zoom in to fill screen with map

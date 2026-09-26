@@ -9,11 +9,14 @@ import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import {
   addTickets,
+  archiveSuggestion,
+  createSuggestion,
   dataPath,
   ensureGuest,
   getAccount,
   getUser,
   initDb,
+  listSuggestions,
   systemStats,
   ticketPack,
   topAccounts,
@@ -238,6 +241,78 @@ app.post("/tickets", async (req, res, next) => {
     await addTickets(account.formbar_id, pack.size, pack.cost);
     req.session.notice = `Added ${pack.size} tickets.`;
     req.session.save(() => res.redirect(back));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/suggestions", async (req, res, next) => {
+  try {
+    const back = safeNext(req.body && req.body.next);
+    if (!req.session.formbarId) {
+      res.redirect("/login");
+      return;
+    }
+    const account = await getAccount(req.session.formbarId);
+    if (!account) {
+      req.session.notice = "Log in again to send a suggestion.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const body = String(req.body && req.body.body || "").trim().slice(0, 2000);
+    const isBug = Boolean(req.body && (req.body.is_bug === "on" || req.body.is_bug === "1"));
+    const repro = String(req.body && req.body.repro || "").trim().slice(0, 2000);
+    if (!body) {
+      req.session.notice = "Suggestion text is required.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (isBug && !repro) {
+      req.session.notice = "Bug reports need steps to reproduce.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    await createSuggestion({
+      formbarId: account.formbar_id,
+      name: account.name,
+      body,
+      isBug,
+      repro,
+    });
+    req.session.notice = "Thanks for the suggestion.";
+    req.session.save(() => res.redirect(back));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/admin/suggestions", async (req, res, next) => {
+  try {
+    if (!isAdmin(req.session)) {
+      res.redirect("/");
+      return;
+    }
+    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+    const notice = req.session.notice || null;
+    if (req.session.notice) req.session.notice = null;
+    const suggestions = await listSuggestions({ archived: false });
+    req.session.save(() => {
+      res.render("admin-suggestions", { viewer, notice, suggestions });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
+  try {
+    if (!isAdmin(req.session)) {
+      res.redirect("/");
+      return;
+    }
+    await archiveSuggestion(req.params.id);
+    req.session.notice = "Suggestion archived.";
+    req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
     next(err);
   }

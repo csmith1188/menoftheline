@@ -1,0 +1,25 @@
+<% if (viewer) { %>
+  <div id="suggest-modal" class="suggest-modal hidden" role="dialog" aria-modal="true" aria-labelledby="suggest-title" tabindex="-1">
+    <div class="suggest-card">
+      <h2 id="suggest-title">Suggestion</h2>
+      <form method="post" action="/suggestions" id="suggest-form">
+        <input type="hidden" name="next" value="<%= typeof nextPath !== 'undefined' ? nextPath : '/' %>">
+        <label for="suggest-body">Message</label>
+        <textarea id="suggest-body" name="body" rows="5" maxlength="2000" required></textarea>
+        <label class="check-row">
+          <input type="checkbox" id="suggest-bug" name="is_bug" value="1">
+          <span>Bug</span>
+        </label>
+        <div id="suggest-repro-wrap" class="hidden">
+          <label for="suggest-repro">How did you create the bug?</label>
+          <textarea id="suggest-repro" name="repro" rows="4" maxlength="2000"></textarea>
+        </div>
+        <div class="suggest-actions">
+          <button type="button" class="action" id="suggest-cancel">Cancel</button>
+          <button type="submit">Send</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script type="module" src="/js/suggestion.js"></script>
+<% } %>

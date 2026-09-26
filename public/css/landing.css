@@ -66,6 +66,28 @@ nav a,
   text-decoration: none;
 }
 
+nav .nav-link {
+  appearance: none;
+  display: inline;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--gold);
+  font: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+nav .nav-link:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
 .tickets,
 .hint {
   margin: 0;
@@ -366,4 +388,108 @@ input {
   margin: 0;
   font-size: 0.8rem;
   opacity: 0.75;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.suggest-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 12, 18, 0.72);
+}
+
+.suggest-card {
+  width: min(28rem, 100%);
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.suggest-card h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+  text-transform: none;
+}
+
+.suggest-card textarea {
+  width: 100%;
+  min-height: 6rem;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121821;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+  resize: vertical;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.check-row input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.suggest-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.suggest-actions .action,
+.suggest-actions button {
+  width: 100%;
+}
+
+.suggest-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: baseline;
+}
+
+.suggest-meta .bug-tag {
+  color: var(--gold);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.suggest-body {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.suggest-repro {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121821;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  color: #b7c3d1;
 }

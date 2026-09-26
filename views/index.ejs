@@ -35,6 +35,13 @@
           Southpaw
           <span class="mark" aria-hidden="true"></span>
         </button>
+        <div class="sound">
+          <div class="sound-head">
+            <span>Sound</span>
+            <button type="button" id="sound-mute" class="sound-mute" aria-pressed="false" title="Mute sound">Mute</button>
+          </div>
+          <input type="range" id="sound-volume" min="0" max="100" step="1" value="100" aria-label="Sound volume">
+        </div>
         <button type="button" id="concede" class="action">Concede</button>
         <div id="confirm" class="confirm hidden">
           <p>Concede this match?</p>

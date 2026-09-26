@@ -209,6 +209,58 @@ body {
   background: var(--gold);
 }
 
+.sound {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: #1a222c;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.sound-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 1rem;
+}
+
+.sound-mute {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #121821;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  min-height: 32px;
+  padding: 4px 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.sound-mute:hover {
+  border-color: var(--gold);
+}
+
+.sound-mute[aria-pressed="true"] {
+  border-color: var(--gold);
+  background: #3a3120;
+  color: var(--gold);
+}
+
+.sound input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--gold);
+  cursor: pointer;
+}
+
 .confirm {
   display: flex;
   flex-direction: column;

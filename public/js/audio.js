@@ -56,19 +56,55 @@ const NOTE_FREQ = {
   "C7": 2093.00,
 };
 
+const VOLUME_KEY = "motl-sound-volume";
+
+function clampVolume(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(0, Math.min(1, n));
+}
+
+function readStoredVolume() {
+  try {
+    const raw = localStorage.getItem(VOLUME_KEY);
+    if (raw == null) return 1;
+    return clampVolume(raw);
+  } catch (err) {
+    return 1;
+  }
+}
+
 /** Tiny Web Audio bus for the per-sublane shot plucks. */
 const ShotTone = {
   ctx: null,
+  master: null,
+  volume: readStoredVolume(),
 
   unlock() {
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtor) return null;
     if (!this.ctx) this.ctx = new AudioCtor();
+    if (!this.master) {
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.volume;
+      this.master.connect(this.ctx.destination);
+    }
     if (this.ctx.state === "suspended") this.ctx.resume();
     return this.ctx;
   },
 
+  setVolume(value) {
+    this.volume = clampVolume(value);
+    if (this.master) this.master.gain.value = this.volume;
+    try {
+      localStorage.setItem(VOLUME_KEY, String(this.volume));
+    } catch (err) {
+      // Storage can be blocked; the in-memory level still applies this session.
+    }
+  },
+
   play(lane, sublane, type, sideId) {
+    if (this.volume <= 0) return;
     const ctx = this.unlock();
     if (!ctx) return;
     const names = SHOT_NOTES[lane];
@@ -84,13 +120,14 @@ const ShotTone = {
     gain.gain.setValueAtTime(sideId === "enemy" ? 0.04 : 0.07, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(this.master);
     osc.start(now);
     osc.stop(now + 0.16);
   },
 
   /** Short tone for one second of the match-start countdown. */
   playCountdown() {
+    if (this.volume <= 0) return;
     const ctx = this.unlock();
     if (!ctx) return;
     const start = () => {
@@ -102,7 +139,7 @@ const ShotTone = {
       gain.gain.setValueAtTime(0.1, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(this.master);
       osc.start(now);
       osc.stop(now + 0.14);
     };
@@ -112,6 +149,7 @@ const ShotTone = {
 
   /** Quick high-passed noise tick for a melee hit. */
   playMelee() {
+    if (this.volume <= 0) return;
     const ctx = this.unlock();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -131,7 +169,7 @@ const ShotTone = {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
     src.connect(filter);
     filter.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(this.master);
     src.start(now);
     src.stop(now + life);
   },
@@ -139,6 +177,14 @@ const ShotTone = {
 
 export function unlockAudio() {
   ShotTone.unlock();
+}
+
+export function getSoundVolume() {
+  return ShotTone.volume;
+}
+
+export function setSoundVolume(value) {
+  ShotTone.setVolume(value);
 }
 
 export function playCountdownBeep() {

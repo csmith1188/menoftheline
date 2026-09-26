@@ -15,9 +15,10 @@
     - river -> allow infantry, blocks horse and gun
     - peaks -> block los unless inside, slow infantry, blocks horse and gun
     - bridge -> cannot switch lanes
+- officers make order sounds when near lines given orders
 
-
-# Features
+# Feature
+- music
 - Reinforced Learning player
 - Suggestion box
     - requires login

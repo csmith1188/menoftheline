@@ -1,7 +1,7 @@
 import { applySnapshot, createBoard, writeSouthpaw } from "./render.js";
 import { applyCountdownTiming, countdownSecondsLeft } from "./board.js";
 import { bindInput } from "./input.js";
-import { playCountdownBeep, playSounds, unlockAudio } from "./audio.js";
+import { getSoundVolume, playCountdownBeep, playSounds, setSoundVolume, unlockAudio } from "./audio.js";
 import { bindRules } from "./rules.js";
 
 const canvas = document.getElementById("board");
@@ -22,6 +22,8 @@ const confirmBox = document.getElementById("confirm");
 const concedeYes = document.getElementById("concede-yes");
 const concedeNo = document.getElementById("concede-no");
 const southpawBtn = document.getElementById("southpaw");
+const soundVolume = document.getElementById("sound-volume");
+const soundMute = document.getElementById("sound-mute");
 
 const rulesUi = bindRules({
   onOpen() {
@@ -36,6 +38,34 @@ southpawBtn.addEventListener("click", () => {
   writeSouthpaw(board.southpaw);
   southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");
   rulesUi.repaint();
+});
+
+let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
+
+function syncSoundUi() {
+  const volume = getSoundVolume();
+  const muted = volume <= 0;
+  soundVolume.value = String(Math.round(volume * 100));
+  soundMute.setAttribute("aria-pressed", muted ? "true" : "false");
+  soundMute.textContent = muted ? "Unmute" : "Mute";
+  soundMute.title = muted ? "Unmute sound" : "Mute sound";
+}
+
+syncSoundUi();
+soundVolume.addEventListener("input", () => {
+  const next = Number(soundVolume.value) / 100;
+  setSoundVolume(next);
+  if (next > 0) soundBeforeMute = next;
+  syncSoundUi();
+});
+soundMute.addEventListener("click", () => {
+  if (getSoundVolume() > 0) {
+    soundBeforeMute = getSoundVolume();
+    setSoundVolume(0);
+  } else {
+    setSoundVolume(soundBeforeMute > 0 ? soundBeforeMute : 1);
+  }
+  syncSoundUi();
 });
 const meta = { you: null, opponent: null };
 let seat = null;

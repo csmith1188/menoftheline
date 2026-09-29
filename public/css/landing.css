@@ -371,8 +371,20 @@ input {
   text-transform: none;
 }
 
-.wiki-link.wiki-wanted {
-  border-bottom: 1px dashed currentColor;
+.page :not(nav) > a:not(.brand):not(.action),
+.page :not(nav) > a:not(.brand):not(.action):visited {
+  color: var(--gold);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.page :not(nav) > a:not(.brand):not(.action):hover {
+  color: #f6dc96;
+}
+
+.page :not(nav) > a.wiki-wanted:not(.brand):not(.action) {
+  text-decoration-style: dashed;
 }
 
 .wiki-index {

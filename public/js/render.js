@@ -1,7 +1,8 @@
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
-import { drawDebugRanges, troopBuyBgImage } from "./debugRanges.js";
+import { drawDebugRanges } from "./debugRanges.js";
+import { buyBgImage } from "./buyArt.js";
 import {
   applySnapshot,
   boardStateMethods,
@@ -811,20 +812,26 @@ const boardMethods = {
       ctx.globalAlpha = can ? 1 : 0.45;
       ctx.fillStyle = unit.fill;
       ctx.fillRect(box.x, box.y, box.w, box.h);
-      const troopBg = unit.type === "troop" ? troopBuyBgImage() : null;
-      if (troopBg) {
+      if (spawn !== unit.type) {
+        const pad = 5 * CONFIG.uiScale;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, box.h - pad * 2);
+      }
+      const unitBg = buyBgImage(unit.type);
+      if (unitBg) {
         const iw = box.w * 0.75;
         const ih = box.h * 0.75;
-        ctx.globalAlpha = (can ? 1 : 0.45) * 0.5;
-        ctx.drawImage(troopBg, box.x + (box.w - iw) / 2, box.y + (box.h - ih) / 2, iw, ih);
+        ctx.globalAlpha = (can ? 1 : 0.45) * 0.75;
+        ctx.drawImage(unitBg, box.x + (box.w - iw) / 2, box.y + (box.h - ih) / 2, iw, ih);
         ctx.globalAlpha = can ? 1 : 0.45;
       }
       if (spawn !== unit.type) {
         const pad = 5 * CONFIG.uiScale;
         ctx.fillStyle = "#ffffff";
-        ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, box.h - pad * 2);
-        ctx.fillStyle = unit.fill;
-        ctx.fillRect(box.x + pad + 2, box.y + pad + 2, box.w - pad * 2 - 4, box.h - pad * 2 - 4);
+        ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, 2);
+        ctx.fillRect(box.x + pad, box.y + box.h - pad - 2, box.w - pad * 2, 2);
+        ctx.fillRect(box.x + pad, box.y + pad, 2, box.h - pad * 2);
+        ctx.fillRect(box.x + box.w - pad - 2, box.y + pad, 2, box.h - pad * 2);
       }
       if (lane) {
         ctx.fillStyle = "rgba(255,255,255,0.22)";
@@ -845,12 +852,18 @@ const boardMethods = {
       }
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#000000";
       ctx.font = this.uiFont(12);
+      const label = UNIT_LABELS[spawn] || unit.label;
+      ctx.strokeText(label, cx, mid - 8 * CONFIG.uiScale);
       ctx.fillStyle = CONFIG.colors.text;
-      ctx.fillText(UNIT_LABELS[spawn] || unit.label, cx, mid - 8 * CONFIG.uiScale);
-      ctx.fillStyle = CONFIG.colors.gold;
+      ctx.fillText(label, cx, mid - 8 * CONFIG.uiScale);
       ctx.font = this.uiFont(11);
-      ctx.fillText(`${cost}💰`, cx, mid + 9 * CONFIG.uiScale);
+      const costText = `${cost}💰`;
+      ctx.strokeText(costText, cx, mid + 9 * CONFIG.uiScale);
+      ctx.fillStyle = CONFIG.colors.gold;
+      ctx.fillText(costText, cx, mid + 9 * CONFIG.uiScale);
       ctx.globalAlpha = 1;
 
       if (spawn !== unit.type && land > 0) {
@@ -863,11 +876,15 @@ const boardMethods = {
         ctx.strokeStyle = unit.stroke;
         ctx.lineWidth = 2;
         ctx.strokeRect(ubox.x, ubox.y, ubox.w, ubox.h);
-        ctx.fillStyle = CONFIG.colors.gold;
         ctx.font = this.uiFont(10);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(`${land}🌿`, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
+        const landText = `${land}🌿`;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#000000";
+        ctx.strokeText(landText, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
+        ctx.fillStyle = CONFIG.colors.gold;
+        ctx.fillText(landText, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
         ctx.globalAlpha = 1;
       }
     }

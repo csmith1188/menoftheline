@@ -11,6 +11,7 @@
 - Swipe Unit Buttons up/down to purchase for the top/bottom lane
 - Swipe Unit Buttons left/right to change the unit type
 - Swipe Strategy Buttons left/right or click to change Strategy for that lane
+- Click a Town you control to enable/disable researching in that town
 ## Map Controls
 - Click an empty part of lane, pinch zoom in, or mouse wheel up to zoom into that lane
 - Swipe up/down to switch lanes when zoomed
@@ -22,4 +23,4 @@
 - Swipe up or down to move the line one row. Switching onto a matching unit in line Reforms
 - Swipe forward to Charge
 - Swipe back to Fall Back
-- Long press a single unit to issue orders to only that unit (ignore lines)
+- Long press or right-click a single unit to issue orders to only that unit (ignore lines)

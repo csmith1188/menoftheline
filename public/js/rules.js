@@ -572,50 +572,6 @@ function drawLanes(ctx, w, h) {
   ink(ctx, "towns", townAt.x, Math.min(h - 12, townAt.y + 22), CONFIG.colors.text, 12);
 }
 
-function drawSpeedLadder(ctx, rect) {
-  ctx.fillStyle = "#1a2838";
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.strokeStyle = "#314257";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
-
-  const steps = [
-    { order: "retreat", name: "Retreat" },
-    { order: "fallback", name: "Fall back" },
-    { order: "halt", name: "Halt" },
-    { order: null, name: "Advance" },
-    { order: "charge", name: "Charge" },
-  ];
-  const pad = 8;
-  const slot = (rect.w - pad * 2) / steps.length;
-  const cy = rect.y + rect.h * 0.38;
-  const scale = Math.min(1.35, Math.max(1, (slot - 8) / 36));
-  const haltAt = steps.findIndex((step) => step.order === "halt");
-  for (let i = 0; i < steps.length; i += 1) {
-    const cx = rect.x + pad + slot * (i + 0.5);
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(scale, scale);
-    drawUnit(ctx, { x: 0, y: 0, side: "player", type: "troop", order: steps[i].order });
-    ctx.restore();
-    inkFit(ctx, steps[i].name, cx, cy + 26 + scale * 4, CONFIG.colors.text, 11, slot - 4);
-  }
-  for (let i = 0; i < steps.length - 1; i += 1) {
-    const from = rect.x + pad + slot * (i + 0.5);
-    const to = rect.x + pad + slot * (i + 1.5);
-    const gap = 10 + scale * 10;
-    const x1 = from + gap;
-    const x2 = to - gap;
-    if (x2 <= x1 + 8) continue;
-    if (i < haltAt) {
-      worldArrow(ctx, x2, cy, x1, cy, "#8aa0b8");
-    } else {
-      worldArrow(ctx, x1, cy, x2, cy, "#8aa0b8");
-    }
-  }
-  inkFit(ctx, "back: fall back · forward: charge", rect.x + rect.w / 2, rect.y + rect.h - 12, CONFIG.colors.gold, 12, rect.w - 16);
-}
-
 /** Short in-match controls guide (settings menu). */
 function drawHowtoButtons(ctx, w, h) {
   clear(ctx, w, h);
@@ -759,10 +715,9 @@ function drawHowtoMap(ctx, w, h) {
 function drawHowtoUnits(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 2);
-  drawSpeedLadder(ctx, panels[0]);
 
   const line = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "troop", "halt"));
-  vignette(ctx, panels[1], around(line, 56, 28), "Click line · Halt, then Advance", () => {
+  vignette(ctx, panels[0], around(line, 56, 28), "Click line · Halt, then Advance", () => {
     drawGround(ctx);
     ctx.save();
     ctx.strokeStyle = "#ffffff";
@@ -772,6 +727,16 @@ function drawHowtoUnits(ctx, w, h) {
     ctx.stroke();
     ctx.restore();
     for (let i = 0; i < line.length; i += 1) drawUnit(ctx, line[i]);
+  });
+
+  const switcher = placeX("player", 2, 500, "troop");
+  const mate = placeX("player", 1, 500, "troop");
+  vignette(ctx, panels[1], around([switcher, mate], 70, 40), "Swipe up/down · row / Reform", () => {
+    drawGround(ctx);
+    drawUnit(ctx, mate);
+    drawUnit(ctx, switcher);
+    worldArrow(ctx, switcher.x, switcher.y - 18, switcher.x, mate.y + 14, CONFIG.colors.reform);
+    worldArrow(ctx, switcher.x + 36, switcher.y + 18, switcher.x + 36, switcher.y + 52, CONFIG.colors.laneHover);
   });
 
   const charger = placeX("player", 2, 470, "troop", "charge");
@@ -788,7 +753,7 @@ function drawHowtoUnits(ctx, w, h) {
     placeX("player", 1, 500, "troop"),
     placeX("player", 3, 500, "troop"),
   ];
-  vignette(ctx, panels[3], around([solo, ...mates], 70, 36), "Long-press · solo unit only", () => {
+  vignette(ctx, panels[3], around([solo, ...mates], 70, 36), "Long-press / right-click · solo unit only", () => {
     drawGround(ctx);
     for (let i = 0; i < mates.length; i += 1) drawUnit(ctx, mates[i]);
     ctx.save();
@@ -875,7 +840,7 @@ const howtoPages = [
           "Swipe up or down to move the line one row. Switching onto a matching unit in line Reforms.",
           "Swipe forward to Charge.",
           "Swipe back to Fall Back.",
-          "Long press a single unit to issue orders to only that unit (ignore lines).",
+          "Long press or right-click a single unit to issue orders to only that unit (ignore lines).",
         ],
       },
     ],

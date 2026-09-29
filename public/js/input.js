@@ -17,6 +17,8 @@ const pointerMethods = {
   onPointerDown(event) {
     if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) {
+      // Right-click matches a completed long-press: solo-select that unit.
+      if (event.button === 2) this.onRightClickSolo(event);
       return;
     }
     if (this.telescope) {
@@ -144,6 +146,45 @@ const pointerMethods = {
     this.canvas.setPointerCapture(event.pointerId);
   },
 
+  /**
+   * Right-click activates the same solo pick as a finished long-press, then
+   * allows the usual swipe orders on only that unit.
+   */
+  onRightClickSolo(event) {
+    if (this.winner || this.status !== "playing") return;
+    event.preventDefault();
+    let troop = null;
+    let point = null;
+    if (this.telescope) {
+      if (this.hitBankAt(this.canvasPoint(event), this.player)) return;
+      point = this.worldPoint(event);
+      troop = this.hitAnyTroopAt(point);
+    } else {
+      point = this.canvasPoint(event);
+      if (this.hitBuyAt(point) || this.hitStrategyAt(point)
+        || this.hitBankAt(point, this.player)) {
+        return;
+      }
+      troop = this.hitAnyTroopAt(point);
+    }
+    if (!troop || !troop.side || troop.side.id !== "player") return;
+    const wasSelected = this.isInspected(troop);
+    this.drag = {
+      troop,
+      x: point.x,
+      y: point.y,
+      hx: point.x,
+      hy: point.y,
+      ux: troop.x,
+      uy: troop.y,
+      downAt: performance.now(),
+      soloPick: true,
+      wasSelected,
+    };
+    this.selectTroop(troop, true);
+    this.canvas.setPointerCapture(event.pointerId);
+  },
+
   /** While dragging, keep the hover point so the target row can light up. */
   onPointerMove(event) {
     if (!event.isPrimary) {
@@ -195,14 +236,16 @@ const pointerMethods = {
 
   /**
    * Release: click selects / reforms / restores; along-drag changes speed;
-   * across-drag changes row; long-press selects only that unit.
+   * across-drag changes row; long-press / right-click selects only that unit.
    */
   onPointerUp(event) {
     if (!event.isPrimary) {
       return;
     }
+    const rightRelease = event.pointerType === "mouse" && event.button === 2;
     if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
+      // Only finish a right-click solo drag; ignore other mouse buttons.
+      if (!rightRelease || !this.drag) return;
     }
     if (this.telescopeDrag) {
       const start = this.telescopeDrag;
@@ -362,7 +405,7 @@ const pointerMethods = {
 
   /**
    * 2D release: a tap goes straight to halt, then reform, then advance.
-   * Long-press pulls a unit out of its line; later clicks and swipes on
+   * Long-press / right-click pulls a unit out of its line; later clicks and swipes on
    * that unit stay solo until another unit is clicked (line select).
    * Forward charges, or advances when halted. Back falls back, or
    * advances when charging. A solo unit slides to the row the swipe
@@ -453,8 +496,8 @@ const pointerMethods = {
   },
 
   /**
-   * True when this press should affect only that unit: long-press, melee
-   * contact, or the unit is already the solo selection.
+   * True when this press should affect only that unit: long-press, right-click,
+   * melee contact, or the unit is already the solo selection.
    */
   orderSolo(troop, start) {
     if (this.isTroopInMelee(troop)) return true;
@@ -515,9 +558,9 @@ const pointerMethods = {
   },
 
   /**
-   * Holding still on a unit long enough selects only that unit. Pull is
-   * measured relative to the unit so a walking body does not fake a drag,
-   * and the hold cancels if the unit leaves the finger.
+   * Holding still on a unit long enough selects only that unit (same as
+   * right-click). Pull is measured relative to the unit so a walking body
+   * does not fake a drag, and the hold cancels if the unit leaves the finger.
    */
   refreshHoldSelect() {
     const drag = this.drag;

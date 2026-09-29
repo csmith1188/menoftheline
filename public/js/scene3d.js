@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
-import { collectDebugMarks, debugRangesOn, troopBuyBgImage } from "./debugRanges.js";
+import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
+import { buyBgImage } from "./buyArt.js";
 import { TARGETING_LABELS } from "./board.js";
 
 function labelTexture(lines, opts = {}) {
@@ -35,9 +36,16 @@ function labelTexture(lines, opts = {}) {
   const step = height / (list.length + 1);
   for (let i = 0; i < list.length; i += 1) {
     const row = list[i];
+    const x = width / 2;
+    const y = step * (i + 1);
     ctx.font = row.font || opts.font || "bold 36px Trebuchet MS, sans-serif";
+    if (opts.textOutline) {
+      ctx.lineWidth = opts.textOutlineWidth || 6;
+      ctx.strokeStyle = opts.textOutline;
+      ctx.strokeText(row.text, x, y);
+    }
     ctx.fillStyle = row.color || opts.color || "#e8eef6";
-    ctx.fillText(row.text, width / 2, step * (i + 1));
+    ctx.fillText(row.text, x, y);
   }
   if (opts.sideArrows) {
     const mid = height / 2;
@@ -783,14 +791,14 @@ export function createScene(canvas) {
       const can = !over && board.player.gold >= stats.cost && board.player.land >= land;
       const lane = board.buyDrag && board.buyDrag.index === i ? board.buyDrag.lane : null;
       const alt = spawn !== unit.type;
-      const troopBg = unit.type === "troop" ? troopBuyBgImage() : null;
+      const unitBg = buyBgImage(unit.type);
       mesh.material.color.set(alt ? "#ffffff" : unit.fill);
       mesh.material.opacity = can ? 1 : 0.45;
       mesh.material.transparent = true;
       mesh.material.emissive.set(lane ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = lane ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${troopBg ? "bg" : ""}`;
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${unitBg ? "bg" : ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -800,8 +808,9 @@ export function createScene(canvas) {
           width: 256,
           height: 192,
           fill: alt ? "#ffffff" : unit.fill,
-          bgImage: troopBg || undefined,
+          bgImage: unitBg || undefined,
           stroke: can ? "#ffffff" : unit.stroke,
+          textOutline: "#000000",
           key,
         });
         mesh.userData.face.userData.key = key;
@@ -824,7 +833,14 @@ export function createScene(canvas) {
       if (unlock.userData.face.userData.key !== uKey) {
         setLabel(unlock.userData.face, [
           { text: `+${land} land`, font: "bold 28px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
-        ], { width: 256, height: 96, fill: "#2a3340", stroke: unit.stroke, key: uKey });
+        ], {
+          width: 256,
+          height: 96,
+          fill: "#2a3340",
+          stroke: unit.stroke,
+          textOutline: "#000000",
+          key: uKey,
+        });
         unlock.userData.face.userData.key = uKey;
       }
     }

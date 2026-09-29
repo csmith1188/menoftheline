@@ -53,6 +53,17 @@ function countTypes(troops) {
 /**
  * Built-in opponent. Decides from the live sim and issues the same
  * commands a human seat would, so the core step never special-cases bots.
+ *
+ * Order algorithm (first match wins, per unit):
+ *  1. Row hygiene — unstack same-row mates; step loners toward partners.
+ *  2. Form — lone unit with a same-type partner behind on an adjacent row
+ *     Reforms once; units that can walk into a line ahead Advance;
+ *     already-formed lines Advance up the lane as a group (no re-dress).
+ *     After Reform finishes (Halt), resume Advance on the whole line.
+ *  3. Cavalry leash — no infantry near → Fallback; enemy near → Charge;
+ *     infantry ahead → Advance; else Halt and wait. Never Reform to leash.
+ *  4. Hard only — low vitality → Fallback; type micro (skirmisher / officer /
+ *     cannon) with the same leash for dragoons.
  */
 export class BotController {
   constructor(sideId, options = {}) {
@@ -119,7 +130,18 @@ export class BotController {
       action,
       solo: useSolo,
     });
-    if (ok) this.locks.set(troop.id, sim.elapsed + CONFIG.botOrderCooldown);
+    if (ok) {
+      const until = sim.elapsed + CONFIG.botOrderCooldown;
+      this.locks.set(troop.id, until);
+      // Group orders move the whole line — lock mates so the next unit
+      // in the loop does not peel them with a conflicting command.
+      if (!useSolo && troop.side) {
+        const line = troop.lineGroup(troop.side.troops);
+        for (let i = 0; i < line.length; i += 1) {
+          this.locks.set(line[i].id, until);
+        }
+      }
+    }
     return ok;
   }
 
@@ -144,41 +166,18 @@ export class BotController {
   }
 
   /**
-   * Move a whole line one row in dir (+1 / -1). Prefer this over peeling
-   * a single member out of formation.
-   */
-  shiftLine(sim, troop, dir, allies) {
-    if (!troop || troop.hp <= 0 || troop.broken || this.locked(sim, troop)) {
-      return false;
-    }
-    if (dir !== 1 && dir !== -1) return false;
-    const ok = this.cmd(sim, {
-      type: "order",
-      troopId: troop.id,
-      action: "shift",
-      dir,
-      solo: false,
-    });
-    if (ok) {
-      const line = troop.lineGroup(allies);
-      const until = sim.elapsed + CONFIG.botOrderCooldown;
-      this.locks.set(troop.id, until);
-      for (let i = 0; i < line.length; i += 1) {
-        this.locks.set(line[i].id, until);
-      }
-    }
-    return ok;
-  }
-
-  /**
    * Move toward a desired speed/order using player-equivalent actions.
    * desired: null | "halt" | "charge" | "fallback" | "reform"
+   *
+   * Advance / Halt / Reform apply to the whole line (solo false). Charge
+   * and Fallback peel one body unless solo is passed explicitly false.
    */
-  desireOrder(sim, troop, desired) {
+  desireOrder(sim, troop, desired, solo) {
     if (!troop || troop.hp <= 0 || troop.broken || this.locked(sim, troop)) {
       return false;
     }
     const current = troop.orderHeld ? troop.heldOrder : troop.order;
+    const peel = solo != null ? Boolean(solo) : true;
     if (desired === "reform") {
       if (current === "reform") return false;
       return this.order(sim, troop, "reform", false);
@@ -186,33 +185,34 @@ export class BotController {
     if (current === "reform") {
       if (desired === null) return this.order(sim, troop, "restore", false);
       // Charge and fallback may interrupt reform.
-      if (desired === "charge") return this.order(sim, troop, "charge", true);
-      if (desired === "fallback") return this.order(sim, troop, "fallback", true);
+      if (desired === "charge") return this.order(sim, troop, "charge", peel);
+      if (desired === "fallback") return this.order(sim, troop, "fallback", peel);
       return false;
     }
     if (desired === "charge") {
       if (current === "charge") return false;
-      return this.order(sim, troop, "charge", true);
+      return this.order(sim, troop, "charge", peel);
     }
     if (desired === "fallback") {
       if (current === "fallback" || current === "retreat") return false;
-      return this.order(sim, troop, "fallback", true);
+      return this.order(sim, troop, "fallback", peel);
     }
     if (desired === "halt") {
       if (current === "halt") return false;
+      // Whole line steps together — solo peels and leaves mates marching.
       if (current === "charge" || current === null) {
-        return this.order(sim, troop, "speedDown", true);
+        return this.order(sim, troop, "speedDown", false);
       }
       if (current === "fallback" || current === "retreat") {
-        return this.order(sim, troop, "speedUp", true);
+        return this.order(sim, troop, "speedUp", false);
       }
       return false;
     }
-    // Advance (null).
+    // Advance (null). speedDown from charge — never "back" (that Fallbacks).
     if (current === null) return false;
-    if (current === "charge") return this.order(sim, troop, "back", true);
+    if (current === "charge") return this.order(sim, troop, "speedDown", false);
     if (current === "halt" || current === "fallback" || current === "retreat") {
-      return this.order(sim, troop, "speedUp", true);
+      return this.order(sim, troop, "speedUp", false);
     }
     return false;
   }
@@ -393,9 +393,10 @@ export class BotController {
   }
 
   /**
-   * Highest-priority movement: get line units onto adjacent rows, square
-   * them with reform, and keep them advancing together once parallel.
-   * Returns ids still busy forming so Hard micro does not override them.
+   * Form adjacent-row lines, then keep them Advancing up the lane.
+   * Reform only to let a rear partner catch the front — never to dress
+   * an already-formed line, and never instead of marching.
+   * Returns ids that received a formation command this tick.
    */
   formLines(sim, self, foe) {
     const busy = new Set();
@@ -420,51 +421,47 @@ export class BotController {
 
     for (let i = 0; i < units.length; i += 1) {
       const troop = units[i];
+      if (busy.has(troop.id)) continue;
       if (troop.lineInMelee(allies, foe.troops)) continue;
 
-      const line = troop.lineGroup(units);
-      const inLine = line.length >= 2;
-      const squared = inLine && this.lineIsSquared(line);
-
-      // Formed lines: never peel a single member to another row. Close
-      // gaps by shifting the whole line, then keep depth orders.
-      if (inLine) {
-        if (!seenLine.has(line[0].id)) {
-          for (let g = 0; g < line.length; g += 1) seenLine.add(line[g].id);
-          const outsider = this.nearestOutsideLine(line, units);
-          if (outsider) {
-            const mid = this.lineMiddleRow(line);
-            const gap = outsider.sublane - mid;
-            if (Math.abs(gap) > 1) {
-              const dir = gap > 0 ? 1 : -1;
-              if (this.shiftLine(sim, troop, dir, units)) {
-                for (let g = 0; g < line.length; g += 1) busy.add(line[g].id);
-                continue;
-              }
-            }
-          }
-        }
-
-        if (squared) {
-          if (troop.order === "reform") this.desireOrder(sim, troop, null);
-          else if (troop.order === "charge" || troop.order === "halt"
-            || troop.order === "fallback" || troop.order === "retreat") {
-            this.desireOrder(sim, troop, null);
-          }
-        } else {
-          this.desireOrder(sim, troop, "reform");
-        }
-        busy.add(troop.id);
+      // Leave combat orders alone — Hard survival / charge owns those.
+      if (troop.order === "charge" || troop.order === "fallback"
+        || troop.order === "retreat") {
         continue;
       }
 
-      // Lone units only: unstack or step toward a partner. Never break a line.
+      const line = troop.lineGroup(units);
+      const inLine = line.length >= 2;
+
+      if (inLine) {
+        if (seenLine.has(line[0].id)) continue;
+        for (let g = 0; g < line.length; g += 1) seenLine.add(line[g].id);
+
+        // Still dressing: wait for finishReform → Halt.
+        if (line.some((u) => u.order === "reform")) {
+          for (let g = 0; g < line.length; g += 1) busy.add(line[g].id);
+          continue;
+        }
+        // After Reform (or melee leave) the line Halts — march together.
+        if (line.some((u) => u.order === "halt")) {
+          if (this.desireOrder(sim, line[0], null)) {
+            for (let g = 0; g < line.length; g += 1) busy.add(line[g].id);
+          }
+          continue;
+        }
+        // Formed and Advancing: keep going up the lane. No sideways shift,
+        // no re-Reform to dress — Advance owns fire-hold when squared.
+        continue;
+      }
+
+      // --- Lone units only below ---
+
       const mate = troop.sameRowMate(units);
       if (mate) {
-        // Prefer moving the unit that is not anchored to adjacent-row allies.
         const mateLine = mate.lineGroup(units);
+        // Prefer moving the unit that is not already in a real line.
         if (mateLine.length >= 2) {
-          // Mate is in a real line; peel this lone stacker only.
+          // Mate is anchored; peel this stacker.
         } else if (troop.id > mate.id) {
           continue;
         }
@@ -486,65 +483,34 @@ export class BotController {
         }
       }
 
-      // Can walk up into a line ahead: advance (do not reform).
+      // Walk up into a line ahead — stay on Advance.
       if (troop.canJoinLineAhead(units)) {
-        if (troop.order === "reform" || troop.order === "charge"
-          || troop.order === "halt" || troop.order === "fallback"
-          || troop.order === "retreat") {
-          this.desireOrder(sim, troop, null);
+        if (troop.order === "reform" || troop.order === "halt") {
+          if (this.desireOrder(sim, troop, null)) busy.add(troop.id);
         }
-        busy.add(troop.id);
         continue;
       }
 
-      // Someone same-type on an adjacent row behind: reform to square.
+      // Partner on an adjacent row behind: Reform so the rear can catch up.
+      // Same-speed Advance never closes that gap.
       const behind = troop.nextBehindOtherSublane(units);
       if (behind) {
-        this.desireOrder(sim, troop, "reform");
-        busy.add(troop.id);
+        if (troop.order === "reform") {
+          busy.add(troop.id);
+        } else if (this.desireOrder(sim, troop, "reform")) {
+          busy.add(troop.id);
+        }
         continue;
       }
 
+      // Partner ahead on an adjacent row: march (do not Reform from the rear).
       const ahead = troop.nextAheadOtherSublane(units);
       if (ahead) {
-        if (troop.order === "reform") this.desireOrder(sim, troop, null);
-        busy.add(troop.id);
+        if (troop.order === "reform" || troop.order === "halt") {
+          if (this.desireOrder(sim, troop, null)) busy.add(troop.id);
+        }
       }
     }
-  }
-
-  lineIsSquared(line) {
-    if (!line || line.length < 2) return false;
-    const lead = line[0];
-    for (let i = 1; i < line.length; i += 1) {
-      if (!lead.isParallelTo(line[i])) return false;
-    }
-    return true;
-  }
-
-  lineMiddleRow(line) {
-    let sum = 0;
-    for (let i = 0; i < line.length; i += 1) sum += line[i].sublane;
-    return sum / line.length;
-  }
-
-  /** Closest same-type unit that is not already in this line group. */
-  nearestOutsideLine(line, units) {
-    const inLine = {};
-    for (let i = 0; i < line.length; i += 1) inLine[line[i].id] = true;
-    let best = null;
-    let bestD = Infinity;
-    const anchor = line[0];
-    for (let i = 0; i < units.length; i += 1) {
-      const other = units[i];
-      if (inLine[other.id]) continue;
-      const d = dist(anchor, other);
-      if (d < bestD) {
-        bestD = d;
-        best = other;
-      }
-    }
-    return best;
   }
 
   nearestSameType(troop, units) {
@@ -584,72 +550,78 @@ export class BotController {
     return null;
   }
 
+  /**
+   * Keep cavalry with the infantry. Halt when they pull ahead — Reform
+   * would finish to Halt and re-trigger forever.
+   */
   leashCavalry(sim, self, foe) {
-    const range = CONFIG.dragoonSupportRange;
     for (let i = 0; i < self.troops.length; i += 1) {
       const troop = self.troops[i];
       if (troop.hp <= 0 || troop.broken || troop.type !== "dragoon") continue;
-      const allies = livingInLane(self, troop.lane);
-      const foes = livingInLane(foe, troop.lane);
-      const hasTroopNear = this.kindNear(troop, allies, "troop", range);
-      const hasTroopAhead = this.kindAhead(troop, allies, "troop");
-      // Do not wander alone past the infantry.
-      if (!hasTroopNear) {
-        this.desireOrder(sim, troop, "fallback");
-        continue;
-      }
-      // Charge when enemies are in reach — even with troops ahead.
-      if (this.enemyInEngage(troop, foes) || this.enemyNear(troop, foes, range)) {
-        this.desireOrder(sim, troop, "charge");
-        continue;
-      }
-      // No fight yet: stay behind the line, do not outrun infantry.
-      if (hasTroopAhead) {
-        this.desireOrder(sim, troop, null);
-        continue;
-      }
-      if (this.kindBehind(troop, allies, "troop", range)) {
-        this.desireOrder(sim, troop, "reform");
-        continue;
-      }
-      this.desireOrder(sim, troop, null);
+      this.applyCavalryLeash(sim, troop, self, foe);
     }
+  }
+
+  applyCavalryLeash(sim, troop, self, foe) {
+    const range = CONFIG.dragoonSupportRange;
+    const allies = livingInLane(self, troop.lane);
+    const foes = livingInLane(foe, troop.lane);
+    const hasInfNear = this.kindNear(troop, allies, "troop", range)
+      || this.kindNear(troop, allies, "skirmisher", range);
+    const hasInfAhead = this.kindAhead(troop, allies, "troop")
+      || this.kindAhead(troop, allies, "skirmisher");
+
+    if (!hasInfNear) {
+      this.desireOrder(sim, troop, "fallback");
+      return;
+    }
+    if (this.enemyInEngage(troop, foes) || this.enemyNear(troop, foes, range)) {
+      this.desireOrder(sim, troop, "charge");
+      return;
+    }
+    if (hasInfAhead) {
+      this.desireOrder(sim, troop, null);
+      return;
+    }
+    // Infantry is beside or behind: wait; do not Reform.
+    this.desireOrder(sim, troop, "halt");
   }
 
   // --- Orders: Hard ---
 
   hardOrders(sim, self, foe, desperate) {
-    const forming = this.formLines(sim, self, foe);
+    const busy = this.formLines(sim, self, foe);
     for (let i = 0; i < self.troops.length; i += 1) {
       const troop = self.troops[i];
       if (troop.hp <= 0 || troop.broken) continue;
-      // Line work wins over survival and type micro.
-      if (forming.has(troop.id)) continue;
+      if (busy.has(troop.id)) continue;
+
       if (!desperate && vitality(troop) < CONFIG.botSurvivalVitality) {
-        if (troop.order !== "fallback" && troop.order !== "retreat") {
-          this.desireOrder(sim, troop, troop.order === "halt" ? "fallback" : "halt");
-        }
+        this.desireOrder(sim, troop, "fallback");
         continue;
       }
+      // Hysteresis: only resume once clearly recovered, so vitality
+      // jitter around the threshold does not flip Fallback ↔ Advance.
+      if (!desperate && troop.order === "fallback"
+        && vitality(troop) >= CONFIG.botSurvivalVitality + 0.15) {
+        this.desireOrder(sim, troop, null);
+        continue;
+      }
+
       if (troop.type === "skirmisher") this.microSkirmisher(sim, troop, self, foe);
       else if (troop.type === "officer") this.microOfficer(sim, troop, self, foe);
-      else if (troop.type === "dragoon") this.microDragoon(sim, troop, self, foe);
+      else if (troop.type === "dragoon") this.applyCavalryLeash(sim, troop, self, foe);
       else if (troop.type === "cannon") this.microCannon(sim, troop, self, foe);
     }
   }
 
   microSkirmisher(sim, troop, self, foe) {
     const foes = livingInLane(foe, troop.lane);
-    const hasCavOrOff = foes.some((f) => f.type === "dragoon" || f.type === "officer");
-    const troopLine = foes.filter((f) => f.type === "troop").length >= 2;
-    const loneCav = foes.filter((f) => f.type === "dragoon").length === 1
-      && foes.filter((f) => f.type === "troop").length === 0;
-    if (troopLine || loneCav) {
+    const troopMass = foes.filter((f) => f.type === "troop").length;
+    // Keep distance from thick infantry; otherwise Advance (skirmishers
+    // may shoot Officers and reload while Falling Back only when needed).
+    if (troopMass >= 2) {
       this.desireOrder(sim, troop, "fallback");
-      return;
-    }
-    if (hasCavOrOff) {
-      this.desireOrder(sim, troop, null);
       return;
     }
     if (troop.order === "reform") return;
@@ -670,56 +642,34 @@ export class BotController {
       this.desireOrder(sim, troop, "fallback");
       return;
     }
+    const buffRange = unitStats("officer").buffRange || CONFIG.dragoonSupportRange;
     const nearAlly = allies.some((a) => a !== troop && a.type !== "officer"
-      && dist(troop, a) <= (unitStats("officer").buffRange || CONFIG.dragoonSupportRange));
-    if (!nearAlly) this.desireOrder(sim, troop, "fallback");
-    else if (troop.order === "fallback" || troop.order === "charge") {
-      this.desireOrder(sim, troop, null);
-    }
-  }
-
-  microDragoon(sim, troop, self, foe) {
-    const range = CONFIG.dragoonSupportRange;
-    const allies = livingInLane(self, troop.lane);
-    const foes = livingInLane(foe, troop.lane);
-    const hasTroopNear = this.kindNear(troop, allies, "troop", range)
-      || this.kindNear(troop, allies, "skirmisher", range);
-    const hasTroopAhead = this.kindAhead(troop, allies, "troop")
-      || this.kindAhead(troop, allies, "skirmisher");
-    if (!hasTroopNear) {
+      && dist(troop, a) <= buffRange);
+    if (!nearAlly) {
       this.desireOrder(sim, troop, "fallback");
       return;
     }
-    if (this.enemyInEngage(troop, foes) || this.enemyNear(troop, foes, range)) {
-      this.desireOrder(sim, troop, "charge");
-      return;
-    }
-    if (hasTroopAhead) {
+    if (troop.order === "fallback" || troop.order === "charge" || troop.order === "halt") {
       this.desireOrder(sim, troop, null);
-      return;
     }
-    if (this.kindBehind(troop, allies, "troop", range)
-      || this.kindBehind(troop, allies, "skirmisher", range)) {
-      this.desireOrder(sim, troop, "reform");
-      return;
-    }
-    this.desireOrder(sim, troop, null);
   }
 
   microCannon(sim, troop, self, foe) {
     const foes = livingInLane(foe, troop.lane);
-    const troopMass = foes.filter((f) => f.type === "troop").length;
     if (troop.order === "charge") {
-      this.desireOrder(sim, troop, "back");
+      this.desireOrder(sim, troop, null);
       return;
     }
+    const troopMass = foes.filter((f) => f.type === "troop").length;
     if (troopMass >= CONFIG.botCannonCluster) {
       if (troop.order === "fallback" || troop.order === "halt") {
         this.desireOrder(sim, troop, null);
       }
       return;
     }
-    if (foes.length === 0) this.desireOrder(sim, troop, null);
+    if (foes.length === 0 && (troop.order === "fallback" || troop.order === "halt")) {
+      this.desireOrder(sim, troop, null);
+    }
   }
 
   kindAhead(troop, allies, type) {
@@ -735,16 +685,6 @@ export class BotController {
     for (let i = 0; i < allies.length; i += 1) {
       const ally = allies[i];
       if (ally === troop || ally.type !== type) continue;
-      if (dist(troop, ally) <= range) return true;
-    }
-    return false;
-  }
-
-  kindBehind(troop, allies, type, range) {
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally === troop || ally.type !== type) continue;
-      if (troop.alongSigned(ally) >= 0) continue;
       if (dist(troop, ally) <= range) return true;
     }
     return false;

@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-09-29",
+    "title": "Unit, Unit Controls, and Unit Icons Rework",
+    "summary": "Unit names and controls have been updated to reflect the new unit types.",
+    "items": [
+      "Unit rules have changed.",
+      "Unit controls have been updated to be easier to use.",
+      "Unit names have been updated and icons have been added to buy buttons so you know what they are."
+    ]
+  },
+  {
     "date": "2026-09-26",
     "title": "Grand Strategy",
     "summary": "Per-lane fire priorities: Bastion, Attrition, and Terror.",

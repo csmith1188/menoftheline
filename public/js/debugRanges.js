@@ -7,19 +7,6 @@ export function debugRangesOn() {
   return typeof window !== "undefined" && window.DEBUG_RANGES === true;
 }
 
-let troopBuyBg = null;
-
-/** Troop buy-button art, only while debug mode is on. Null until the image is ready. */
-export function troopBuyBgImage() {
-  if (!debugRangesOn()) return null;
-  if (!troopBuyBg) {
-    troopBuyBg = new Image();
-    troopBuyBg.src = "/img/troop_red.svg";
-  }
-  if (!troopBuyBg.complete || troopBuyBg.naturalWidth <= 0) return null;
-  return troopBuyBg;
-}
-
 function laneTOf(troop) {
   return troop.side && troop.side.id === "player" ? troop.progress : 1 - troop.progress;
 }

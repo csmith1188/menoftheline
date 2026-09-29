@@ -141,14 +141,15 @@ export const Path = {
 
   /**
    * Along-lane window in this lane's station units.
-   * parallel: perfect line. line: in line. gun: next footprint within
-   * 3 paces of this footprint. Anything else: the two footprints overlap.
+   * Config paces are each side from a unit's center. Two units match when
+   * those reaches overlap, so parallel / line / block all use twice the
+   * config value (reach + reach). gun is both footprints plus a 3-pace gap.
    */
   stationSlack(lane, kind) {
     let paces = CONFIG.footprintPaces * 2;
-    if (kind === "parallel") paces = CONFIG.perfectLinePaces;
-    else if (kind === "line") paces = CONFIG.inLinePaces;
-    else if (kind === "gun") paces = CONFIG.footprintPaces * 3;
+    if (kind === "parallel") paces = CONFIG.perfectLinePaces * 2;
+    else if (kind === "line") paces = CONFIG.inLinePaces * 2;
+    else if (kind === "gun") paces = CONFIG.footprintPaces * 2 + 3;
     return paces * Path.stationPerPace(lane);
   },
 

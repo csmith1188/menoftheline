@@ -78,6 +78,10 @@ app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
 app.use(express.urlencoded({ extended: false }));
 app.use(sessionMiddleware);
+app.use((req, res, next) => {
+  res.locals.isAdmin = isAdmin(req.session);
+  next();
+});
 app.use("/shared", express.static(path.join(root, "shared")));
 app.use("/vendor/three", express.static(path.join(root, "node_modules", "three")));
 app.use(express.static(path.join(root, "public")));
@@ -132,28 +136,59 @@ async function playerFromSession(sess, options = {}) {
 
 const matchmaker = new Matchmaker(io);
 
-async function landingData(req) {
-  const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+function takeNotice(req) {
+  const notice = req.session.notice || null;
+  if (req.session.notice) req.session.notice = null;
+  return notice;
+}
+
+async function pageViewer(req) {
+  return req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+}
+
+async function homeData(req) {
+  return {
+    nav: "home",
+    viewer: await pageViewer(req),
+    news: loadNews(),
+    notice: takeNotice(req),
+  };
+}
+
+async function gamesData(req) {
+  const viewer = await pageViewer(req);
   const player = await playerFromSession(req.session, { createGuest: false });
   const rejoin = player ? matchmaker.isBusy(player.id) : false;
   const pack = ticketPack();
-  let admin = null;
-  if (isAdmin(req.session)) {
-    const stats = await systemStats();
-    const games = matchmaker.listActive();
-    admin = { games, stats: { ...stats, active: games.length } };
-  }
   return {
+    nav: "games",
     viewer,
     rejoin,
     canTicket: Boolean(viewer && viewer.tickets > viewer.held && !rejoin),
     lobbies: matchmaker.listLobbies(),
-    leaders: await topAccounts(10),
-    news: loadNews(),
-    admin,
     packSize: pack.size,
     packCost: pack.cost,
-    notice: null,
+    notice: takeNotice(req),
+  };
+}
+
+async function scoresData(req) {
+  return {
+    nav: "scores",
+    viewer: await pageViewer(req),
+    leaders: await topAccounts(10),
+    notice: takeNotice(req),
+  };
+}
+
+async function adminData(req) {
+  const stats = await systemStats();
+  const games = matchmaker.listActive();
+  return {
+    nav: "admin",
+    viewer: await pageViewer(req),
+    admin: { games, stats: { ...stats, active: games.length } },
+    notice: takeNotice(req),
   };
 }
 
@@ -190,11 +225,39 @@ app.get("/logout", (req, res) => {
 
 app.get("/", async (req, res, next) => {
   try {
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
-    const data = await landingData(req);
-    data.notice = notice;
+    const data = await homeData(req);
     req.session.save(() => res.render("landing", data));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/games", async (req, res, next) => {
+  try {
+    const data = await gamesData(req);
+    req.session.save(() => res.render("games", data));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/scores", async (req, res, next) => {
+  try {
+    const data = await scoresData(req);
+    req.session.save(() => res.render("scores", data));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/admin", async (req, res, next) => {
+  try {
+    if (!isAdmin(req.session)) {
+      res.redirect("/");
+      return;
+    }
+    const data = await adminData(req);
+    req.session.save(() => res.render("admin", data));
   } catch (err) {
     next(err);
   }
@@ -202,17 +265,15 @@ app.get("/", async (req, res, next) => {
 
 app.get("/profile/:id", async (req, res, next) => {
   try {
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
     const id = Number(req.params.id);
     const account = Number.isInteger(id) && id > 0 ? await getAccount(id) : null;
-    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+    const viewer = await pageViewer(req);
     const pack = ticketPack();
     const body = {
       account,
       viewer,
       isOwner: Boolean(account && viewer && account.formbar_id === viewer.formbar_id),
-      notice,
+      notice: takeNotice(req),
       packSize: pack.size,
       packCost: pack.cost,
     };
@@ -308,12 +369,11 @@ app.get("/admin/suggestions", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
+    const viewer = await pageViewer(req);
+    const notice = takeNotice(req);
     const suggestions = await listSuggestions({ archived: false });
     req.session.save(() => {
-      res.render("admin-suggestions", { viewer, notice, suggestions });
+      res.render("admin-suggestions", { nav: "admin", viewer, notice, suggestions });
     });
   } catch (err) {
     next(err);
@@ -351,9 +411,8 @@ function titleFromSlug(slug) {
 
 async function renderWikiView(req, res, slugParam) {
   const slug = wikiSlug(slugParam || "home");
-  const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
-  const notice = req.session.notice || null;
-  if (req.session.notice) req.session.notice = null;
+  const viewer = await pageViewer(req);
+  const notice = takeNotice(req);
   const canEdit = await viewerCanEditWiki(req.session);
   const found = await getWikiPageBySlug(slug);
   const slugs = await listWikiSlugs();
@@ -363,6 +422,7 @@ async function renderWikiView(req, res, slugParam) {
     : "";
   req.session.save(() => {
     res.render("rules", {
+      nav: "rules",
       viewer,
       notice,
       canEdit,
@@ -381,9 +441,8 @@ app.get("/admin/wiki", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
+    const viewer = await pageViewer(req);
+    const notice = takeNotice(req);
     const revisions = (await listOpenWikiRevisions()).map((item) => ({
       ...item,
       isCreate: item.previous_body == null,
@@ -391,6 +450,7 @@ app.get("/admin/wiki", async (req, res, next) => {
     }));
     req.session.save(() => {
       res.render("admin-wiki", {
+        nav: "admin",
         viewer,
         notice,
         revisions,
@@ -486,7 +546,7 @@ async function startPlay(req, res, next, intent) {
     }
     const player = await playerFromSession(req.session, { createGuest: !paid });
     if (!player) {
-      res.redirect("/");
+      res.redirect("/games");
       return;
     }
     if (matchmaker.isBusy(player.id)) {
@@ -497,7 +557,7 @@ async function startPlay(req, res, next, intent) {
       const account = await getAccount(req.session.formbarId);
       if (!account || account.tickets <= account.held) {
         req.session.notice = "You need a free ticket.";
-        req.session.save(() => res.redirect("/"));
+        req.session.save(() => res.redirect("/games"));
         return;
       }
     }
@@ -505,7 +565,7 @@ async function startPlay(req, res, next, intent) {
       const room = matchmaker.openLobby(intent.roomId);
       if (!room) {
         req.session.notice = "That game is no longer open.";
-        req.session.save(() => res.redirect("/"));
+        req.session.save(() => res.redirect("/games"));
         return;
       }
       if (room.seat.a.userId === player.id) {
@@ -527,7 +587,7 @@ async function startPlay(req, res, next, intent) {
 app.post("/play/bot", (req, res, next) => startPlay(req, res, next, { mode: "bot" }));
 app.post("/play/bot3d", (req, res, next) => {
   if (!isAdmin(req.session)) {
-    res.redirect("/");
+    res.redirect("/games");
     return;
   }
   startPlay(req, res, next, { mode: "bot", view: "3d" });
@@ -541,13 +601,12 @@ app.post("/play/join/:id", (req, res, next) => {
 
 app.get("/rules", async (req, res, next) => {
   try {
-    const viewer = req.session.formbarId ? await getAccount(req.session.formbarId) : null;
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
+    const viewer = await pageViewer(req);
+    const notice = takeNotice(req);
     const canEdit = await viewerCanEditWiki(req.session);
     const pages = await listWikiPages();
     req.session.save(() => {
-      res.render("wiki-index", { viewer, notice, canEdit, pages });
+      res.render("wiki-index", { nav: "rules", viewer, notice, canEdit, pages });
     });
   } catch (err) {
     next(err);
@@ -567,11 +626,11 @@ app.get("/rules/:slug/edit", async (req, res, next) => {
     }
     const slug = wikiSlug(req.params.slug);
     const viewer = await getAccount(req.session.formbarId);
-    const notice = req.session.notice || null;
-    if (req.session.notice) req.session.notice = null;
+    const notice = takeNotice(req);
     const found = await getWikiPageBySlug(slug);
     req.session.save(() => {
       res.render("wiki-edit", {
+        nav: "rules",
         viewer,
         notice,
         slug,
@@ -640,7 +699,7 @@ app.get("/play", async (req, res, next) => {
     const player = await playerFromSession(req.session, { createGuest: false });
     const busy = player && matchmaker.isBusy(player.id);
     if (!player || (!req.session.intent && !busy)) {
-      res.redirect("/");
+      res.redirect("/games");
       return;
     }
     const intent = req.session.intent;

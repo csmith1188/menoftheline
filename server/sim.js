@@ -250,6 +250,8 @@ class Unit {
     this.switchEscape = false;
     this.switchEaseDir = 0;
     this.playerSwitch = false;
+    /** After Reform-from-switch finishes, step this many rows (−1 or +1). */
+    this.pendingSwitchDir = null;
     this.wasInMelee = false;
     this.orderHeld = false;
     this.heldOrder = null;
@@ -361,7 +363,10 @@ class Unit {
     this.squared = false;
     this.order = next;
     this.reformNeedsAlign = next === "reform";
-    if (next !== "reform") this.priorOrder = null;
+    if (next !== "reform") {
+      this.priorOrder = null;
+      this.pendingSwitchDir = null;
+    }
     if (next === "retreat" || next === "fallback" || next === "charge" || next === "halt" || next === null) {
       this.switch = null;
       this.switchEscape = false;
@@ -395,7 +400,8 @@ class Unit {
 
   /**
    * Left-click while selected: enter reform, remembering the prior order.
-   * Broken units ignore it. Melee units reform alone.
+   * Broken units ignore it. Melee units reform alone. Recruit uses the
+   * reform seek chain, not the combat In-Line group.
    */
   issueReform(allies, enemies, solo) {
     if (this.broken) {
@@ -403,10 +409,11 @@ class Unit {
     }
     if (this.order === "reform") return;
     const forceSolo = Boolean(solo) || this.isInMelee(enemies);
-    const group = this.orderGroup(allies, forceSolo, enemies);
+    const group = forceSolo ? [this] : this.reformSeekGroup(allies);
     const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken || group[i].order === "reform") continue;
+      if (enemies && group[i] !== this && group[i].isInMelee(enemies)) continue;
       group[i].priorOrder = group[i].orderHeld ? group[i].heldOrder : group[i].order;
       group[i].commitOrder("reform", enemies);
       group[i].priorOrder = group[i].priorOrder;
@@ -526,7 +533,7 @@ class Unit {
     const allies = this.side ? this.side.troops : [];
     const mate = this.lineMateOnRow(next, allies);
     if (mate) {
-      this.reformUnits([this, mate]);
+      this.reformUnits(this.reformSeekGroup(allies));
       return;
     }
     this.switch = next;
@@ -537,30 +544,55 @@ class Unit {
   }
 
   /**
-   * Hidden switch for a line: each member steps one adjacent row.
-   * The line stays put when any member who can switch would leave the
-   * lane, and a unit in melee cannot start the shift.
+   * Hidden switch for a line. Only allowed when the touched unit's next
+   * row in the swipe direction has no overlapping matching unit. Swiping
+   * into a same-line (or any In-Line matching) neighbor Reforms only. A
+   * clear swipe on a staggered line Reforms then switches; a squared line
+   * switches immediately.
    */
   issueLineSwitch(dir, allies) {
     if (this.switchBlocked() || (dir !== 1 && dir !== -1)) return;
     const foes = this.enemyTroops();
     if (foes && this.isInMelee(foes)) return;
-    const group = this.lineGroup(allies);
-    if (group.length >= 2 && !this.lineIsSquare(group)) {
-      this.reformUnits(group);
-      return;
-    }
+    const seekers = this.reformSeekGroup(allies);
     const mate = this.lineMateOnRow(this.sublane + dir, allies);
-    if (mate && group.indexOf(mate) < 0) {
-      this.startReform(allies, false, foes);
+
+    // Into an overlapping matching unit: Reform only, never queue a switch.
+    if (mate) {
+      if (seekers.length >= 2 && !this.lineIsSquare(seekers)) {
+        for (let i = 0; i < seekers.length; i += 1) {
+          seekers[i].pendingSwitchDir = null;
+        }
+        this.reformUnits(seekers);
+      }
       return;
     }
+
+    // Adjacent row clear: switch, squaring first when needed.
+    if (seekers.length >= 2 && !this.lineIsSquare(seekers)) {
+      for (let i = 0; i < seekers.length; i += 1) {
+        seekers[i].pendingSwitchDir = dir;
+      }
+      this.reformUnits(seekers);
+      return;
+    }
+    const group = this.lineGroup(allies);
+    this.applyLineSwitch(dir, group.length >= 1 ? group : [this], foes);
+  }
+
+  /**
+   * Commit a one-row shift for every eligible member. Aborts the whole
+   * move when any eligible member would leave the lane.
+   */
+  applyLineSwitch(dir, group, foes) {
+    if (dir !== 1 && dir !== -1 || !group || group.length < 1) return;
     const count = Path.sublaneCount(this.lane);
+    const enemies = foes || this.enemyTroops();
     const movers = [];
     for (let i = 0; i < group.length; i += 1) {
       const member = group[i];
       if (member.switchBlocked()) continue;
-      if (foes && member.isInMelee(foes)) continue;
+      if (enemies && member.isInMelee(enemies)) continue;
       const next = member.sublane + dir;
       if (next < 0 || next >= count) return;
       movers.push(member);
@@ -571,10 +603,11 @@ class Unit {
       movers[i].switchEaseDir = 0;
       movers[i].playerSwitch = true;
       movers[i].squared = false;
+      movers[i].pendingSwitchDir = null;
     }
   }
 
-  /** Square these units, and cancel any row switch they were about to make. */
+  /** Square these units. Keeps pendingSwitchDir so a queued row shift can run after. */
   reformUnits(units) {
     for (let i = 0; i < units.length; i += 1) {
       const unit = units[i];
@@ -590,13 +623,17 @@ class Unit {
     }
   }
 
-  /** Put this line on reform without cycling through halt. */
+  /**
+   * Put the reform-seek column on reform without cycling through halt.
+   * Does not absorb orders later by walking into parallel.
+   */
   startReform(allies, solo, enemies) {
     const forceSolo = Boolean(solo) || Boolean(enemies && this.isInMelee(enemies));
-    const group = this.orderGroup(allies, forceSolo, enemies);
+    const group = forceSolo ? [this] : this.reformSeekGroup(allies);
     const lock = forceSolo;
     for (let i = 0; i < group.length; i += 1) {
       if (group[i].broken) continue;
+      if (enemies && group[i] !== this && group[i].isInMelee(enemies)) continue;
       group[i].priorOrder = group[i].order;
       group[i].order = "reform";
       group[i].squared = false;
@@ -913,107 +950,14 @@ class Unit {
   }
 
   /**
-   * An advancing troop that becomes perfectly parallel with another
-   * absorbs that troop or line's order, if that line still has an open
-   * row. Chargers do not pass charge to anyone they line up with, and
-   * they do not absorb others' orders. A retreat stays with the unit
-   * that was given it. A full line neither takes an outsider's order
-   * nor hands its own order on.
+   * Order absorb-by-lining-up is disabled. Orders spread only when the
+   * player/bot issues one to a combat line, or when Reform's initial
+   * seek recruits a column.
    */
-  tryJoinAhead(allies) {
-    if (this.ignoreLineOrders) {
-      return;
-    }
-    if (this.broken || this.order === "charge" || this.order === "fallback"
-      || this.order === "retreat" || this.isInMelee(this.enemyTroops())) {
-      return;
-    }
-    const foes = this.enemyTroops();
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane || ally.isInMelee(foes)) {
-        continue;
-      }
-      if (!this.adjacentRow(ally)) {
-        continue;
-      }
-      if (!this.sameLineType(ally)) {
-        continue;
-      }
-      // Charge never spreads by lining up.
-      if (!ally.order || ally.order === "fallback" || ally.order === "retreat"
-        || ally.order === "charge") {
-        continue;
-      }
-      if (this.order === ally.order) {
-        continue;
-      }
-      if (!this.isParallelTo(ally)) {
-        continue;
-      }
-      if (this.alongSigned(ally) < -this.stationSlack("parallel")) {
-        continue;
-      }
-      if (!this.canPassLineOrder(ally, allies)) {
-        continue;
-      }
-      if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this)) {
-        continue;
-      }
-      if (!this.canTakeLineOrder(ally, allies)) {
-        continue;
-      }
-      const group = this.lineGroup(allies);
-      for (let g = 0; g < group.length; g += 1) {
-        const member = group[g];
-        if (member.broken || member.isInMelee(foes) || member.ignoreLineOrders) continue;
-        if (member !== this && member.rankIsFull(allies, ally)) {
-          continue;
-        }
-        member.order = ally.order;
-        member.reformNeedsAlign = ally.reformNeedsAlign;
-      }
-      return;
-    }
-  }
+  tryJoinAhead(_allies) {}
 
-  /**
-   * A unit that reaches a reforming line from behind takes that order,
-   * unless that line is already full. Charge and fallback are left alone.
-   * Perfectly beside an open line is handled by tryJoinAhead.
-   */
-  takeReformFromBehind(allies) {
-    if (this.ignoreLineOrders) {
-      return;
-    }
-    if (this.broken || this.order === "charge" || this.order === "fallback"
-      || this.order === "retreat" || this.order === "reform") {
-      return;
-    }
-    const beside = this.stationSlack("parallel");
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally === this || ally.hp <= 0 || ally.order !== "reform") {
-        continue;
-      }
-      if (ally.lane !== this.lane || !this.sameLineType(ally) || !this.adjacentRow(ally)) {
-        continue;
-      }
-      const along = this.alongSigned(ally);
-      if (along <= beside || !this.withinLine(ally)) {
-        continue;
-      }
-      if (!this.canPassLineOrder(ally, allies)) {
-        continue;
-      }
-      if (this.rankIsFull(allies, ally) || ally.rankIsFull(allies, this) || !this.canTakeLineOrder(ally, allies)) {
-        continue;
-      }
-      this.order = "reform";
-      this.reformNeedsAlign = true;
-      return;
-    }
-  }
+  /** See tryJoinAhead: no mid-walk reform absorb. */
+  takeReformFromBehind(_allies) {}
 
   /**
    * Enemy this troop is touching, or standing against at the body edge.
@@ -1158,10 +1102,28 @@ class Unit {
   }
 
   /**
-   * Same-type reforming neighbors on adjacent rows, even when a stagger
-   * is wider than the combat line window. An empty row still splits them.
+   * Same-type neighbors on adjacent rows within In Line for Reform's
+   * initial recruit. An empty row still splits them. Order passing does
+   * not use this after the reform has started.
+   */
+  reformSeekGroup(allies) {
+    return this.reformChain(allies, null);
+  }
+
+  /**
+   * Same-type reforming neighbors on adjacent rows that are still In Line.
+   * An empty row still splits them.
    */
   reformFormation(allies) {
+    return this.reformChain(allies, "reform");
+  }
+
+  /**
+   * Adjacent-row same-type chain within In Line. When onlyOrder is set,
+   * only units on that order join (active reform formation). When null,
+   * any living unit joins (initial reform seek).
+   */
+  reformChain(allies, onlyOrder) {
     const cap = Path.sublaneCount(this.lane);
     const group = [this];
     const seen = {};
@@ -1178,10 +1140,16 @@ class Unit {
           if (seen[ally.id] || ally.hp <= 0 || usedRow[ally.sublane]) {
             continue;
           }
-          if (ally.broken || ally.lane !== this.lane || ally.order !== "reform") {
+          if (ally.broken || ally.lane !== this.lane) {
+            continue;
+          }
+          if (onlyOrder != null && ally.order !== onlyOrder) {
             continue;
           }
           if (!member.sameLineType(ally) || !member.adjacentRow(ally)) {
+            continue;
+          }
+          if (!member.withinLine(ally)) {
             continue;
           }
           seen[ally.id] = true;
@@ -1198,25 +1166,26 @@ class Unit {
   }
 
   /**
-   * While a reforming formation is staggered, units already at the
-   * front station wait. Rear units walk up. A perfect line does not wait.
+   * While a reforming formation is staggered, the furthest-forward unit
+   * holds. Everyone else walks until they match that unit's progress,
+   * then holds. Perfect Line / station windows alone left the head ahead.
    */
   reformShouldStop(allies) {
     if (this.order !== "reform") {
       return false;
     }
-    const foes = this.enemyTroops();
-    const formation = this.reformFormation(allies).filter((unit) => !unit.isInMelee(foes));
+    const formation = this.reformBody(allies);
     if (formation.length < 2) {
       return false;
     }
-    const front = this.sortRearToFront(formation)[formation.length - 1];
-    for (let i = 0; i < formation.length; i += 1) {
-      if (!formation[i].isParallelTo(front)) {
-        return this.isParallelTo(front);
-      }
+    if (this.reformFormationSquare(formation)) {
+      return false;
     }
-    return false;
+    const front = this.reformFrontOf(formation);
+    if (this === front) {
+      return true;
+    }
+    return this.progress >= front.progress;
   }
 
   /** True when every unit in the group is in perfect line with the front. */
@@ -1229,35 +1198,64 @@ class Unit {
     return true;
   }
 
-  /** True when every reforming neighbor sits in perfect line with the front. */
+  /**
+   * True when every reformer has matched the front's progress. A lone
+   * reformer only finishes if no adjacent same-type unit remains.
+   */
   reformIsSquare(allies) {
     if (this.order !== "reform") return false;
+    const formation = this.reformBody(allies);
+    if (formation.length < 2) {
+      return this.reformSeekGroup(allies).length < 2;
+    }
+    return this.reformFormationSquare(formation);
+  }
+
+  /** Living non-melee members of the active reform chain. */
+  reformBody(allies) {
     const foes = this.enemyTroops();
-    const formation = this.reformFormation(allies).filter((unit) => !unit.isInMelee(foes));
-    if (formation.length < 2) return true;
-    const front = this.sortRearToFront(formation)[formation.length - 1];
+    return this.reformFormation(allies).filter((unit) => !unit.isInMelee(foes));
+  }
+
+  /** Done when every member has walked up to the front's progress. */
+  reformFormationSquare(formation) {
+    if (!formation || formation.length < 2) return false;
+    const front = this.reformFrontOf(formation);
     for (let i = 0; i < formation.length; i += 1) {
-      if (!formation[i].isParallelTo(front)) return false;
+      if (formation[i].progress < front.progress) return false;
     }
     return true;
   }
 
-  /**
-   * An advancing unit that cannot shoot yet stops once it is in perfect
-   * line with the furthest-ahead member of its line.
-   */
-  advanceCaughtUp(allies, enemies, enemySide) {
-    if (this.order != null) return false;
-    if (this.nearestTarget(enemies, this.shootRange(), allies, enemySide)) return false;
-    const line = this.lineGroup(allies);
-    if (line.length < 2) return false;
-    let someoneAhead = false;
-    for (let i = 0; i < line.length; i += 1) {
-      if (line[i] !== this && this.alongSigned(line[i]) > 0) someoneAhead = true;
+  /** Furthest along its own path in this formation. */
+  reformFrontOf(formation) {
+    let front = formation[0];
+    for (let i = 1; i < formation.length; i += 1) {
+      if (formation[i].progress > front.progress) front = formation[i];
     }
-    if (!someoneAhead) return false;
-    const front = this.sortRearToFront(line)[line.length - 1];
-    return this.isParallelTo(front);
+    return front;
+  }
+
+  /** Halt the whole reforming body together, then run any queued row shift. */
+  finishReform(allies) {
+    const formation = this.reformBody(allies);
+    const units = formation.length > 0 ? formation : [this];
+    let pendingDir = null;
+    for (let i = 0; i < units.length; i += 1) {
+      const unit = units[i];
+      if (unit.pendingSwitchDir === 1 || unit.pendingSwitchDir === -1) {
+        pendingDir = unit.pendingSwitchDir;
+      }
+      unit.order = "halt";
+      unit.squared = true;
+      unit.reformNeedsAlign = false;
+      unit.priorOrder = null;
+      unit.reformHold = false;
+      unit.pendingSwitchDir = null;
+    }
+    if (pendingDir) {
+      this.applyLineSwitch(pendingDir, units, this.enemyTroops());
+    }
   }
 
   /**
@@ -1421,6 +1419,8 @@ class Unit {
     this.switch = null;
     this.switchEscape = false;
     this.switchEaseDir = 0;
+    this.playerSwitch = false;
+    this.pendingSwitchDir = null;
     this.orderHeld = false;
     this.heldOrder = null;
     this.fallbackLeavesMelee = false;
@@ -1469,11 +1469,20 @@ class Unit {
 
   /** True when this reforming unit is the furthest back in its formation. */
   reformIsRearmost(allies) {
-    const foes = this.enemyTroops();
-    const formation = this.reformFormation(allies).filter((unit) => !unit.isInMelee(foes));
+    const formation = this.reformBody(allies);
     if (formation.length < 2) return true;
-    const rear = this.sortRearToFront(formation)[0];
+    let rear = formation[0];
+    for (let i = 1; i < formation.length; i += 1) {
+      if (formation[i].progress < rear.progress) rear = formation[i];
+    }
     return rear === this;
+  }
+
+  /** Furthest-forward living reformer in this formation, or this unit. */
+  reformFront(allies) {
+    const formation = this.reformBody(allies);
+    if (formation.length < 1) return this;
+    return this.reformFrontOf(formation);
   }
 
   /** Firing range for this unit. */
@@ -2214,6 +2223,59 @@ class Unit {
     return null;
   }
 
+  /**
+   * Other units in this player line-switch: same line, same shift
+   * direction, still carrying a row goal.
+   */
+  lineSwitchPeers(allies) {
+    if (!this.playerSwitch || this.switch == null) {
+      return [this];
+    }
+    const myDir = Math.sign(this.switch - this.sublane);
+    const seed = this.lineGroup(allies);
+    const group = seed.length >= 2 ? seed : this.reformSeekGroup(allies);
+    const peers = [];
+    for (let i = 0; i < group.length; i += 1) {
+      const unit = group[i];
+      if (!unit.playerSwitch || unit.switch == null) continue;
+      const dir = Math.sign(unit.switch - unit.sublane);
+      if (myDir !== 0 && dir !== 0 && dir !== myDir) continue;
+      peers.push(unit);
+    }
+    if (peers.indexOf(this) < 0) {
+      peers.push(this);
+    }
+    return peers;
+  }
+
+  /**
+   * When any peer cannot enter its next row because of a foreign blocker,
+   * the whole line eases that peer's clear direction together. 0 if every
+   * peer is free to step (or only blocked by fellow shifters).
+   */
+  lineSwitchSharedEaseDir(allies, enemies) {
+    const peers = this.lineSwitchPeers(allies);
+    if (peers.length < 2) {
+      return 0;
+    }
+    for (let i = 0; i < peers.length; i += 1) {
+      const unit = peers[i];
+      if (unit.switch == null || unit.switch === unit.sublane) continue;
+      const step = Math.sign(unit.switch - unit.sublane);
+      if (step === 0) continue;
+      const next = unit.sublane + step;
+      const dest = Path.pointAt(Path.waypoints(unit.side.id, unit.lane, next), unit.progress);
+      if (unit.overlapsEnemyAt(dest.x, dest.y, enemies)) {
+        continue;
+      }
+      const blocker = unit.blockGapCollidableInSublane(next, allies);
+      if (!blocker) continue;
+      if (peers.indexOf(blocker) >= 0 && blocker.playerSwitch) continue;
+      return unit.alongSigned(blocker) < 0 ? 1 : -1;
+    }
+    return 0;
+  }
+
   tryEnterOrEaseAdjacent(dt, allies, enemies, next, commitGoal) {
     if (next === this.sublane) {
       return false;
@@ -2222,14 +2284,40 @@ class Unit {
       this.switch = commitGoal;
       this.switchEscape = Math.abs(commitGoal - this.sublane) > 1;
     }
-    if (this.playerSwitch && commitGoal != null && Math.abs(next - this.sublane) === 1
-      && this.lineMateOnRow(next, allies)) {
-      this.playerSwitch = false;
-      this.switch = null;
-      this.switchEscape = false;
-      this.switchEaseDir = 0;
-      this.startReform(allies, this.ignoreLineOrders, enemies);
-      return true;
+    if (this.playerSwitch && commitGoal != null) {
+      // One end clearing a foreign blocker: whole line eases with it until
+      // that row opens, then everyone steps together.
+      const sharedEase = this.lineSwitchSharedEaseDir(allies, enemies);
+      if (sharedEase) {
+        this.switchEaseDir = sharedEase;
+        return this.easeAlong(dt, allies, enemies, sharedEase, true);
+      }
+    }
+    if (this.playerSwitch && commitGoal != null && Math.abs(next - this.sublane) === 1) {
+      const mate = this.lineMateOnRow(next, allies);
+      const dir = Math.sign(commitGoal - this.sublane);
+      // Whole line shifting together: the unit already on the next row is
+      // also moving the same way — do not abort into Reform, and allow
+      // entry even while they still occupy that row this tick.
+      const mateAlsoShifting = mate && mate.playerSwitch
+        && (mate.switch === mate.sublane + dir || mate.switch === commitGoal + dir);
+      if (mate && !mateAlsoShifting) {
+        this.playerSwitch = false;
+        this.switch = null;
+        this.switchEscape = false;
+        this.switchEaseDir = 0;
+        this.startReform(allies, this.ignoreLineOrders, enemies);
+        return true;
+      }
+      if (mateAlsoShifting) {
+        const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, next), this.progress);
+        if (!this.overlapsEnemyAt(dest.x, dest.y, enemies)) {
+          this.switchEaseDir = 0;
+          this.enterSublane(next, enemies);
+          this.strafe(dt, enemies, allies);
+          return true;
+        }
+      }
     }
     if (this.canEnterSublane(next, allies, enemies)) {
       this.switchEaseDir = 0;
@@ -2647,10 +2735,7 @@ class Unit {
 
     if (this.order === "reform") {
       if (this.reformIsSquare(allies)) {
-        this.order = "halt";
-        this.squared = true;
-        this.reformNeedsAlign = false;
-        this.priorOrder = null;
+        this.finishReform(allies);
         return;
       }
       if (laneMove === "waiting" || this.reformHold) {
@@ -2668,7 +2753,12 @@ class Unit {
         return;
       }
       const reformSpeed = this.marchSpeed(allies);
-      const reformProgress = Math.min(1, this.progress + this.alongDelta(reformSpeed, dt));
+      let reformProgress = Math.min(1, this.progress + this.alongDelta(reformSpeed, dt));
+      // Do not walk past the holding front (that would make a new head).
+      const front = this.reformFront(allies);
+      if (front && front !== this && reformProgress > front.progress) {
+        reformProgress = front.progress;
+      }
       const reformNext = Path.pointAt(this.points, reformProgress);
       if (this.overlapsEnemyAt(reformNext.x, reformNext.y, enemies)) {
         return;
@@ -2702,10 +2792,6 @@ class Unit {
     }
     if (blocked) {
       this.pursueSublaneChange(dt, allies, enemies);
-      return;
-    }
-
-    if (this.advanceCaughtUp(allies, enemies, enemySide)) {
       return;
     }
 

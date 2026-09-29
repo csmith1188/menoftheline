@@ -796,7 +796,7 @@ export const boardStateMethods = {
     return troop;
   },
 
-  announceOrder(troop, action) {
+  announceOrder(troop, action, dir) {
     if (troop) {
       this.inspectedId = troop.id;
       if (this.isTroopInMelee(troop)) this.inspectedSolo = true;
@@ -810,7 +810,7 @@ export const boardStateMethods = {
     if (action === "back" && troop && this.enemy) {
       troop.inMelee = inMeleeContact(troop, this.enemy.troops);
     }
-    const shown = this.switchAnnouncement(troop, action) || orderAnnouncement(troop, action);
+    const shown = this.switchAnnouncement(troop, action, dir) || orderAnnouncement(troop, action);
     if (!shown) return;
     this.orderCallout = {
       text: shown.text,
@@ -820,13 +820,18 @@ export const boardStateMethods = {
   },
 
   /**
-   * A row switch on a line that is not yet in perfect line is a Reform.
-   * A squared line, or a long-pressed unit, still switches rows.
+   * Swipe into an overlapping matching neighbor → Reform only.
+   * Clear swipe on a staggered line → Reform (then switch). Squared clear → Switch.
    */
-  switchAnnouncement(troop, action) {
+  switchAnnouncement(troop, action, dir) {
     if (action !== "switch" && action !== "shift" && action !== "lane") return null;
     if (!troop || this.inspectedSolo || !troop.side) return null;
-    const group = lineGroup(troop, troop.side.troops);
+    const allies = troop.side.troops;
+    if (dir === 1 || dir === -1) {
+      const mate = lineMateOnRow(troop, troop.sublane + dir, allies);
+      if (mate) return { text: "Reform", color: CONFIG.colors.reform };
+    }
+    const group = reformSeekGroup(troop, allies);
     if (group.length < 2 || lineIsPerfect(group)) return null;
     return { text: "Reform", color: CONFIG.colors.reform };
   },
@@ -882,6 +887,19 @@ function inLineWith(member, ally) {
   return Math.abs(troopStation(member) - troopStation(ally)) <= lineSlack(member);
 }
 
+/** Same-type In-Line friendly on this row, if any. */
+function lineMateOnRow(troop, sublane, allies) {
+  for (let i = 0; i < allies.length; i += 1) {
+    const ally = allies[i];
+    if (ally === troop || ally.hp <= 0 || ally.broken) continue;
+    if (ally.lane !== troop.lane || ally.sublane !== sublane) continue;
+    if (ally.type !== troop.type) continue;
+    if (Math.abs(troopStation(troop) - troopStation(ally)) > lineSlack(troop)) continue;
+    return ally;
+  }
+  return null;
+}
+
 /** Same adjacent-row grouping the sim uses for line damage. */
 function lineGroup(troop, allies) {
   const cap = Path.sublaneCount(troop.lane);
@@ -913,6 +931,37 @@ function lineGroup(troop, allies) {
       usedRow[best.sublane] = true;
       group.push(best);
       added = true;
+    }
+  }
+  return group;
+}
+
+/**
+ * Reform's initial recruit: adjacent same-type chain within In Line.
+ * Matches server reformSeekGroup.
+ */
+function reformSeekGroup(troop, allies) {
+  const cap = Path.sublaneCount(troop.lane);
+  const group = [troop];
+  const seen = {};
+  const usedRow = {};
+  seen[troop.id] = true;
+  usedRow[troop.sublane] = true;
+  let added = true;
+  while (added && group.length < cap) {
+    added = false;
+    for (let i = 0; i < group.length && group.length < cap; i += 1) {
+      const member = group[i];
+      for (let j = 0; j < allies.length; j += 1) {
+        const ally = allies[j];
+        if (seen[ally.id] || ally.hp <= 0 || usedRow[ally.sublane]) continue;
+        if (ally.broken || !inLineWith(member, ally)) continue;
+        seen[ally.id] = true;
+        usedRow[ally.sublane] = true;
+        group.push(ally);
+        added = true;
+        if (group.length >= cap) break;
+      }
     }
   }
   return group;

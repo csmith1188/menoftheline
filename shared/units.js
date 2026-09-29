@@ -296,15 +296,15 @@ export const VARIANT_OF_BASE = Object.fromEntries(
 /** Short labels for buy buttons and inspect text. */
 export const UNIT_LABELS = {
   troop: "Troop",
-  skirmisher: "Skirmish",
+  skirmisher: "Skirmisher",
   dragoon: "Dragoon",
-  cannon: "Cannon",
+  cannon: "Gun",
   officer: "Officer",
   grenadier: "Grenadier",
-  rifle: "Rifle",
+  rifle: "Rifles",
   lancer: "Lancer",
   howitzer: "Howitzer",
-  colorGuard: "Color",
+  colorGuard: "Color Guard",
 };
 /** Lane-buy catalog drawn on the canvas (base units only). */
 export const BUY_UNITS = [

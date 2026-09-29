@@ -146,12 +146,12 @@ export const CONFIG = {
   topLanePaces: 1000,
   /** Gameplay length of the bottom lane, in paces. The arc is only how it is drawn. */
   bottomLanePaces: 1500,
-  /** Along-lane gap still treated as a perfect line, in paces. */
-  perfectLinePaces: 3,
-  /** Along-lane gap that still counts as one line, in paces. */
-  inLinePaces: 6,
-  /** How far a footprint extends each way from a unit's center, in paces. */
-  footprintPaces: 9,
+  /** Along-lane reach from a unit's center that still counts as a perfect line, in paces. */
+  perfectLinePaces: 1,
+  /** Along-lane reach from a unit's center that still counts as one line, in paces. */
+  inLinePaces: 8,
+  /** Along-lane reach from a unit's center that its footprint covers, in paces. */
+  footprintPaces: 12,
   /** Cross-lane shots must also be shorter than this path back through your keep. */
   crossLaneMaxPaces: 200,
   /** Fort center, in paces forward from each keep. */

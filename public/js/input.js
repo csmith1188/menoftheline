@@ -387,7 +387,7 @@ const pointerMethods = {
         const dir = intent.dir || Math.sign(intent.row - troop.sublane);
         if (dir !== 1 && dir !== -1) return;
         this.selectTroop(troop, true);
-        this.announceOrder(troop, "switch");
+        this.announceOrder(troop, "switch", dir);
         this.onCommand({
           type: "order",
           troopId: troop.id,
@@ -401,7 +401,7 @@ const pointerMethods = {
       const dir = intent.dir || this.nudgeDir(troop, start, point);
       if (dir === 0) return;
       this.selectTroop(troop, false);
-      this.announceOrder(troop, "switch");
+      this.announceOrder(troop, "switch", dir);
       this.onCommand({
         type: "order",
         troopId: troop.id,

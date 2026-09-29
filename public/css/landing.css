@@ -47,10 +47,13 @@ body {
 }
 
 .brand {
-  color: var(--gold);
-  font-size: 1.6rem;
+  color: var(--text);
+  font-weight: bold;
+  font-size: 1.8rem;
   letter-spacing: 0.04em;
   text-decoration: none;
+  margin: auto;
+  text-align: center;
 }
 
 nav {
@@ -64,6 +67,22 @@ nav a,
 .action {
   color: var(--gold);
   text-decoration: none;
+}
+
+nav a.active {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.site-nav {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: auto;
+}
+
+.admin-links {
+  margin-top: 12px;
+  margin-bottom: 12px;
 }
 
 nav .nav-link {

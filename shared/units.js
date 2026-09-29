@@ -298,7 +298,7 @@ export const UNIT_LABELS = {
   troop: "Troop",
   skirmisher: "Skirmisher",
   dragoon: "Dragoon",
-  cannon: "Gun",
+  cannon: "Field Gun",
   officer: "Officer",
   grenadier: "Grenadier",
   rifle: "Rifles",

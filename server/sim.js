@@ -2276,16 +2276,17 @@ class Unit {
 
   /**
    * Friendly collision. Fall back and retreat ignore friendlies.
-   * Charging cavalry ride through friendlies.
+   * Charge ignores friendlies unless the other is also charging or
+   * either body is in melee (see blocksAllyWithOrders).
    */
   collisionEnabled() {
     if (this.order === "fallback" || this.order === "retreat") return false;
-    if (this.isCavalry() && this.order === "charge") return false;
+    if (this.order === "charge") return false;
     return true;
   }
 
   /**
-   * Dragoons and lancer variants. Charging cavalry ride through friendlies.
+   * Dragoons and lancer variants.
    */
   isCavalry() {
     return this.type === "dragoon" || this.variant === "lancer";
@@ -2295,23 +2296,31 @@ class Unit {
    * True when this unit and ally may not occupy the same stretch.
    */
   blocksAlly(ally) {
-    return this.blocksAllyWithOrders(ally, this.order, ally.order);
+    return this.blocksAllyWithOrders(
+      ally,
+      this.order,
+      ally.order,
+      this.isInMelee(),
+      typeof ally.isInMelee === "function" ? ally.isInMelee() : false,
+    );
   }
 
   /**
-   * blocksAlly using explicit orders (and optional melee flags) so we can
-   * detect ending a pass-through while still overlapping.
-   * Fall Back / Retreat always pass through. Charging cavalry pass through.
-   * Anyone in melee collides with everyone else. Chargers otherwise block
-   * every friendly, the same as any other order.
+   * blocksAlly using explicit orders and melee flags so we can detect
+   * ending a pass-through while still overlapping.
+   * Fall Back / Retreat always pass through. Charge ignores friendlies
+   * unless that friendly is also Charging or either unit is in melee.
    */
-  blocksAllyWithOrders(ally, myOrder, theirOrder) {
+  blocksAllyWithOrders(ally, myOrder, theirOrder, myInMelee = false, theirInMelee = false) {
     if (myOrder === "fallback" || myOrder === "retreat"
       || theirOrder === "fallback" || theirOrder === "retreat") {
       return false;
     }
-    if ((this.isCavalry() && myOrder === "charge")
-      || (ally.isCavalry && ally.isCavalry() && theirOrder === "charge")) {
+    const myCharge = myOrder === "charge";
+    const theirCharge = theirOrder === "charge";
+    if (myCharge || theirCharge) {
+      if (myCharge && theirCharge) return true;
+      if (myInMelee || theirInMelee) return true;
       return false;
     }
     return true;
@@ -2343,6 +2352,7 @@ class Unit {
     const gap = this.stationSlack("block");
     const prev = this.prevCollisionOrder;
     const prevMelee = Boolean(this.prevInMelee);
+    const myMelee = this.isInMelee();
     for (let i = 0; i < allies.length; i += 1) {
       const ally = allies[i];
       if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
@@ -2354,13 +2364,22 @@ class Unit {
       if (Math.abs(ally.station() - this.station()) > gap) {
         continue;
       }
-      if (!this.blocksAllyWithOrders(ally, this.order, ally.order)) {
+      const theirMelee = typeof ally.isInMelee === "function"
+        ? ally.isInMelee()
+        : false;
+      if (!this.blocksAllyWithOrders(
+        ally,
+        this.order,
+        ally.order,
+        myMelee,
+        theirMelee,
+      )) {
         continue;
       }
       if (this.blocksAllyWithOrders(
         ally,
         prev,
-        ally.order,
+        ally.prevCollisionOrder,
         prevMelee,
         Boolean(ally.prevInMelee),
       )) {
@@ -2418,16 +2437,6 @@ class Unit {
       return true;
     }
     return false;
-  }
-
-  /**
-   * True when this unit should peel off a same-row friendly stack: we sit
-   * behind them (pile-on) and they are not already peeling. The partner
-   * stays put so only one body eases out of an overlap.
-   */
-  shouldPeelFromFriendly(friend) {
-    if (!friend || friend.peelingFromPassThrough) return false;
-    return this.alongSigned(friend) >= 0;
   }
 
   /**
@@ -3214,49 +3223,6 @@ class Unit {
       this.reformNeedsAlign = false;
       this.priorOrder = null;
     }
-
-    // Friendly stacks: only the pile-on (behind) peels. Once in melee
-    // with an enemy and no friendly ahead, stay locked.
-    if (inMeleeNow) {
-      const friendStack = this.overlappingFriendlyInMelee(allies, enemies)
-        || this.collidingAlly(allies);
-      if (friendStack && this.shouldPeelFromFriendly(friendStack)) {
-        if (this.order !== "charge") {
-          this.order = null;
-          this.reformNeedsAlign = false;
-          this.priorOrder = null;
-        }
-        this.peelingFromPassThrough = true;
-        if (this.peelAfterCollisionEnable(dt, allies, enemies)) {
-          this.wasInMelee = inMeleeNow;
-          this.prevInMelee = inMeleeNow;
-          this.prevCollisionOrder = this.order;
-          return;
-        }
-      } else {
-        // Stable melee lock: drop any leftover peel so we do not jiggle.
-        this.peelingFromPassThrough = false;
-        this.peelDir = 0;
-      }
-    } else {
-      // Outside melee: peel only from a friendly already in melee (pile-on).
-      // Never peel from an enemy and never clear Halt because of one.
-      const friendStack = this.overlappingFriendlyInMelee(allies, enemies);
-      if (friendStack && this.shouldPeelFromFriendly(friendStack)) {
-        if (this.order !== "charge") {
-          this.order = null;
-          this.reformNeedsAlign = false;
-          this.priorOrder = null;
-        }
-        this.peelingFromPassThrough = true;
-        if (this.peelAfterCollisionEnable(dt, allies, enemies)) {
-          this.wasInMelee = inMeleeNow;
-          this.prevInMelee = inMeleeNow;
-          this.prevCollisionOrder = this.order;
-          return;
-        }
-      }
-    }
     this.wasInMelee = inMeleeNow;
 
     // Drop peels that are no longer needed.
@@ -3265,18 +3231,21 @@ class Unit {
       this.peelDir = 0;
     }
 
-    // Ended pass-through while stacked: only the first unit peels. The
-    // partner stays put even if it also lost collision this tick.
+    // Only the unit that ends pass-through peels — never shove a partner.
+    // Charge / fall back / retreat ending while stacked, or a charger that
+    // suddenly blocks because the overlapped unit entered melee.
     if (!this.peelingFromPassThrough && this.gainedCollisionWhileOverlapping(allies)) {
-      const other = this.collidingAlly(allies);
-      if (other && !other.peelingFromPassThrough) {
+      const prev = this.prevCollisionOrder;
+      const iEndedPassThrough = prev === "charge"
+        || prev === "fallback"
+        || prev === "retreat";
+      if (iEndedPassThrough || this.order === "charge") {
         this.peelingFromPassThrough = true;
         this.peelDir = 0;
       }
     }
-    // Fall back / retreat always pass through. Charging cavalry do too.
-    if (this.order === "fallback" || this.order === "retreat"
-      || (this.isCavalry() && this.order === "charge")) {
+    // Fall back / retreat always pass through — no peel while withdrawing.
+    if (this.order === "fallback" || this.order === "retreat") {
       this.peelingFromPassThrough = false;
       this.peelDir = 0;
     }

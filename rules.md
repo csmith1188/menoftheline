@@ -14,11 +14,11 @@ There are two lanes, Top and Bottom. Each lane is a line of paces with parallel 
 
 The Bottom lane is drawn as an arc so the lanes can meet at both keeps. Units on an inner ring cover the same paces in fewer pixels, so they look slower. That difference is only visual. Every row of a lane takes the same time to cross.
 
-Distances along a lane are measured from a unit's center:
+Distances along a lane are measured from a unit's center. Each figure below is a **reach from that center**. Two units match when those reaches **overlap** (so centers may be up to twice the reach apart):
 
-- **Perfect Line:** within 1 pace.
-- **In Line:** within 2 paces.
-- **Footprint:** 3 paces either side of the center. Footprints that meet are touching.
+- **Perfect Line:** 1 pace either side.
+- **In Line:** 8 paces either side.
+- **Footprint:** 12 paces either side. Footprints that meet are touching.
 - **Shooting range:** each unit has its own, measured either way along the lane.
 - **Engagement range:** half of that unit's shooting range.
 
@@ -26,7 +26,7 @@ A unit is **ahead** of another when it is closer to the enemy keep. It is **behi
 
 ### Forts
 
-Each player has one fort in each lane, centered 250 paces from their own keep and extending 3 paces either way along the lane. A unit whose footprint overlaps its own fort in that lane has cover. Cover reduces incoming damage by 20%.
+Each player has one fort in each lane, at 250 paces from their own keep. A unit whose footprint reaches its own fort in that lane has cover. Cover reduces incoming damage by 20%.
 
 ### Towns
 
@@ -60,7 +60,7 @@ An order given to a unit is also given to the rest of its line. The unit you tou
 
 A unit is always under one order. Advance is the order units start with.
 
-**Advance.** The unit marches forward. It shoots at engagement range, then keeps marching when it has nothing to shoot. In a line, a unit that is not shooting keeps marching until it can shoot, or until it is in Perfect Line with the furthest-ahead unit in the line and still has no shot.
+**Advance.** The unit marches forward. It shoots at engagement range, then keeps marching when it has nothing to shoot. In a line that is already Perfect Line, once any mate has opened fire the others that are Perfect Line with it hold and shoot with it. Units still closing up keep marching. Advance does not stop or dress the line just to square it when nobody is shooting.
 
 **Halt.** The unit stops and shoots at full range. It recovers fatigue over time.
 
@@ -70,9 +70,9 @@ A unit is always under one order. Advance is the order units start with.
 
 **Retreat.** The unit moves backward at charge speed and ignores friendly footprints. It gains fatigue while it moves, and Falls Back when the fatigue bar is full. You cannot order Retreat yourself. Broken units Retreat on their own.
 
-**Reform.** The furthest-forward units in the line stop. The furthest-back units move at full speed. Everyone else moves at half speed. When the line is in Perfect Line, every unit Halts.
+**Reform.** The furthest-forward units in the line stop. The furthest-back units move at full speed. Everyone else moves at half speed. Units walk up until they match the front's place along the lane — they do not snap into place. When the whole line is level with the front, every unit Halts. Reform only recruits same-type units on adjacent rows that are In Line; an empty row still splits the chain.
 
-**Switch row.** This does not replace the current order. Swiping a line that is not yet in Perfect Line Reforms it instead of changing rows. A line that is already squared up moves one adjacent row. A long-pressed unit moves alone, still only one row. While sliding along the row to find a gap, the unit ignores friendly footprints and keeps going in the same direction until the row is open. If that row holds a matching unit that is already In Line, the line Reforms instead of stacking. A new order cancels the switch. A unit in melee cannot switch.
+**Switch row.** This does not replace the current order. Swiping a line that is not yet squared Reforms it first, then moves one adjacent row once the line is square. A line that is already squared moves one adjacent row immediately. A long-pressed unit moves alone, still only one row. If the adjacent row in the swipe direction already holds a matching unit that is In Line, the line Reforms instead and does not queue a row change. While finding a gap, units ignore friendly footprints and keep going in the same along-lane direction until the row is open. If one end of the line must ease forward or back around a unit that is not part of the shift, the whole line eases the same way with it until that row is clear, then they all change rows together. A new order cancels the switch. A unit in melee cannot switch.
 
 ### Melee orders
 
@@ -173,7 +173,7 @@ Touching a unit selects it and subselects the rest of its line, then gives the o
 - Click a unit to Halt. Click a Halted unit to Advance.
 - Swipe toward the enemy keep to Charge.
 - Swipe toward your keep to Fall Back.
-- Swipe up or down on a line that is not squared up to Reform it. A squared line moves one adjacent row.
+- Swipe up or down to change rows. A staggered line Reforms first, then switches when it is square. A squared line switches immediately.
 - Long press a unit to deselect every other unit. Orders given to it are not passed along the line until you order a different unit.
 
-To Reform, swipe up or down on a line that is not yet in Perfect Line. Switching onto a matching unit that is already In Line also Reforms, instead of stacking.
+To Reform without stacking onto a neighbor, swipe toward a clear adjacent row while the line is still staggered — the line squares, then switches. Swiping onto a matching unit that is already In Line Reforms instead, and does not change rows.

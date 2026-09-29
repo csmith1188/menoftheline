@@ -394,10 +394,10 @@ export const WIKI_BODY_MAX = 20000;
 
 const HOME_SEED_BODY = `Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways for an alternate.
 
-- Click a unit: Halt → Reform → Advance.
+- Click a unit to Halt. Click a Halted unit to Advance.
 - Long-press: select that unit alone.
-- Swipe forward / back: charge or fall back.
-- Swipe up / down: change row.
+- Swipe forward to Charge. Swipe back to Fall Back.
+- Swipe up or down to move the line one row. Switching onto a matching unit in line Reforms.
 - Click a town you own to invest land in its upgrade.
 - Broken units ignore orders until they rally.
 

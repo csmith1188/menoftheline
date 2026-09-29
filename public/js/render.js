@@ -1,6 +1,7 @@
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
+import { drawDebugRanges, troopBuyBgImage } from "./debugRanges.js";
 import {
   applySnapshot,
   boardStateMethods,
@@ -60,7 +61,9 @@ const viewTroopMethods = {
     const ordered = this.order === "reform" || this.order === "halt"
       || this.order === "charge" || this.order === "fallback"
       || this.order === "retreat";
-    ctx.strokeStyle = this.order === "halt"
+    ctx.strokeStyle = this.order === "halt" && this.squared
+      ? CONFIG.colors.reform
+      : this.order === "halt"
       ? CONFIG.colors.halt
       : this.order === "reform"
         ? CONFIG.colors.reform
@@ -522,7 +525,6 @@ const boardMethods = {
   drawBattlefield(ctx) {
     this.inspectedTroop();
     this.drawLanes(ctx);
-    this.drawLaneHover(ctx);
     for (let i = 0; i < this.checkpoints.length; i += 1) {
       this.checkpoints[i].draw(ctx);
     }
@@ -532,6 +534,8 @@ const boardMethods = {
     for (let i = 0; i < everyone.length; i += 1) {
       everyone[i].draw(ctx);
     }
+    drawDebugRanges(ctx, this);
+    this.drawLaneHover(ctx);
     for (let i = 0; i < this.projectiles.length; i += 1) {
       drawProjectile(ctx, this.projectiles[i]);
     }
@@ -807,6 +811,14 @@ const boardMethods = {
       ctx.globalAlpha = can ? 1 : 0.45;
       ctx.fillStyle = unit.fill;
       ctx.fillRect(box.x, box.y, box.w, box.h);
+      const troopBg = unit.type === "troop" ? troopBuyBgImage() : null;
+      if (troopBg) {
+        const iw = box.w * 0.75;
+        const ih = box.h * 0.75;
+        ctx.globalAlpha = (can ? 1 : 0.45) * 0.5;
+        ctx.drawImage(troopBg, box.x + (box.w - iw) / 2, box.y + (box.h - ih) / 2, iw, ih);
+        ctx.globalAlpha = can ? 1 : 0.45;
+      }
       if (spawn !== unit.type) {
         const pad = 5 * CONFIG.uiScale;
         ctx.fillStyle = "#ffffff";

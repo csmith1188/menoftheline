@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
+import { collectDebugMarks, debugRangesOn, troopBuyBgImage } from "./debugRanges.js";
 import { TARGETING_LABELS } from "./board.js";
 
 function labelTexture(lines, opts = {}) {
@@ -15,6 +16,13 @@ function labelTexture(lines, opts = {}) {
   if (opts.fill) {
     ctx.fillStyle = opts.fill;
     ctx.fillRect(0, 0, width, height);
+  }
+  if (opts.bgImage) {
+    const iw = width * 0.6;
+    const ih = height * 0.6;
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(opts.bgImage, (width - iw) / 2, (height - ih) / 2, iw, ih);
+    ctx.globalAlpha = 1;
   }
   if (opts.stroke) {
     ctx.strokeStyle = opts.stroke;
@@ -110,7 +118,8 @@ function setBar(group, ratio) {
   fill.position.x = -11 * (1 - amount);
 }
 
-function orderColor(order) {
+function orderColor(order, squared) {
+  if (order === "halt" && squared) return CONFIG.colors.reform;
   if (order === "halt") return CONFIG.colors.halt;
   if (order === "reform") return CONFIG.colors.reform;
   if (order === "charge") return CONFIG.colors.charge;
@@ -232,12 +241,12 @@ function makeKeep(sideId) {
   return group;
 }
 
-function lineMesh(x1, y1, x2, y2, color, lift) {
+function lineMesh(x1, y1, x2, y2, color, lift, thickness) {
   const dx = x2 - x1;
   const dz = y2 - y1;
   const len = Math.hypot(dx, dz) || 1;
   const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(len, 3, 8),
+    new THREE.BoxGeometry(len, 3, thickness || 8),
     std(color),
   );
   mesh.position.set((x1 + x2) / 2, lift, (y1 + y2) / 2);
@@ -359,6 +368,8 @@ export function createScene(canvas) {
 
   const units = new Map();
   const towns = new Map();
+  const debugGroup = new THREE.Group();
+  world.add(debugGroup);
   const shots = [];
   const splats = [];
 
@@ -544,7 +555,7 @@ export function createScene(canvas) {
       || shown === "charge" || shown === "fallback"
       || shown === "retreat";
     const shellScale = ordered ? 1.28 : 1.12;
-    const stroke = orderColor(shown);
+    const stroke = orderColor(shown, troop.squared);
     const shells = mesh.userData.outlines;
     for (let i = 0; i < shells.length; i += 1) {
       shells[i].material.color.set(stroke);
@@ -557,6 +568,28 @@ export function createScene(canvas) {
     setBar(mesh.userData.hp, maxHp > 0 ? troop.hp / maxHp : 0);
     const maxFatigue = troop.maxFatigue || 100;
     setBar(mesh.userData.fat, maxFatigue > 0 ? (troop.fatigue || 0) / maxFatigue : 0);
+  }
+
+  function syncDebugRanges(board) {
+    while (debugGroup.children.length) {
+      const child = debugGroup.children.pop();
+      debugGroup.remove(child);
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+    if (!debugRangesOn()) return;
+    const marks = collectDebugMarks(board);
+    for (let i = 0; i < marks.length; i += 1) {
+      const mark = marks[i];
+      const pts = mark.points;
+      if (!pts || pts.length < 2) continue;
+      for (let p = 1; p < pts.length; p += 1) {
+        const mesh = lineMesh(pts[p - 1].x, pts[p - 1].y, pts[p].x, pts[p].y, mark.color, 14, Math.max(2, mark.width));
+        mesh.material.transparent = true;
+        mesh.material.opacity = mark.alpha;
+        debugGroup.add(mesh);
+      }
+    }
   }
 
   function syncUnits(board) {
@@ -750,13 +783,14 @@ export function createScene(canvas) {
       const can = !over && board.player.gold >= stats.cost && board.player.land >= land;
       const lane = board.buyDrag && board.buyDrag.index === i ? board.buyDrag.lane : null;
       const alt = spawn !== unit.type;
+      const troopBg = unit.type === "troop" ? troopBuyBgImage() : null;
       mesh.material.color.set(alt ? "#ffffff" : unit.fill);
       mesh.material.opacity = can ? 1 : 0.45;
       mesh.material.transparent = true;
       mesh.material.emissive.set(lane ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = lane ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}`;
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${troopBg ? "bg" : ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -766,6 +800,7 @@ export function createScene(canvas) {
           width: 256,
           height: 192,
           fill: alt ? "#ffffff" : unit.fill,
+          bgImage: troopBg || undefined,
           stroke: can ? "#ffffff" : unit.stroke,
           key,
         });
@@ -852,6 +887,7 @@ export function createScene(canvas) {
     syncBuysUi(board);
     syncStrategyUi(board);
     syncTowns(board);
+    syncDebugRanges(board);
     syncUnits(board);
     syncShots(board);
     syncSplats(board);

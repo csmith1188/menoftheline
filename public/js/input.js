@@ -384,13 +384,15 @@ const pointerMethods = {
     const alone = solo || lineCount < 2;
     if (shifting) {
       if (alone && intent.kind === "lane") {
+        const dir = intent.dir || Math.sign(intent.row - troop.sublane);
+        if (dir !== 1 && dir !== -1) return;
         this.selectTroop(troop, true);
         this.announceOrder(troop, "switch");
         this.onCommand({
           type: "order",
           troopId: troop.id,
           action: "switch",
-          sublane: intent.row,
+          dir,
           solo: true,
         });
         return;

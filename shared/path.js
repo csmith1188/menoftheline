@@ -1,5 +1,4 @@
 import { CONFIG } from "./config.js";
-import { UNIT_STATS } from "./units.js";
 
 /**
  * Euclidean distance between two points with x/y.
@@ -115,36 +114,49 @@ export const Path = {
     return (pixels / radius) * (180 / Math.PI);
   },
 
-  /**
-   * How close two stations must be. Top uses pixels. Bottom uses the
-   * sweep angle from the keep-to-center radius; line and parallel match
-   * the top-lane pixel windows so units are not counted in line when
-   * they are still far around the arc.
-   */
-  stationSlack(lane, kind, radius) {
-    if (lane !== "bottom") {
-      if (kind === "parallel") {
-        return CONFIG.parallelEpsilon;
-      }
-      if (kind === "line") {
-        return CONFIG.lineWindow;
-      }
-      if (kind === "flank") {
-        return CONFIG.flankWindow;
-      }
-      return CONFIG.blockGap;
+  /** Gameplay length of a lane, in paces. Both rows of a lane share it. */
+  lanePaces(lane) {
+    return lane === "bottom" ? CONFIG.bottomLanePaces : CONFIG.topLanePaces;
+  },
+
+  /** Pixel length of the top lane, the ruler that turns walk speed into paces. */
+  topSpanPx() {
+    return CONFIG.enemyCapital.x - CONFIG.playerCapital.x;
+  },
+
+  /** How many station units (pixels or degrees) one pace covers on this lane. */
+  stationPerPace(lane) {
+    if (lane === "bottom") {
+      return 180 / CONFIG.bottomLanePaces;
     }
-    const px = kind === "parallel"
-      ? CONFIG.parallelEpsilon
-      : kind === "line"
-        ? CONFIG.lineWindow
-        : kind === "flank"
-          ? CONFIG.flankWindow
-          : CONFIG.blockGap;
-    const r = kind === "block"
-      ? (radius || Path.bottomMidRadius())
-      : Path.bottomMidRadius();
-    return Path.arcDegrees(px, r);
+    const span = Path.topSpanPx();
+    return span > 0 ? span / CONFIG.topLanePaces : 0;
+  },
+
+  /** Convert a pixel distance into paces using the top-lane ruler. */
+  pacesFromPx(pixels) {
+    const span = Path.topSpanPx();
+    return span > 0 ? pixels * (CONFIG.topLanePaces / span) : 0;
+  },
+
+  /**
+   * Along-lane window in this lane's station units.
+   * parallel: perfect line. line: in line. gun: next footprint within
+   * 3 paces of this footprint. Anything else: the two footprints overlap.
+   */
+  stationSlack(lane, kind) {
+    let paces = CONFIG.footprintPaces * 2;
+    if (kind === "parallel") paces = CONFIG.perfectLinePaces;
+    else if (kind === "line") paces = CONFIG.inLinePaces;
+    else if (kind === "gun") paces = CONFIG.footprintPaces * 3;
+    return paces * Path.stationPerPace(lane);
+  },
+
+  /** Station of a fort center measured from the player keep. */
+  fortStation(lane, sideId) {
+    const along = CONFIG.fortDistancePaces * Path.stationPerPace(lane);
+    if (sideId === "player") return along;
+    return Path.lanePaces(lane) * Path.stationPerPace(lane) - along;
   },
 
   /**
@@ -265,9 +277,8 @@ export const Path = {
 
 
   /**
-   * Cover bars at 1/4 of the lane from each keep: vertical on top,
-   * radial on the bottom rings. Thickness matches a troop. Each bar
-   * belongs to the keep it sits in front of.
+   * Cover bars 250 paces from each keep: vertical on top, radial on the
+   * bottom rings. Each bar belongs to the keep it sits in front of.
    */
 export function quarterSegments() {
     const left = CONFIG.playerCapital;
@@ -275,13 +286,21 @@ export function quarterSegments() {
     const topY = left.y - CONFIG.topLaneHeight / 2;
     const botY = left.y + CONFIG.topLaneHeight / 2;
     const span = right.x - left.x;
-    const px = left.x + CONFIG.quarterMark * span;
-    const ex = left.x + (1 - CONFIG.quarterMark) * span;
+    const topLen = Path.lanePaces("top") * Path.stationPerPace("top");
+    const px = left.x + (span > 0 && topLen > 0
+      ? (Path.fortStation("top", "player") / topLen) * span
+      : left.x);
+    const ex = left.x + (span > 0 && topLen > 0
+      ? (Path.fortStation("top", "enemy") / topLen) * span
+      : right.x);
     const c = Path.bottomCenter();
     const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
     const rOut = Path.bottomRadius(0);
-    const pTheta = Math.PI * (1 - CONFIG.quarterMark);
-    const eTheta = Math.PI * CONFIG.quarterMark;
+    const bottomLen = Path.lanePaces("bottom") * Path.stationPerPace("bottom");
+    const pFrac = bottomLen > 0 ? Path.fortStation("bottom", "player") / bottomLen : 0;
+    const eFrac = bottomLen > 0 ? Path.fortStation("bottom", "enemy") / bottomLen : 1;
+    const pTheta = Math.PI * (1 - pFrac);
+    const eTheta = Math.PI * (1 - eFrac);
     return [
       { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player, side: "player" },
       { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy, side: "enemy" },
@@ -306,26 +325,16 @@ export function quarterSegments() {
 
 
 export function quarterThickness() {
-    return UNIT_STATS.troop.radius * 2;
+    return CONFIG.footprintPaces * 2 * Path.stationPerPace("top");
   }
 
 
-/** True when this body overlaps its own side's fort line. */
+/** True when this footprint overlaps its own fort in this lane. */
 export function touchesQuarterLine(troop) {
     const sideId = troop.side && troop.side.id;
-    if (!sideId) {
+    if (!sideId || !troop.lane || !troop.station) {
       return false;
     }
-    const reach = troop.bodyRadius() + quarterThickness() / 2;
-    const segs = quarterSegments();
-    for (let i = 0; i < segs.length; i += 1) {
-      const s = segs[i];
-      if (s.side !== sideId) {
-        continue;
-      }
-      if (pointToSegment(troop, s.x1, s.y1, s.x2, s.y2) <= reach) {
-        return true;
-      }
-    }
-    return false;
+    const fort = Path.fortStation(troop.lane, sideId);
+    return Math.abs(troop.station() - fort) <= Path.stationSlack(troop.lane, "block");
   }

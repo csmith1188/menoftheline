@@ -810,13 +810,25 @@ export const boardStateMethods = {
     if (action === "back" && troop && this.enemy) {
       troop.inMelee = inMeleeContact(troop, this.enemy.troops);
     }
-    const shown = orderAnnouncement(troop, action);
+    const shown = this.switchAnnouncement(troop, action) || orderAnnouncement(troop, action);
     if (!shown) return;
     this.orderCallout = {
       text: shown.text,
       color: shown.color,
       until: performance.now() + 900,
     };
+  },
+
+  /**
+   * A row switch on a line that is not yet in perfect line is a Reform.
+   * A squared line, or a long-pressed unit, still switches rows.
+   */
+  switchAnnouncement(troop, action) {
+    if (action !== "switch" && action !== "shift" && action !== "lane") return null;
+    if (!troop || this.inspectedSolo || !troop.side) return null;
+    const group = lineGroup(troop, troop.side.troops);
+    if (group.length < 2 || lineIsPerfect(group)) return null;
+    return { text: "Reform", color: CONFIG.colors.reform };
   },
 
   /** True when this troop is locked in body contact with a melee foe. */
@@ -844,6 +856,24 @@ function troopStation(troop) {
 function lineSlack(troop) {
   const radius = troop.lane === "bottom" ? Path.bottomRadius(troop.sublane) : 0;
   return Path.stationSlack(troop.lane, "line", radius);
+}
+
+function lineIsPerfect(group) {
+  if (!group || group.length < 2) return true;
+  const slack = Path.stationSlack(group[0].lane, "parallel");
+  const player = group[0].side && group[0].side.id === "player";
+  let front = group[0];
+  for (let i = 1; i < group.length; i += 1) {
+    const ahead = player
+      ? troopStation(group[i]) > troopStation(front)
+      : troopStation(group[i]) < troopStation(front);
+    if (ahead) front = group[i];
+  }
+  const at = troopStation(front);
+  for (let i = 0; i < group.length; i += 1) {
+    if (Math.abs(troopStation(group[i]) - at) > slack) return false;
+  }
+  return true;
 }
 
 function inLineWith(member, ally) {
@@ -1120,20 +1150,13 @@ function orderAnnouncement(troop, action) {
     return orderStatus(ladder[next], false);
   }
   if (action === "cycle") {
-    if (troop.order === "halt") return { text: "Reform", color: CONFIG.colors.reform };
-    if (troop.order === "reform") return { text: "Advance", color: CONFIG.colors.text };
+    if (troop && troop.order === "halt") return { text: "Advance", color: CONFIG.colors.text };
     return { text: "Halt", color: CONFIG.colors.halt };
   }
   if (action === "charge" || action === "forward") {
-    if (action === "forward" && troop && troop.order === "halt") {
-      return { text: "Advance", color: CONFIG.colors.text };
-    }
     return { text: "Charge", color: CONFIG.colors.charge };
   }
   if (action === "fallback" || action === "back") {
-    if (action === "back" && troop && troop.order === "charge" && !troop.inMelee) {
-      return { text: "Advance", color: CONFIG.colors.text };
-    }
     return { text: "Fallback", color: CONFIG.colors.fallback };
   }
   if (action === "switch" || action === "shift") return { text: "Switch", color: CONFIG.colors.laneHover };
@@ -1189,6 +1212,7 @@ function makeTroop(data, side, mx) {
   troop.x = mx(data.x);
   troop.y = data.y;
   troop.order = data.order;
+  troop.squared = Boolean(data.squared);
   troop.flash = data.flash;
   troop.progress = data.progress;
   troop.side = side;

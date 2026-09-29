@@ -649,7 +649,9 @@ app.get("/play", async (req, res, next) => {
       (intent && intent.view === "3d")
       || (room && room.view3d)
     );
-    res.render(use3d ? "play3d" : "index");
+    res.render(use3d ? "play3d" : "index", {
+      debugRanges: process.env.DEBUG_RANGES === "1",
+    });
   } catch (err) {
     next(err);
   }
@@ -695,4 +697,7 @@ io.on("connection", (socket) => {
 
 httpServer.listen(PORT, () => {
   console.log(`Men Of The Line listening on ${THIS_URL}`);
+  if (process.env.DEBUG_RANGES === "1") {
+    console.log("Debug ranges: forward weapon range, collision boxes, restore, fort, and keep bands");
+  }
 });

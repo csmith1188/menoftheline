@@ -762,7 +762,7 @@ function drawHowtoUnits(ctx, w, h) {
   drawSpeedLadder(ctx, panels[0]);
 
   const line = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "troop", "halt"));
-  vignette(ctx, panels[1], around(line, 56, 28), "Click line · Halt → Reform → Advance", () => {
+  vignette(ctx, panels[1], around(line, 56, 28), "Click line · Halt, then Advance", () => {
     drawGround(ctx);
     ctx.save();
     ctx.strokeStyle = "#ffffff";
@@ -871,10 +871,10 @@ const howtoPages = [
         kind: "ul",
         items: [
           "Actions done to one unit apply to all matching units in a line.",
-          "Click a unit/line to cycle between Halt, Reform, and Advance.",
-          "Swipe up/down to switch to the highlighted row.",
-          "Swipe forward to Charge, or Advance if Halted.",
-          "Swipe back to Fall Back, or Advance if Charging.",
+          "Click a unit to Halt. Click a Halted unit to Advance.",
+          "Swipe up or down to move the line one row. Switching onto a matching unit in line Reforms.",
+          "Swipe forward to Charge.",
+          "Swipe back to Fall Back.",
           "Long press a single unit to issue orders to only that unit (ignore lines).",
         ],
       },

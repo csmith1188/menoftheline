@@ -142,9 +142,29 @@ export const CONFIG = {
   fatigueOnShot: 2,
   /** Fatigue lost per second inside own keep cannon range. */
   fatigueRecoverRate: 4,
-  /** Progress from each keep to that side's cover line. */
+  /** Gameplay length of the straight top lane, in paces. */
+  topLanePaces: 1000,
+  /** Gameplay length of the bottom lane, in paces. The arc is only how it is drawn. */
+  bottomLanePaces: 1500,
+  /** Along-lane gap still treated as a perfect line, in paces. */
+  perfectLinePaces: 3,
+  /** Along-lane gap that still counts as one line, in paces. */
+  inLinePaces: 6,
+  /** How far a footprint extends each way from a unit's center, in paces. */
+  footprintPaces: 9,
+  /** Cross-lane shots must also be shorter than this path back through your keep. */
+  crossLaneMaxPaces: 200,
+  /** Fort center, in paces forward from each keep. */
+  fortDistancePaces: 250,
+  /** Officer and color-guard restore reach, in paces along the lane. */
+  officerRestorePaces: 10,
+  /** Keep restore bands, in paces from that side's keep. Inner band is the strongest. */
+  keepAuraPaces: [20, 40, 60],
+  /** Flat fatigue added when hit in melee or when making a melee attack. */
+  fatigueOnMelee: 2,
+  /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
-  /** Extra armor while overlapping own fort line or own keep. */
+  /** Incoming damage removed while overlapping your fort in this lane. */
   quarterArmor: 0.2,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,

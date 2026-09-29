@@ -29,6 +29,9 @@ const botDifficulty = document.getElementById("bot-difficulty");
 const botSpeed = document.getElementById("bot-speed");
 const botStrategyTop = document.getElementById("bot-strategy-top");
 const botStrategyBottom = document.getElementById("bot-strategy-bottom");
+const debugPlay = document.getElementById("debug-play");
+const debugSide = document.getElementById("debug-side");
+const debugBots = document.getElementById("debug-bots");
 
 const rulesUi = bindRules({
   onOpen() {
@@ -47,6 +50,8 @@ southpawBtn.addEventListener("click", () => {
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
 let syncingBotUi = false;
+/** Sim side inputs command in debug bot games. */
+let controlSide = "player";
 
 function syncSoundUi() {
   const volume = getSoundVolume();
@@ -69,6 +74,20 @@ function applyBotSettingsUi(settings) {
     if (settings.strategy.bottom) botStrategyBottom.value = settings.strategy.bottom;
   }
   syncingBotUi = false;
+}
+
+function applyDebugPlayUi(settings) {
+  const show = Boolean(settings);
+  debugPlay.classList.toggle("hidden", !show);
+  if (!settings) {
+    controlSide = "player";
+    return;
+  }
+  controlSide = settings.controlSide === "enemy" ? "enemy" : "player";
+  debugSide.textContent = controlSide === "enemy" ? "Control Enemy" : "Control Player";
+  const botsOn = Boolean(settings.botsEnabled);
+  debugBots.setAttribute("aria-pressed", botsOn ? "false" : "true");
+  debugBots.textContent = botsOn ? "Bots On" : "Bots Off";
 }
 
 syncSoundUi();
@@ -121,6 +140,15 @@ botStrategyBottom.addEventListener("change", () => {
   });
 });
 
+debugSide.addEventListener("click", () => {
+  const next = controlSide === "enemy" ? "player" : "enemy";
+  socket.emit("debugPlay", { controlSide: next });
+});
+debugBots.addEventListener("click", () => {
+  const botsOff = debugBots.getAttribute("aria-pressed") === "true";
+  socket.emit("debugPlay", { botsEnabled: botsOff });
+});
+
 function bannerCopy() {
   const iWon = board.winner === "player";
   if (board.winReason === "concede") return iWon ? "Opponent conceded" : "You conceded";
@@ -158,7 +186,7 @@ function syncChrome() {
 }
 
 function apply(snap) {
-  const sounds = applySnapshot(board, snap, seat);
+  const sounds = applySnapshot(board, snap, seat, controlSide);
   if (snap.tick !== lastTick) {
     playSounds(sounds);
     lastTick = snap.tick;
@@ -171,6 +199,7 @@ socket.on("lobby", (lobbyState) => {
   meta.you = lobbyState.you;
   meta.opponent = lobbyState.opponent;
   applyBotSettingsUi(lobbyState.botSettings || null);
+  applyDebugPlayUi(lobbyState.debugPlay || null);
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
   applyCountdownTiming(board, lobbyState);

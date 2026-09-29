@@ -110,8 +110,13 @@ export async function initDb() {
     is_bug INTEGER NOT NULL DEFAULT 0,
     repro TEXT,
     created_at INTEGER NOT NULL,
-    archived_at INTEGER
+    archived_at INTEGER,
+    rewarded_at INTEGER
   )`);
+  const suggestionCols = await all("PRAGMA table_info(suggestions)");
+  if (!suggestionCols.some((col) => col.name === "rewarded_at")) {
+    await run("ALTER TABLE suggestions ADD COLUMN rewarded_at INTEGER");
+  }
   await run(`CREATE TABLE IF NOT EXISTS wiki_pages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT NOT NULL UNIQUE,
@@ -362,17 +367,28 @@ export async function createSuggestion({ formbarId, name, body, isBug, repro }) 
   return result.lastID;
 }
 
+export async function getSuggestion(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return null;
+  return get(
+    `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
+     FROM suggestions
+     WHERE id = ?`,
+    [suggestionId],
+  );
+}
+
 export async function listSuggestions({ archived = false } = {}) {
   if (archived) {
     return all(
-      `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at
+      `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
        FROM suggestions
        WHERE archived_at IS NOT NULL
        ORDER BY archived_at DESC, id DESC`,
     );
   }
   return all(
-    `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at
+    `SELECT id, formbar_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
      FROM suggestions
      WHERE archived_at IS NULL
      ORDER BY created_at DESC, id DESC`,
@@ -385,6 +401,29 @@ export async function archiveSuggestion(id) {
   const result = await run(
     "UPDATE suggestions SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
     [Date.now(), suggestionId],
+  );
+  return result.changes > 0;
+}
+
+export async function claimSuggestionReward(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
+  const now = Date.now();
+  const result = await run(
+    `UPDATE suggestions
+     SET archived_at = ?, rewarded_at = ?
+     WHERE id = ? AND archived_at IS NULL AND rewarded_at IS NULL`,
+    [now, now, suggestionId],
+  );
+  return result.changes > 0;
+}
+
+export async function reopenSuggestion(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
+  const result = await run(
+    "UPDATE suggestions SET archived_at = NULL, rewarded_at = NULL WHERE id = ?",
+    [suggestionId],
   );
   return result.changes > 0;
 }
@@ -417,7 +456,7 @@ export function wikiSlug(title) {
 
 export function wikiRewardAmount() {
   const n = Number(process.env.WIKI_REWARD_DIGIPOGS);
-  return Number.isInteger(n) && n > 0 ? n : 10;
+  return Number.isInteger(n) && n > 0 ? n : 200;
 }
 
 export async function canEditWiki(formbarId) {
@@ -560,6 +599,19 @@ export async function saveWikiPage({ slug, title, body, formbarId, name }) {
     [rev.lastID, page.lastID],
   );
   return { ok: true, slug: newSlug, created: true };
+}
+
+export async function deleteWikiPageBySlug(slug) {
+  const existing = await getWikiPageBySlug(slug);
+  if (!existing) {
+    return { ok: false, error: "Page not found." };
+  }
+  if (existing.page.slug === "home") {
+    return { ok: false, error: "The home page cannot be deleted." };
+  }
+  await run("DELETE FROM wiki_revisions WHERE page_id = ?", [existing.page.id]);
+  await run("DELETE FROM wiki_pages WHERE id = ?", [existing.page.id]);
+  return { ok: true, slug: existing.page.slug };
 }
 
 export async function listOpenWikiRevisions() {

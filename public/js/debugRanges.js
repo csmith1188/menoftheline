@@ -81,8 +81,11 @@ export function collectDebugMarks(board) {
       pushSpan(marks, troop.lane, troop.sublane, a0, a1, "#ff9a3c", 0.85, 3);
     }
     const [foot0, foot1] = clampSpan(troop.lane, t, CONFIG.footprintPaces);
+    const meleePaces = CONFIG.footprintPaces + (CONFIG.meleeSlack || 0) / 2;
+    const [melee0, melee1] = clampSpan(troop.lane, t, meleePaces);
     const [line0, line1] = clampSpan(troop.lane, t, CONFIG.inLinePaces);
     const [perfect0, perfect1] = clampSpan(troop.lane, t, CONFIG.perfectLinePaces);
+    pushBox(marks, troop.lane, troop.sublane, melee0, melee1, "#ff5a3c", 0.45);
     pushBox(marks, troop.lane, troop.sublane, foot0, foot1, "#ffffff", 0.28);
     pushBox(marks, troop.lane, troop.sublane, line0, line1, "#7ec8ff", 0.4);
     pushBox(marks, troop.lane, troop.sublane, perfect0, perfect1, "#ff6ad5", 0.7);

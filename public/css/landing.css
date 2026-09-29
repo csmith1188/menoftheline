@@ -410,6 +410,10 @@ input {
   gap: 10px;
 }
 
+.wiki-delete {
+  margin-top: 14px;
+}
+
 .wiki-edit label {
   display: block;
   margin: 8px 0 4px;

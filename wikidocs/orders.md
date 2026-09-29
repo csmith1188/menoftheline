@@ -7,11 +7,11 @@ A unit is always under one order. Advance is the order units start with. How to 
 
 **Halt.** The unit stops and shoots at full range. It recovers fatigue over time. See [[Shooting]] and [[Fatigue and Breaking]].
 
-**Charge.** The unit rushes forward at charge speed, seeking melee, and does not shoot until it is in contact. It ignores friendly footprints. It gains fatigue while it moves. A charge hit in melee gains the unit's charge bonus. Charge does not end when fatigue is full. See [[Melee]] and [[Fatigue and Breaking]].
+**Charge.** The unit rushes forward at charge speed, seeking melee, and does not shoot until it is in contact. It ignores friendly footprints unless that friendly is also Charging or either unit is in melee. It gains fatigue while it moves. A charge hit in melee gains the unit's charge bonus. Charge does not end when fatigue is full. See [[Melee]] and [[Fatigue and Breaking]].
 
 **Fall Back.** The unit moves backward at half speed and ignores friendly footprints. It may shoot at engagement range, but reloads at half speed. Skirmishers reload at full speed. See [[Units]] and [[Shooting]].
 
-**Retreat.** The unit moves backward at charge speed and ignores friendly footprints. It gains fatigue while it moves, and Falls Back when the fatigue bar is full. You cannot order Retreat yourself. Broken units Retreat on their own. See [[Fatigue and Breaking]].
+**Retreat.** The unit moves backward at charge speed and ignores friendly footprints. It gains fatigue while it moves, and Falls Back when the fatigue bar is full or when it reaches its own end of the lane. You cannot order Retreat yourself. Broken units Retreat on their own. See [[Fatigue and Breaking]].
 
 **Reform.** The furthest-forward units in the line stop. The furthest-back units move at full speed. Everyone else moves at half speed. Units walk up until they match the front's place along the lane — they do not snap into place. When the whole line is level with the front, every unit Halts. Reform only recruits same-type units on adjacent rows that are In Line; an empty row still splits the chain. See [[Lines]] and [[The Map]].
 

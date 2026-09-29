@@ -489,18 +489,11 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Brighten the sublane under the cursor during a row-change drag. */
+  /** Brighten the neighboring row a lane-switch drag would step into. */
   drawLaneHover(ctx) {
-    if (!this.drag || this.drag.troop.hp <= 0) {
-      return;
-    }
+    const row = this.switchHoverRow();
+    if (row == null) return;
     const troop = this.drag.troop;
-    const row = Path.closestSublane(
-      troop.side.id,
-      troop.lane,
-      troop.progress,
-      { x: this.drag.hx, y: this.drag.hy },
-    );
     ctx.save();
     ctx.strokeStyle = CONFIG.colors.laneHover;
     ctx.globalAlpha = 0.8;

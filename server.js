@@ -10,12 +10,14 @@ import { Server } from "socket.io";
 import {
   addTickets,
   archiveSuggestion,
+  claimSuggestionReward,
   canEditWiki,
   confirmWikiRevision,
   createSuggestion,
   dataPath,
   ensureGuest,
   getAccount,
+  getSuggestion,
   getUser,
   getWikiPageBySlug,
   getWikiRevision,
@@ -24,6 +26,8 @@ import {
   listSuggestions,
   listWikiPages,
   listWikiSlugs,
+  deleteWikiPageBySlug,
+  reopenSuggestion,
   saveWikiPage,
   setWikiRevisionRewarded,
   systemStats,
@@ -373,7 +377,13 @@ app.get("/admin/suggestions", async (req, res, next) => {
     const notice = takeNotice(req);
     const suggestions = await listSuggestions({ archived: false });
     req.session.save(() => {
-      res.render("admin-suggestions", { nav: "admin", viewer, notice, suggestions });
+      res.render("admin-suggestions", {
+        nav: "admin",
+        viewer,
+        notice,
+        suggestions,
+        rewardAmount: wikiRewardAmount(),
+      });
     });
   } catch (err) {
     next(err);
@@ -388,6 +398,54 @@ app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
     }
     await archiveSuggestion(req.params.id);
     req.session.notice = "Suggestion archived.";
+    req.session.save(() => res.redirect("/admin/suggestions"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
+  try {
+    if (!isAdmin(req.session)) {
+      res.redirect("/");
+      return;
+    }
+    const suggestion = await getSuggestion(req.params.id);
+    if (!suggestion || suggestion.archived_at || suggestion.rewarded_at) {
+      req.session.notice = "Suggestion not found.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    if (suggestion.formbar_id <= 0) {
+      req.session.notice = "This suggestion cannot be rewarded.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    const claimed = await claimSuggestionReward(suggestion.id);
+    if (!claimed) {
+      req.session.notice = "Suggestion not found.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    const amount = wikiRewardAmount();
+    let transfer;
+    try {
+      transfer = await rewardFromPool(formbarSocket, {
+        userId: suggestion.formbar_id,
+        amount,
+        reason: "Suggestion",
+      });
+    } catch (err) {
+      await reopenSuggestion(suggestion.id);
+      throw err;
+    }
+    if (!transfer.success) {
+      await reopenSuggestion(suggestion.id);
+      req.session.notice = transfer.message || "Reward transfer failed.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    req.session.notice = `Archived and sent ${amount} digipogs to ${suggestion.name}.`;
     req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
     next(err);
@@ -686,6 +744,31 @@ app.post("/rules/:slug/edit", async (req, res, next) => {
   }
 });
 
+app.post("/rules/:slug/delete", async (req, res, next) => {
+  try {
+    if (!req.session.formbarId) {
+      res.redirect("/login");
+      return;
+    }
+    const slug = wikiSlug(req.params.slug);
+    if (!isAdmin(req.session)) {
+      req.session.notice = "Only admins can delete wiki pages.";
+      req.session.save(() => res.redirect(`/rules/${slug}/edit`));
+      return;
+    }
+    const result = await deleteWikiPageBySlug(slug);
+    if (!result.ok) {
+      req.session.notice = result.error || "Could not delete page.";
+      req.session.save(() => res.redirect(`/rules/${slug}/edit`));
+      return;
+    }
+    req.session.notice = "Page deleted.";
+    req.session.save(() => res.redirect("/rules"));
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get("/rules/:slug", async (req, res, next) => {
   try {
     await renderWikiView(req, res, req.params.slug);
@@ -749,6 +832,7 @@ io.on("connection", (socket) => {
   matchmaker.connect(socket);
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
   socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
+  socket.on("debugPlay", (payload) => matchmaker.debugPlay(socket, payload));
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));
   socket.on("disconnect", () => matchmaker.disconnect(socket));

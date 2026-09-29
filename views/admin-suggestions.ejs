@@ -17,6 +17,7 @@
 
     <section>
       <h2>Suggestions</h2>
+      <p class="hint">Archive and Reward sends <%= rewardAmount %> digipogs, the same as a wiki revision.</p>
       <% if (!suggestions.length) { %>
         <p class="hint">No open suggestions.</p>
       <% } else { %>
@@ -33,9 +34,16 @@
                 <p class="hint">How did you create the bug?</p>
                 <p class="suggest-repro"><%= item.repro %></p>
               <% } %>
-              <form method="post" action="/admin/suggestions/<%= item.id %>/archive">
-                <button type="submit">Archive</button>
-              </form>
+              <div class="wiki-admin-actions">
+                <form method="post" action="/admin/suggestions/<%= item.id %>/archive">
+                  <button type="submit">Archive</button>
+                </form>
+                <% if (item.formbar_id > 0) { %>
+                  <form method="post" action="/admin/suggestions/<%= item.id %>/archive-reward">
+                    <button type="submit">Archive and Reward</button>
+                  </form>
+                <% } %>
+              </div>
             </li>
           <% }) %>
         </ul>

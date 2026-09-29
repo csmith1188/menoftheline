@@ -382,6 +382,11 @@ export class Matchmaker {
     if (room) room.botSettings(socket, payload);
   }
 
+  debugPlay(socket, payload) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) room.debugPlay(socket, payload);
+  }
+
   concede(socket) {
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.concede(socket);

@@ -784,6 +784,17 @@ export const boardStateMethods = {
       this.inspectedLineIds = null;
       return null;
     }
+    // Selection is whoever received the order. Do not grow it as the line changes.
+    this.pruneInspectedLine(troop);
+    return troop;
+  },
+
+  /**
+   * Remember the units that received this selection. A later arrival that
+   * walks into the line was not given the order, so it stays unmarked.
+   */
+  captureInspectedLine(troop) {
+    if (!troop) return;
     const allies = troop.side.troops;
     let group = this.inspectedSolo ? [troop] : lineGroup(troop, allies);
     // Melee units stay in the line for bonuses, but are never group-selected.
@@ -793,14 +804,33 @@ export const boardStateMethods = {
     const ids = {};
     for (let i = 0; i < group.length; i += 1) ids[group[i].id] = true;
     this.inspectedLineIds = ids;
-    return troop;
+  },
+
+  /** Drop dead units. Units that join the line afterward are not added. */
+  pruneInspectedLine(troop) {
+    if (!this.inspectedLineIds) {
+      this.captureInspectedLine(troop);
+      return;
+    }
+    const ids = this.inspectedLineIds;
+    const sides = [this.player, this.enemy];
+    const live = {};
+    for (let s = 0; s < sides.length; s += 1) {
+      const troops = sides[s] && sides[s].troops;
+      if (!troops) continue;
+      for (let i = 0; i < troops.length; i += 1) {
+        const unit = troops[i];
+        if (ids[unit.id] && unit.hp > 0) live[unit.id] = true;
+      }
+    }
+    this.inspectedLineIds = live;
   },
 
   announceOrder(troop, action, dir) {
     if (troop) {
       this.inspectedId = troop.id;
       if (this.isTroopInMelee(troop)) this.inspectedSolo = true;
-      this.inspectedTroop();
+      this.captureInspectedLine(troop);
     }
     // Broken units ignore orders; keep the steady "Broken" readout.
     if (troop && troop.broken) {
@@ -995,13 +1025,16 @@ function hasChargeSpeed(troop) {
 
 function inMeleeContact(troop, enemies) {
   const stats = troopKindStats(troop);
-  if (!stats.fightsMelee) return false;
-  const reach = troop.bodyRadius() + CONFIG.meleeSlack;
+  if (!stats.fightsMelee || troop.hp <= 0) return false;
+  const slack = Path.stationSlack(troop.lane, "melee");
+  const myStation = Path.stationAt(troop.lane, troop.x, troop.y);
   for (let i = 0; i < enemies.length; i += 1) {
     const foe = enemies[i];
-    if (foe.hp <= 0 || foe.lane !== troop.lane) continue;
+    if (foe === troop || foe.hp <= 0 || foe.lane !== troop.lane) continue;
     if (!troopKindStats(foe).fightsMelee) continue;
-    if (distance(troop, foe) <= reach + foe.bodyRadius()) return true;
+    if (Math.abs(troop.sublane - foe.sublane) > 1) continue;
+    const foeStation = Path.stationAt(foe.lane, foe.x, foe.y);
+    if (Math.abs(myStation - foeStation) <= slack) return true;
   }
   return false;
 }
@@ -1329,10 +1362,16 @@ export function countdownSecondsLeft(board) {
   return 0;
 }
 
-/** Local player is always the left side. Seat b is mirrored onto that view. */
-export function applySnapshot(board, snap, seat) {
-  const mirror = seat === "b";
-  const mine = seat === "a" ? "player" : "enemy";
+/**
+ * Local controlled side is always the left/"player" view.
+ * Seat b (and debug control of the enemy) mirrors onto that view.
+ * @param {string} [controlSide] sim side the human is commanding
+ */
+export function applySnapshot(board, snap, seat, controlSide) {
+  const mine = controlSide === "player" || controlSide === "enemy"
+    ? controlSide
+    : (seat === "a" ? "player" : "enemy");
+  const mirror = mine === "enemy";
   const mx = (x) => (mirror ? CONFIG.canvasWidth - x : x);
   const viewOwner = (owner) => {
     if (!owner) return null;

@@ -143,13 +143,20 @@ export const Path = {
    * Along-lane window in this lane's station units.
    * Config paces are each side from a unit's center. Two units match when
    * those reaches overlap, so parallel / line / block all use twice the
-   * config value (reach + reach). gun is both footprints plus a 3-pace gap.
+   * config value (reach + reach). gun is both footprints plus the
+   * penetrate gap (see CONFIG.gunPenetratePaces). melee is both
+   * footprints plus CONFIG.meleeSlack (paces) so units can lock melee
+   * while standing just outside each other's footprints.
    */
   stationSlack(lane, kind) {
     let paces = CONFIG.footprintPaces * 2;
     if (kind === "parallel") paces = CONFIG.perfectLinePaces * 2;
     else if (kind === "line") paces = CONFIG.inLinePaces * 2;
-    else if (kind === "gun") paces = CONFIG.footprintPaces * 2 + 3;
+    else if (kind === "gun") {
+      paces = CONFIG.footprintPaces * 2 + (CONFIG.gunPenetratePaces || 0);
+    } else if (kind === "melee") {
+      paces = CONFIG.footprintPaces * 2 + (CONFIG.meleeSlack || 0);
+    }
     return paces * Path.stationPerPace(lane);
   },
 

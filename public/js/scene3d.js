@@ -527,14 +527,9 @@ export function createScene(canvas) {
   function syncHover(board) {
     for (let i = 0; i < topRows.length; i += 1) topRows[i].material.emissive.set("#000000");
     for (let i = 0; i < bottomRows.length; i += 1) bottomRows[i].material.emissive.set("#000000");
-    if (!board.drag || !board.drag.troop || board.drag.troop.hp <= 0) return;
+    const row = typeof board.switchHoverRow === "function" ? board.switchHoverRow() : null;
+    if (row == null || !board.drag || !board.drag.troop) return;
     const troop = board.drag.troop;
-    const row = Path.closestSublane(
-      troop.side.id,
-      troop.lane,
-      troop.progress,
-      { x: board.drag.hx, y: board.drag.hy },
-    );
     const mesh = troop.lane === "top" ? topRows[row] : bottomRows[row];
     if (mesh) mesh.material.emissive.set(CONFIG.colors.laneHover);
   }

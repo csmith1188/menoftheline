@@ -1,10 +1,14 @@
 # Bugs
+- How does passing friendly blocking units work and when?
+- Do a lookover of unused code
+
+# Units
+- Skirmisher/Rifle target priority: Skirmishers/Rifles first, then officers, then normal strategy
 
 # Ideas
 - officers make order sounds when near lines given orders
 
 # Feature
-- Lane and range rules (1D lanes, not shooting across lanes. unified experience across client types)
 - Music
 - terrain:
     - hills -> neutral forts
@@ -18,3 +22,4 @@
 
 # UI
 - 3d should always zoom in to fill screen with map
+- draw everything in canvas and take full screen

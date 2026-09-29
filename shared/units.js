@@ -92,9 +92,9 @@ export const UNIT_STATS = {
   cannon: {
     ...SHOT,
     hp: 200,
-    rangedDamage: 90,
+    rangedDamage: 60,
     meleeDamage: 1,
-    range: 500,
+    range: 400,
     engageRange: 0.5,
     chargeSpeed: 1,
     flankMultiplier: 1.2,
@@ -126,7 +126,7 @@ export const UNIT_STATS = {
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
-    restoreRate: 1,
+    restoreRate: 2,
     officerDamageMultiplier: 1,
   },
   // Alternates (same base type in play; white square behind the icon)
@@ -198,7 +198,7 @@ export const UNIT_STATS = {
   howitzer: {
     ...SHOT,
     hp: 200,
-    rangedDamage: 120,
+    rangedDamage: 90,
     meleeDamage: 1,
     range: 200,
     engageRange: 0.5,
@@ -234,7 +234,7 @@ export const UNIT_STATS = {
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
-    restoreRate: 1,
+    restoreRate: 2,
     restoreHealth: true,
     officerDamageMultiplier: 1,
     buffRange: 0,

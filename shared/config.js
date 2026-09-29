@@ -123,8 +123,8 @@ export const CONFIG = {
   // Combat rules (not per-unit stats)
 
   /**
-   * Extra pixels past a body-touch that still count as melee. Chargers halt
-   * at the enemy edge and would never overlap without this slack.
+   * Extra paces past footprint-touch that still count as melee. Chargers
+   * stop outside footprints and would never lock without this slack.
    */
   meleeSlack: 6,
   /** Floor for ranged falloff (1 at point-blank, this at max range). */
@@ -152,14 +152,16 @@ export const CONFIG = {
   inLinePaces: 8,
   /** Along-lane reach from a unit's center that its footprint covers, in paces. */
   footprintPaces: 12,
+  /** Gun shell: max gap between footprint edges to continue to the next body. */
+  gunPenetratePaces: 24,
   /** Cross-lane shots must also be shorter than this path back through your keep. */
   crossLaneMaxPaces: 200,
   /** Fort center, in paces forward from each keep. */
   fortDistancePaces: 250,
   /** Officer and color-guard restore reach, in paces along the lane. */
-  officerRestorePaces: 10,
+  officerRestorePaces: 50,
   /** Keep restore bands, in paces from that side's keep. Inner band is the strongest. */
-  keepAuraPaces: [20, 40, 60],
+  keepAuraPaces: [40, 80, 120],
   /** Flat fatigue added when hit in melee or when making a melee attack. */
   fatigueOnMelee: 2,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */

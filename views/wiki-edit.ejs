@@ -36,6 +36,12 @@
           <a href="/rules/<%= slug %>">Cancel</a>
         </div>
       </form>
+      <% if (exists && isAdmin && slug !== "home") { %>
+        <form method="post" action="/rules/<%= slug %>/delete" class="wiki-delete"
+              onsubmit="return confirm('Delete this page permanently?');">
+          <button type="submit">Delete page</button>
+        </form>
+      <% } %>
     </section>
   </div>
   <%- include("suggestion-modal", { nextPath: "/rules/" + slug + "/edit" }) %>

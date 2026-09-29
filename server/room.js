@@ -59,6 +59,12 @@ export class GameRoom {
     this.botStrategy = { top: "auto", bottom: "auto" };
     this.speedScale = 1;
     this.speedAccum = 0;
+    /** Debug-server bot matches: range overlays + play controls. */
+    this.debugMode = process.env.DEBUG_RANGES === "1";
+    /** Which sim side human commands apply to (debug bot games only). */
+    this.controlSide = "player";
+    /** When false, seated bots do not act (debug bot games default off). */
+    this.botsEnabled = !(mode === "bot" && this.debugMode);
     this.seat = {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),
@@ -207,6 +213,31 @@ export class GameRoom {
     };
   }
 
+  /** Bottom-right debug play controls. Bot + DEBUG_RANGES only. */
+  debugPlayPublic() {
+    if (this.mode !== "bot" || !this.debugMode) return null;
+    return {
+      controlSide: this.controlSide,
+      botsEnabled: this.botsEnabled,
+    };
+  }
+
+  /** Toggle controlled side / bot AI. Debug bot games only. */
+  debugPlay(socket, payload) {
+    if (this.mode !== "bot" || !this.debugMode) return;
+    const seat = this.seatBySocket(socket);
+    if (!seat || seat.bot) return;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+
+    if (payload.controlSide === "player" || payload.controlSide === "enemy") {
+      this.controlSide = payload.controlSide;
+    }
+    if (typeof payload.botsEnabled === "boolean") {
+      this.botsEnabled = payload.botsEnabled;
+    }
+    this.pushLobby();
+  }
+
   async startCountdown() {
     if (this.status !== "waiting" || this.closing) return false;
     if (this.paid && !this.charged) {
@@ -235,6 +266,12 @@ export class GameRoom {
       return false;
     }
     this.status = "countdown";
+    // Debug bot games skip the match-start wait.
+    if (this.mode === "bot" && this.debugMode) {
+      this.countdownEnds = null;
+      this.beginPlay();
+      return true;
+    }
     const wait = this.countdownDurationMs();
     this.countdownEnds = Date.now() + wait;
     this.pushLobby();
@@ -275,13 +312,23 @@ export class GameRoom {
     for (let s = 0; s < steps; s += 1) {
       if (!this.sim.beginStep(STEP_DT)) break;
       this.applyQueued();
-      if (this.seat.a.bot) this.seat.a.bot.act(this.sim);
-      if (this.seat.b.bot) this.seat.b.bot.act(this.sim);
+      this.runBots();
       this.sim.finishStep(STEP_DT);
     }
     // Visual splats age on wall time so they do not freeze at slow speeds.
     this.sim.updateSplats(STEP_DT);
     this.broadcastState();
+  }
+
+  /** Bot AI when enabled; skips a side the human is currently controlling. */
+  runBots() {
+    if (this.mode === "bot" && this.debugMode && !this.botsEnabled) return;
+    if (this.seat.a.bot && this.controlSide !== this.seat.a.sideId) {
+      this.seat.a.bot.act(this.sim);
+    }
+    if (this.seat.b.bot && this.controlSide !== this.seat.b.sideId) {
+      this.seat.b.bot.act(this.sim);
+    }
   }
 
   applyQueued() {
@@ -291,8 +338,11 @@ export class GameRoom {
       if (seat.bot) continue;
       const batch = seat.queue;
       seat.queue = [];
+      const sideId = this.mode === "bot" && this.debugMode
+        ? this.controlSide
+        : seat.sideId;
       for (let c = 0; c < batch.length; c += 1) {
-        this.sim.applyCommand(seat.sideId, batch[c]);
+        this.sim.applyCommand(sideId, batch[c]);
       }
     }
   }
@@ -385,6 +435,7 @@ export class GameRoom {
       you: seat.userId ? { id: seat.userId, name: seat.name } : null,
       opponent: this.opponentOf(seat),
       botSettings: this.botSettingsPublic(),
+      debugPlay: this.debugPlayPublic(),
     };
   }
 

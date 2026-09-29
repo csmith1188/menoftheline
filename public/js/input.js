@@ -516,18 +516,19 @@ const pointerMethods = {
   lineSizeOf(troop) {
     const savedId = this.inspectedId;
     const savedSolo = this.inspectedSolo;
+    const savedLines = this.inspectedLineIds;
     this.selectTroop(troop, false);
     const count = this.inspectedLineIds ? Object.keys(this.inspectedLineIds).length : 1;
     this.inspectedId = savedId;
     this.inspectedSolo = savedSolo;
-    this.inspectedTroop();
+    this.inspectedLineIds = savedLines;
     return count;
   },
 
   selectTroop(troop, solo) {
     this.inspectedId = troop.id;
     this.inspectedSolo = Boolean(solo) || this.isTroopInMelee(troop);
-    this.inspectedTroop();
+    this.captureInspectedLine(troop);
   },
 
   /**
@@ -642,6 +643,26 @@ const pointerMethods = {
       return { kind: "fallback" };
     }
     return { kind: "none" };
+  },
+
+  /**
+   * Neighboring row a lane-switch drag would step into. Swipes only move
+   * one row, so this is not the row under the cursor when it overshoots.
+   */
+  switchHoverRow() {
+    if (!this.drag || !this.drag.troop || this.drag.troop.hp <= 0) return null;
+    const troop = this.drag.troop;
+    const point = { x: this.drag.hx, y: this.drag.hy };
+    if (this.dragPullFromUnit(this.drag, point, troop) < this.laneDragMin()) {
+      return null;
+    }
+    const intent = this.dragIntent(troop, this.drag, point);
+    if (intent.kind !== "lane" && intent.kind !== "nudge") return null;
+    const dir = intent.dir;
+    if (dir !== 1 && dir !== -1) return null;
+    const row = troop.sublane + dir;
+    if (row < 0 || row >= Path.sublaneCount(troop.lane)) return null;
+    return row;
   },
 
   /**

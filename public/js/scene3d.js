@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, unitStats, unitLandCost } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
@@ -77,6 +77,44 @@ function setLabel(mesh, lines, opts) {
   mesh.material.color.set("#ffffff");
   mesh.material.needsUpdate = true;
   mesh.userData.key = opts.key || JSON.stringify(lines);
+}
+
+/** Billboard text sprite for world labels (towns, lane bonuses). */
+function makeBillboard(scaleX, scaleY) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  }));
+  sprite.scale.set(scaleX, scaleY, 1);
+  sprite.center.set(0.5, 0.5);
+  return sprite;
+}
+
+function setBillboard(sprite, text, opts = {}) {
+  const key = `${text}:${opts.color || ""}:${opts.font || ""}`;
+  if (sprite.userData.key === key) return;
+  const width = opts.width || 160;
+  const height = opts.height || 64;
+  const pad = document.createElement("canvas");
+  pad.width = width;
+  pad.height = height;
+  const ctx = pad.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = opts.font || "bold 36px Trebuchet MS, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = opts.outlineWidth || 6;
+  ctx.strokeStyle = opts.outline || "#0d1218";
+  ctx.strokeText(text, width / 2, height / 2);
+  ctx.fillStyle = opts.color || "#e8eef6";
+  ctx.fillText(text, width / 2, height / 2);
+  const tex = new THREE.CanvasTexture(pad);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  if (sprite.material.map) sprite.material.map.dispose();
+  sprite.material.map = tex;
+  sprite.material.needsUpdate = true;
+  sprite.userData.key = key;
 }
 
 function makePad(w, h, fill) {
@@ -276,7 +314,7 @@ export function createScene(canvas) {
   scene.background = new THREE.Color(CONFIG.colors.bg);
   scene.fog = new THREE.Fog(CONFIG.colors.bg, 1400, 2800);
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 1, 6000);
+  const camera = new THREE.PerspectiveCamera(36, 1, 1, 6000);
   const world = new THREE.Group();
   scene.add(world);
 
@@ -293,9 +331,20 @@ export function createScene(canvas) {
   sun.shadow.camera.bottom = -400;
   scene.add(sun);
 
+  const groundTex = new THREE.TextureLoader().load("/img/grasstexture.jpg");
+  groundTex.colorSpace = THREE.SRGBColorSpace;
+  groundTex.wrapS = THREE.RepeatWrapping;
+  groundTex.wrapT = THREE.RepeatWrapping;
+  // ~200 world units per tile across the 2400×1800 ground.
+  groundTex.repeat.set(12, 9);
+  groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(2400, 1800),
-    std("#102018"),
+    new THREE.MeshStandardMaterial({
+      map: groundTex,
+      roughness: 0.95,
+      metalness: 0,
+    }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(CONFIG.canvasWidth / 2, 0, 420);
@@ -361,6 +410,12 @@ export function createScene(canvas) {
   world.add(topCenter);
   const bottomCenter = lineMesh(center.x, center.y, center.x + 40, center.y, CONFIG.colors.laneCenter, 12);
   world.add(bottomCenter);
+  const topBonus = makeBillboard(56, 22);
+  topBonus.position.y = 28;
+  world.add(topBonus);
+  const bottomBonus = makeBillboard(56, 22);
+  bottomBonus.position.y = 28;
+  world.add(bottomBonus);
 
   const keeps = {
     player: makeKeep("player"),
@@ -397,6 +452,7 @@ export function createScene(canvas) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    fitOverviewToField();
   }
 
   function mirror(on) {
@@ -509,6 +565,16 @@ export function createScene(canvas) {
     const t = board.topCenter;
     const x = left.x + span * t;
     topCenter.position.x = x;
+    const topY = left.y - CONFIG.topLaneHeight / 2;
+    topBonus.position.set(x, 28, topY - 8);
+    topBonus.scale.set(board.southpaw ? -56 : 56, 22, 1);
+    const playerGps = Math.round(CONFIG.centerIncome * t);
+    setBillboard(topBonus, `+${playerGps}💰`, {
+      color: CONFIG.colors.player,
+      font: "bold 34px Trebuchet MS, sans-serif",
+      width: 180,
+      height: 64,
+    });
     const theta = Math.PI * (1 - board.bottomCenter);
     const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - 10;
     const rOut = Path.bottomRadius(0) + 10;
@@ -522,6 +588,18 @@ export function createScene(canvas) {
     bottomCenter.scale.x = len / 40;
     bottomCenter.position.set((x1 + x2) / 2, 12, (y1 + y2) / 2);
     bottomCenter.rotation.y = Math.atan2(-dz, dx);
+    const pad = 16;
+    const bx = center.x + (rOut + pad) * Math.cos(theta);
+    const bz = center.y + (rOut + pad) * Math.sin(theta);
+    bottomBonus.position.set(bx, 28, bz);
+    bottomBonus.scale.set(board.southpaw ? -56 : 56, 22, 1);
+    const landBonus = Math.round(CONFIG.centerLand * board.bottomCenter);
+    setBillboard(bottomBonus, `+${landBonus}🌿`, {
+      color: CONFIG.colors.player,
+      font: "bold 34px Trebuchet MS, sans-serif",
+      width: 180,
+      height: 64,
+    });
   }
 
   function syncHover(board) {
@@ -545,7 +623,8 @@ export function createScene(canvas) {
     mesh.position.set(troop.x, 12, troop.y);
     mesh.userData.troopId = troop.id;
     const tan = troop.laneTangent();
-    mesh.rotation.set(0, Math.atan2(tan.x, tan.y), 0);
+    const facing = Math.atan2(tan.x, tan.y) + (troop.type === "officer" ? Math.PI / 2 : 0);
+    mesh.rotation.set(0, facing, 0);
     mesh.userData.hp.rotation.y = -mesh.rotation.y;
     mesh.userData.fat.rotation.y = -mesh.rotation.y;
     const color = troop.flash > 0
@@ -565,8 +644,12 @@ export function createScene(canvas) {
       shells[i].scale.set(shellScale, shellScale, shellScale);
     }
     const selected = board.inspectedLineIds && board.inspectedLineIds[troop.id];
+    const primary = board.inspectedId === troop.id;
     mesh.userData.mark.visible = Boolean(selected);
-    mesh.userData.mark.material.color.set(board.inspectedId === troop.id ? "#ff3b30" : "#ff8a84");
+    mesh.userData.mark.material.color.set(primary ? "#ff3b30" : "#ff8a84");
+    mesh.userData.mark.material.transparent = !primary;
+    mesh.userData.mark.material.opacity = primary ? 1 : 0.65;
+    mesh.userData.mark.scale.setScalar(primary ? 1 : 0.82);
     const maxHp = troop.maxHP();
     setBar(mesh.userData.hp, maxHp > 0 ? troop.hp / maxHp : 0);
     const maxFatigue = troop.maxFatigue || 100;
@@ -631,7 +714,15 @@ export function createScene(canvas) {
         halo.rotation.x = Math.PI / 2;
         halo.position.y = 6;
         mesh.add(halo);
+        const kindLabel = makeBillboard(18, 18);
+        kindLabel.position.y = 14;
+        mesh.add(kindLabel);
+        const costLabel = makeBillboard(36, 16);
+        costLabel.position.y = 22;
+        mesh.add(costLabel);
         mesh.userData.halo = halo;
+        mesh.userData.kindLabel = kindLabel;
+        mesh.userData.costLabel = costLabel;
         towns.set(town.index, mesh);
         world.add(mesh);
       }
@@ -643,6 +734,32 @@ export function createScene(canvas) {
           : CONFIG.colors.neutral;
       mesh.material.color.set(color);
       mesh.userData.halo.visible = Boolean(town.owner === "player" && town.producing);
+      const flip = board.southpaw ? -1 : 1;
+      mesh.userData.kindLabel.scale.set(18 * flip, 18, 1);
+      mesh.userData.costLabel.scale.set(36 * flip, 16, 1);
+      const kind = town.upgradeKind();
+      const kindMark = kind === "speed" ? "⚡" : kind === "armor" ? "🛡️" : "⚔️";
+      setBillboard(mesh.userData.kindLabel, kindMark, {
+        font: "bold 42px Trebuchet MS, sans-serif",
+        color: "#0d1218",
+        outline: "#ffffff",
+        outlineWidth: 4,
+        width: 96,
+        height: 96,
+      });
+      const showCost = Boolean(board.player && town.owner === "player");
+      mesh.userData.costLabel.visible = showCost;
+      if (showCost) {
+        const maxed = board.player.upgrades[kind] >= CONFIG.upgradeMax;
+        const remain = Math.ceil(board.player.upgradeRemaining(kind));
+        const cost = maxed ? "MAX" : `${remain}🌿`;
+        setBillboard(mesh.userData.costLabel, cost, {
+          font: "bold 32px Trebuchet MS, sans-serif",
+          color: town.producing ? "#ffffff" : CONFIG.colors.gold,
+          width: 160,
+          height: 64,
+        });
+      }
     }
     for (const [id, mesh] of towns) {
       if (live.has(id)) continue;
@@ -686,7 +803,7 @@ export function createScene(canvas) {
       sprite.visible = true;
       const shown = Math.round(splat.amount * 10) / 10;
       const num = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
-      const text = splat.kind === "heal" ? `+${num}` : num;
+      const text = splat.kind === "heal" ? "+" : num;
       const key = `${text}:${splat.kind}`;
       if (sprite.userData.key !== key) {
         const pad = document.createElement("canvas");
@@ -793,7 +910,8 @@ export function createScene(canvas) {
       mesh.material.emissive.set(lane ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = lane ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${unitBg ? "bg" : ""}`;
+      const hasVariant = Boolean(UNIT_VARIANTS[unit.type]);
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -806,6 +924,7 @@ export function createScene(canvas) {
           bgImage: unitBg || undefined,
           stroke: can ? "#ffffff" : unit.stroke,
           textOutline: "#000000",
+          sideArrows: hasVariant,
           key,
         });
         mesh.userData.face.userData.key = key;
@@ -906,26 +1025,130 @@ export function createScene(canvas) {
   }
 
   function frameOverview() {
+    if (!CAM_DEBUG) fitOverviewToField();
     camera.position.set(overview.pos.x, overview.pos.y, overview.pos.z);
     camera.up.set(0, 1, 0);
     camera.lookAt(overview.target.x, overview.target.y, overview.target.z);
     paintCamDebug();
   }
 
-  // Tuned overview (multiples of 10). Same x on pos/lookAt keeps view square to the top lane.
-  const overviewDefaults = () => ({
-    pos: {
-      x: CONFIG.canvasWidth / 2, // 480
-      y: 680,
-      z: CONFIG.canvasHeight + 260, // 880
-    },
-    target: {
-      x: CONFIG.canvasWidth / 2, // 480
-      y: 0,
-      z: CONFIG.canvasHeight - 240, // 380
-    },
-  });
-  const overview = overviewDefaults();
+  /**
+   * Place the overview camera so the lane map fills the viewport.
+   * Fits the keeps + lanes (not empty canvas margin), then pushes in a
+   * bit more so the standard view reads zoomed-in.
+   */
+  const overview = {
+    pos: { x: CONFIG.canvasWidth / 2, y: 560, z: CONFIG.canvasHeight / 2 + 400 },
+    target: { x: CONFIG.canvasWidth / 2, y: 0, z: CONFIG.canvasHeight / 2 },
+  };
+  const fitScratch = new THREE.Vector3();
+  // Same tilt as the old hand-tuned shot: atan2(560, 400) ≈ 54.5° from horizontal.
+  const overviewElev = Math.atan2(560, 400);
+  const overviewDir = {
+    x: 0,
+    y: Math.sin(overviewElev),
+    z: Math.cos(overviewElev),
+  };
+  // Contented map bounds (keeps + top band + outer bottom ring), not full canvas.
+  const fieldBounds = (() => {
+    const outer = Path.bottomRadius(0) + CONFIG.bottomSublaneWidth * 0.5;
+    const c = Path.bottomCenter();
+    const top = CONFIG.playerCapital.y - CONFIG.topLaneHeight / 2;
+    return {
+      minX: CONFIG.playerCapital.x - CONFIG.capitalRadius,
+      maxX: CONFIG.enemyCapital.x + CONFIG.capitalRadius,
+      minZ: Math.min(8, top - 6),
+      maxZ: c.y + outer,
+    };
+  })();
+  const fieldCenter = {
+    x: (fieldBounds.minX + fieldBounds.maxX) / 2,
+    // Bias look-at toward the bottom U so the outer ring stays on screen.
+    z: (fieldBounds.minZ + fieldBounds.maxZ) / 2 + 55,
+  };
+
+  function playFieldCorners() {
+    const { minX, maxX, minZ, maxZ } = fieldBounds;
+    const midX = (minX + maxX) / 2;
+    const midZ = (minZ + maxZ) / 2;
+    return [
+      [minX, 0, minZ],
+      [maxX, 0, minZ],
+      [minX, 0, maxZ],
+      [maxX, 0, maxZ],
+      [midX, 0, minZ],
+      [midX, 0, maxZ],
+      [minX, 0, midZ],
+      [maxX, 0, midZ],
+    ];
+  }
+
+  function placeOverview(dist) {
+    return {
+      pos: {
+        x: fieldCenter.x + overviewDir.x * dist,
+        y: overviewDir.y * dist,
+        z: fieldCenter.z + overviewDir.z * dist,
+      },
+      target: { x: fieldCenter.x, y: 0, z: fieldCenter.z },
+    };
+  }
+
+  function fieldFitsNdc(dist, margin) {
+    const next = placeOverview(dist);
+    camera.position.set(next.pos.x, next.pos.y, next.pos.z);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(next.target.x, next.target.y, next.target.z);
+    camera.updateMatrixWorld(true);
+    const corners = playFieldCorners();
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < corners.length; i += 1) {
+      const [x, y, z] = corners[i];
+      fitScratch.set(x, y, z).project(camera);
+      if (!Number.isFinite(fitScratch.x) || !Number.isFinite(fitScratch.y)) {
+        return false;
+      }
+      if (fitScratch.z < -1 || fitScratch.z > 1) return false;
+      minX = Math.min(minX, fitScratch.x);
+      maxX = Math.max(maxX, fitScratch.x);
+      minY = Math.min(minY, fitScratch.y);
+      maxY = Math.max(maxY, fitScratch.y);
+    }
+    return minX >= -margin && maxX <= margin && minY >= -margin && maxY <= margin;
+  }
+
+  function fitOverviewToField() {
+    // Fill the screen; a little overscan so the map reads zoomed-in.
+    const margin = 1.02;
+    const zoomIn = 0.88;
+    let lo = 120;
+    let hi = 5000;
+    if (!fieldFitsNdc(hi, margin)) hi = 8000;
+    for (let i = 0; i < 28; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (fieldFitsNdc(mid, margin)) hi = mid;
+      else lo = mid;
+    }
+    const next = placeOverview(hi * zoomIn);
+    overview.pos.x = next.pos.x;
+    overview.pos.y = next.pos.y;
+    overview.pos.z = next.pos.z;
+    overview.target.x = next.target.x;
+    overview.target.y = next.target.y;
+    overview.target.z = next.target.z;
+    // Keep fog beyond the fitted distance so the map stays clear.
+    const dist = Math.hypot(
+      overview.pos.x - overview.target.x,
+      overview.pos.y - overview.target.y,
+      overview.pos.z - overview.target.z,
+    );
+    scene.fog.near = dist * 1.6;
+    scene.fog.far = dist * 3.2;
+  }
+
   // Flip to true to re-enable temp orbit/pan/zoom + on-screen readout.
   const CAM_DEBUG = false;
   let camDrag = null;
@@ -948,17 +1171,12 @@ export function createScene(canvas) {
       `pos    x ${round1(p.x)}  y ${round1(p.y)}  z ${round1(p.z)}`,
       `lookAt x ${round1(t.x)}  y ${round1(t.y)}  z ${round1(t.z)}`,
       `dist   ${round1(Math.hypot(p.x - t.x, p.y - t.y, p.z - t.z))}`,
+      `aspect ${round1(camera.aspect)}`,
     ].join("\n");
   }
 
   function resetOverviewCam() {
-    const next = overviewDefaults();
-    overview.pos.x = next.pos.x;
-    overview.pos.y = next.pos.y;
-    overview.pos.z = next.pos.z;
-    overview.target.x = next.target.x;
-    overview.target.y = next.target.y;
-    overview.target.z = next.target.z;
+    fitOverviewToField();
     paintCamDebug();
   }
 

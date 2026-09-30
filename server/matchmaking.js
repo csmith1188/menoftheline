@@ -61,6 +61,7 @@ export class Matchmaker {
     session.gameId = null;
     session.search = null;
     session.intent = null;
+    session.view3d = null;
     session.save(() => {});
   }
 
@@ -81,6 +82,7 @@ export class Matchmaker {
       session.intent = null;
       session.gameId = null;
       session.search = null;
+      session.view3d = null;
       session.save(() => {});
     }
     socket.emit("go-home");

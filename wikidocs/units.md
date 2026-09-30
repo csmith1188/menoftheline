@@ -23,4 +23,4 @@ Each unit has its own health, ranges, damage, and speeds. Each type has an alter
 
 - **Keep:** Each player starts with a keep. It does not move, take orders, or get built. It sits at the end of every row of both lanes. It shoots, and it can shoot a unit that is in melee. If your keep is destroyed, you lose. See [[The Map]], [[Shooting]], and [[Melee]].
 
-- Within 20 paces of your keep, friends gain the equivalent of three Color Guard restores. From 20 to 40 paces, two. From 40 to 60 paces, one. Beyond 60, none. This does not double again for being behind the keep, and it stacks with one Officer and one Color Guard.
+- The closer you are to your keep, the more fatigue and health your units restore. The health restore is lost if the enemy is within your fort.

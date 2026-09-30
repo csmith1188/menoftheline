@@ -274,6 +274,9 @@ export const boardStateMethods = {
 
   /** Closest living troop under the cursor on either side. */
   hitAnyTroopAt(point) {
+    // 3D raycast pick takes priority over ground-plane distance.
+    const picked = this.troopByPickedId();
+    if (picked) return picked;
     const mine = this.hitSideTroopAt(point, this.player);
     const theirs = this.hitSideTroopAt(point, this.enemy);
     if (!mine) return theirs;
@@ -281,8 +284,29 @@ export const boardStateMethods = {
     return distance(point, mine) <= distance(point, theirs) ? mine : theirs;
   },
 
+  /** Living troop matching the latest 3D raycast id, if any. */
+  troopByPickedId() {
+    if (this.pickedTroopId == null) return null;
+    const sides = [this.player, this.enemy];
+    for (let s = 0; s < sides.length; s += 1) {
+      const side = sides[s];
+      if (!side) continue;
+      for (let i = 0; i < side.troops.length; i += 1) {
+        const troop = side.troops[i];
+        if (troop.id === this.pickedTroopId && troop.hp > 0) return troop;
+      }
+    }
+    return null;
+  },
+
   hitSideTroopAt(point, side) {
     if (!side) return null;
+    if (this.pickedTroopId != null) {
+      for (let i = 0; i < side.troops.length; i += 1) {
+        const troop = side.troops[i];
+        if (troop.id === this.pickedTroopId && troop.hp > 0) return troop;
+      }
+    }
     let best = null;
     let bestD = Infinity;
     for (let i = 0; i < side.troops.length; i += 1) {

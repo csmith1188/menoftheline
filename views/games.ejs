@@ -21,24 +21,43 @@
         <% if (rejoin) { %>
           <a class="action" href="/play">Rejoin match</a>
         <% } %>
-        <form method="post" action="/play/bot">
-          <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
-        </form>
-        <% if (isAdmin) { %>
-          <form method="post" action="/play/bot3d">
-            <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot (3D)</button>
+        <div class="play-split">
+          <form method="post" action="/play/bot">
+            <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
           </form>
-        <% } %>
-        <form method="post" action="/play/casual">
-          <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
-        </form>
+          <form method="post" action="/play/bot">
+            <input type="hidden" name="view" value="3d">
+            <button type="submit" <%= rejoin ? "disabled" : "" %> title="Play vs bot in 3D" aria-label="Play vs bot in 3D">3D</button>
+          </form>
+        </div>
+        <div class="play-split">
+          <form method="post" action="/play/casual">
+            <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
+          </form>
+          <form method="post" action="/play/casual">
+            <input type="hidden" name="view" value="3d">
+            <button type="submit" <%= rejoin ? "disabled" : "" %> title="Random unranked in 3D" aria-label="Random unranked in 3D">3D</button>
+          </form>
+        </div>
         <% if (viewer) { %>
-          <form method="post" action="/play/lobby">
-            <button type="submit" <%= canTicket ? "" : "disabled" %>>Create unranked lobby</button>
-          </form>
-          <form method="post" action="/play/ranked">
-            <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
-          </form>
+          <div class="play-split">
+            <form method="post" action="/play/lobby">
+              <button type="submit" <%= canTicket ? "" : "disabled" %>>Create unranked lobby</button>
+            </form>
+            <form method="post" action="/play/lobby">
+              <input type="hidden" name="view" value="3d">
+              <button type="submit" <%= canTicket ? "" : "disabled" %> title="Create unranked lobby in 3D" aria-label="Create unranked lobby in 3D">3D</button>
+            </form>
+          </div>
+          <div class="play-split">
+            <form method="post" action="/play/ranked">
+              <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
+            </form>
+            <form method="post" action="/play/ranked">
+              <input type="hidden" name="view" value="3d">
+              <button type="submit" <%= canTicket ? "" : "disabled" %> title="Find ranked match in 3D" aria-label="Find ranked match in 3D">3D</button>
+            </form>
+          </div>
           <% if (!canTicket && !rejoin) { %>
             <p class="hint">A free ticket is required for a lobby, a specific join, or ranked search.</p>
           <% } %>
@@ -63,9 +82,15 @@
             <% } else if (!canTicket) { %>
               <p class="hint">You need a free ticket.</p>
             <% } else { %>
-              <form method="post" action="/play/join/<%= lobby.id %>">
-                <button type="submit">Join</button>
-              </form>
+              <div class="play-split">
+                <form method="post" action="/play/join/<%= lobby.id %>">
+                  <button type="submit">Join</button>
+                </form>
+                <form method="post" action="/play/join/<%= lobby.id %>">
+                  <input type="hidden" name="view" value="3d">
+                  <button type="submit" title="Join in 3D" aria-label="Join in 3D">3D</button>
+                </form>
+              </div>
             <% } %>
           </li>
         <% }) %>

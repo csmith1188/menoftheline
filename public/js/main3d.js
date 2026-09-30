@@ -69,6 +69,7 @@ const hitBuyAt = board.hitBuyAt.bind(board);
 board.hitBuyAt = (point) => (board.telescope ? null : hitBuyAt(point));
 const hitStrategyAt = board.hitStrategyAt.bind(board);
 board.hitStrategyAt = (point) => (board.telescope ? null : hitStrategyAt(point));
+// Banks stay in the DOM chrome so they remain reachable in telescope view.
 board.hitBankAt = () => false;
 // Ground-plane pointers are already in world space; do not shrink thresholds
 // by the 2D telescope screen scale.
@@ -206,8 +207,8 @@ function sideLine(side) {
 
 function syncScore() {
   if (!board.player) return;
-  const pHp = Math.max(0, board.player.capitalHP);
-  const eHp = Math.max(0, board.enemy.capitalHP);
+  const pHp = Math.round(Math.max(0, board.player.capitalHP));
+  const eHp = Math.round(Math.max(0, board.enemy.capitalHP));
   scoreEl.innerHTML = [
     `<div class="side">${sideLine(board.player)}</div>`,
     `<div class="keeps"><span class="you">${pHp}</span> — <span class="them">${eHp}</span></div>`,
@@ -226,6 +227,13 @@ function bankRowKey(side, clickable) {
     const timed = side.bankUnlockedByTime(i);
     const offered = next && timed;
     const ready = offered && side.gold >= side.bankCost();
+    let progress = 1;
+    if (!open && !timed) {
+      const at = CONFIG.bankUnlockAt[i] || 1;
+      const start = i > 0 ? CONFIG.bankUnlockAt[i - 1] : 0;
+      const span = Math.max(1, at - start);
+      progress = Math.max(0, Math.min(1, (board.elapsed - start) / span));
+    }
     const label = open
       ? "open"
       : offered
@@ -233,7 +241,7 @@ function bankRowKey(side, clickable) {
         : timed
           ? "locked"
           : side.bankCooldownLabel(i);
-    parts.push(`${i}:${label}:${ready ? 1 : 0}:${next ? 1 : 0}`);
+    parts.push(`${i}:${label}:${ready ? 1 : 0}:${next ? 1 : 0}:${Math.floor(progress * 40)}`);
   }
   return parts.join("|");
 }
@@ -256,6 +264,14 @@ function fillBanks(el, side, clickable) {
     button.classList.toggle("open", open);
     button.classList.toggle("priced", offered);
     button.classList.toggle("ready", ready);
+    if (!open && !timed) {
+      const at = CONFIG.bankUnlockAt[i] || 1;
+      const start = i > 0 ? CONFIG.bankUnlockAt[i - 1] : 0;
+      const span = Math.max(1, at - start);
+      const done = Math.max(0, Math.min(1, (board.elapsed - start) / span));
+      button.classList.add("unlocking");
+      button.style.setProperty("--unlock", `${done * 360}deg`);
+    }
     if (open) button.textContent = "🏛️";
     else if (offered) {
       const mark = document.createElement("span");

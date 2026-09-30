@@ -41,6 +41,14 @@ body {
   justify-content: center;
 }
 
+.shell:has(#board.view3d) {
+  padding:
+    env(safe-area-inset-top, 0px)
+    env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+}
+
 .stage {
   position: relative;
   width: 100%;
@@ -730,6 +738,17 @@ body {
   border-color: #ffffff;
   outline: 2px solid #ffffff;
   outline-offset: -2px;
+}
+
+.banks button.unlocking {
+  background:
+    conic-gradient(
+      from -90deg,
+      #2a3340 0deg,
+      #2a3340 var(--unlock, 0deg),
+      rgba(0, 0, 0, 0.45) var(--unlock, 0deg),
+      rgba(0, 0, 0, 0.45) 360deg
+    );
 }
 
 .banks button:disabled {

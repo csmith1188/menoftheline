@@ -631,6 +631,7 @@ async function startPlay(req, res, next, intent) {
         return;
       }
     }
+    req.session.view3d = intent.view === "3d";
     req.session.intent = {
       mode: intent.mode,
       roomId: intent.roomId || null,
@@ -642,19 +643,24 @@ async function startPlay(req, res, next, intent) {
   }
 }
 
-app.post("/play/bot", (req, res, next) => startPlay(req, res, next, { mode: "bot" }));
-app.post("/play/bot3d", (req, res, next) => {
-  if (!isAdmin(req.session)) {
-    res.redirect("/games");
-    return;
-  }
-  startPlay(req, res, next, { mode: "bot", view: "3d" });
+function playView(req) {
+  return req.body && req.body.view === "3d" ? "3d" : null;
+}
+
+app.post("/play/bot", (req, res, next) => {
+  startPlay(req, res, next, { mode: "bot", view: playView(req) });
 });
-app.post("/play/casual", (req, res, next) => startPlay(req, res, next, { mode: "casual" }));
-app.post("/play/lobby", (req, res, next) => startPlay(req, res, next, { mode: "listed" }));
-app.post("/play/ranked", (req, res, next) => startPlay(req, res, next, { mode: "ranked" }));
+app.post("/play/casual", (req, res, next) => {
+  startPlay(req, res, next, { mode: "casual", view: playView(req) });
+});
+app.post("/play/lobby", (req, res, next) => {
+  startPlay(req, res, next, { mode: "listed", view: playView(req) });
+});
+app.post("/play/ranked", (req, res, next) => {
+  startPlay(req, res, next, { mode: "ranked", view: playView(req) });
+});
 app.post("/play/join/:id", (req, res, next) => {
-  startPlay(req, res, next, { mode: "join", roomId: req.params.id });
+  startPlay(req, res, next, { mode: "join", roomId: req.params.id, view: playView(req) });
 });
 
 app.get("/rules", async (req, res, next) => {
@@ -787,10 +793,9 @@ app.get("/play", async (req, res, next) => {
     }
     const intent = req.session.intent;
     const room = matchmaker.roomForUser(player.id);
-    const use3d = isAdmin(req.session) && (
-      (intent && intent.view === "3d")
-      || (room && room.view3d)
-    );
+    const use3d = Boolean(req.session.view3d)
+      || (intent && intent.view === "3d")
+      || (room && room.view3d);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: process.env.DEBUG_RANGES === "1",
     });

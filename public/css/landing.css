@@ -168,6 +168,41 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.play-split {
+  display: flex;
+  width: 100%;
+  gap: 0;
+}
+
+.play-split form {
+  margin: 0;
+  min-width: 0;
+}
+
+.play-split form:first-child {
+  flex: 2 1 0;
+}
+
+.play-split form:last-child {
+  flex: 1 1 0;
+}
+
+.play-split form:first-child button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+
+.play-split form:last-child button {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
+  padding-left: 8px;
+  padding-right: 8px;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+}
+
 label {
   font-size: 0.85rem;
   letter-spacing: 0.06em;

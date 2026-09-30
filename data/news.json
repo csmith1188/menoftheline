@@ -1,12 +1,24 @@
 [
   {
     "date": "2026-09-29",
+    "title": "3D Client and Speed Tweaks",
+    "summary": "Play in 3D!",
+    "items": [
+      "Choose the 3D client when creating or joining a game.",
+      "Game speed is now 2/3 the original speed. This should allow players to spend more time arranging their units and managin their economy."
+    ]
+  },{
+    "date": "2026-09-29",
     "title": "Unit, Unit Controls, and Unit Icons Rework",
     "summary": "Unit names and controls have been updated to reflect the new unit types.",
     "items": [
-      "Unit rules have changed.",
-      "Unit controls have been updated to be easier to use.",
-      "Unit names have been updated and icons have been added to buy buttons so you know what they are."
+      "Map physics have changed from a 2D spave to a 1D lane with rows.",
+      "Swipe a unit into a matching unit type to Reform the line. Swiping to change lanes moves a whole line, but you may now only move one lane at a time.",
+      "Unit names have been updated and icons have been added to buy buttons so you know what they are.",
+      "Fields Guns (formerly Cannons), now bounce through units they hit into units behind them in the same row",
+      "Color Guard now restores causalties instead of boosting speed and attack speed.",
+      "Keeps shoot less, but not greatly increase health and fatigue recovery, unless the enemy takes your fort!",
+      "All units now Charge and Fall Back through all friendly units. All units collide normally otherwise."
     ]
   },
   {

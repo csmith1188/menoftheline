@@ -13,7 +13,7 @@ import {
 /** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
 /** Hold this long on a buy button (no swipe) to open the unit info overlay. */
-const BUY_INFO_HOLD_MS = 1800;
+const BUY_INFO_HOLD_MS = 1200;
 /** Two-finger spread / squeeze past this ratio counts as zoom in / out. */
 const PINCH_OUT = 1.12;
 const PINCH_IN = 0.88;

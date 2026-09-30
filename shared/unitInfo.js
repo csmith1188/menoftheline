@@ -71,6 +71,7 @@ const BASIC_FIELDS = [
     label: "Speed",
     value: (s) => s.speed,
     display: (s) => fmtNum(s.speed),
+    invert: true,
   },
   {
     key: "range",
@@ -95,12 +96,14 @@ const BASIC_FIELDS = [
     label: "Reload",
     value: (s) => s.rangedCooldown,
     display: (s) => `${fmtNum(s.rangedCooldown)}s`,
+    invert: true,
   },
   {
     key: "meleeCooldown",
     label: "Melee Speed",
     value: (s) => s.meleeCooldown,
     display: (s) => `${fmtNum(s.meleeCooldown)}s`,
+    invert: true,
   },
   {
     key: "cost",
@@ -119,8 +122,26 @@ function maxForField(field) {
   return max > 0 ? max : 1;
 }
 
+function minForField(field) {
+  let min = Infinity;
+  for (const key of Object.keys(UNIT_STATS)) {
+    const v = field.value(UNIT_STATS[key]);
+    if (typeof v === "number" && v < min) min = v;
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+function barRatio(field, value, max) {
+  if (field.invert) {
+    const best = minForField(field);
+    return value > 0 ? Math.max(0, Math.min(1, best / value)) : 0;
+  }
+  return Math.max(0, Math.min(1, value / max));
+}
+
 /**
  * Basic combat/economy stats with bar ratios vs the roster max.
+ * Inverted fields (speed, reload, melee speed) treat lower as better.
  * Land cost is appended only for alternates.
  */
 export function unitBasicStats(type) {
@@ -134,7 +155,7 @@ export function unitBasicStats(type) {
       value,
       display: field.display(stats),
       max,
-      ratio: Math.max(0, Math.min(1, value / max)),
+      ratio: barRatio(field, value, max),
     };
   });
   const land = unitLandCost(type);

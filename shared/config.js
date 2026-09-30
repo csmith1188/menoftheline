@@ -54,7 +54,7 @@ export const CONFIG = {
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
-  bankBaseCost: 250,
+  bankBaseCost: 240,
   /** Extra gold per bank already unlocked on that side. */
   bankCostStep: 120,
   /** Gold/sec granted per unlock, times current unlocked count. */

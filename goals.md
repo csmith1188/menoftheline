@@ -8,6 +8,7 @@
 # Ideas
 - officers make order sounds when near lines given orders
 - charging cancels cover bonuses
+- column. faster move in matching in line in same row.
 
 # Feature
 - Music

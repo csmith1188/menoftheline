@@ -93,8 +93,7 @@ export const sideStateMethods = {
 
   /** Gold per second from unlocked banks. Matches the server formula. */
   bankIncome() {
-    const n = this.banks;
-    return CONFIG.bankIncomePer * (n * (n + 1)) / 2;
+    return CONFIG.bankIncomePer * this.banks;
   },
 
   /** Top-lane gold share already folded into income, after rounding. */

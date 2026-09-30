@@ -3946,13 +3946,9 @@ class Side {
     );
   }
 
-  /**
-   * Each unlock adds +1gp/s times the number of unlocked banks.
-   * One bank is +1, two is +1+2, three is +1+2+3.
-   */
+  /** Gold/sec from banks: bankIncomePer times unlocked count. */
   bankIncome() {
-    const n = this.banks;
-    return CONFIG.bankIncomePer * (n * (n + 1)) / 2;
+    return CONFIG.bankIncomePer * this.banks;
   }
 
   /** Gold to unlock the next bank. */

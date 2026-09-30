@@ -54,7 +54,7 @@ export const CONFIG = {
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
-  bankBaseCost: 240,
+  bankBaseCost: 250,
   /** Extra gold per bank already unlocked on that side. */
   bankCostStep: 120,
   /** Gold/sec granted per unlock, times current unlocked count. */
@@ -63,7 +63,7 @@ export const CONFIG = {
    * Mass tax per second: this fraction of a living unit's gold cost,
    * times its remaining health (current hp / max hp).
    */
-  massTaxRate: 0.005,
+  massTaxRate: 0.01,
   /** Match time (seconds) when each bank becomes purchasable. */
   bankUnlockAt: [0, 120, 240],
 
@@ -72,7 +72,7 @@ export const CONFIG = {
   /** Land price of the first rank of speed, armor, or damage. */
   upgradeBaseCost: 120,
   /** Extra land added to the upgrade price for each rank already owned. */
-  upgradeCostStep: 0,
+  upgradeCostStep: 60,
   /** Highest rank for speed, armor, and damage. */
   upgradeMax: 5,
   /** Added to the side speed multiplier per speed purchase. */
@@ -88,7 +88,7 @@ export const CONFIG = {
   /** Alternate unit land price as a fraction of its gold cost. */
   unitLandCostRatio: 0.2,
   /** Land invested per second by one producing town. */
-  townProduceRate: 1,
+  townProduceRate: 2,
 
   // Interface
 
@@ -118,7 +118,7 @@ export const CONFIG = {
   /** Shell damage of the keep gun before falloff. */
   capitalCannonDamage: 30,
   /** Seconds between keep-gun shots. */
-  capitalCannonAttackCooldown: 0.5,
+  capitalCannonAttackCooldown: 1,
 
   // Combat rules (not per-unit stats)
 
@@ -139,7 +139,7 @@ export const CONFIG = {
   /** Fatigue per second while charging or in melee contact (not stacked). */
   fatigueCombatRate: 4,
   /** Flat fatigue added when hit by a ranged shot. */
-  fatigueOnShot: 2,
+  fatigueOnShot: 4,
   /** Fatigue lost per second inside own keep cannon range. */
   fatigueRecoverRate: 4,
   /** Gameplay length of the straight top lane, in paces. */

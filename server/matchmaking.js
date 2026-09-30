@@ -1,4 +1,4 @@
-import { ensureHold, holdTicket, releaseHold } from "./db.js";
+import { ensureHold, holdTicket, refundTicket, releaseHold } from "./db.js";
 import { pickRankedPair } from "./rating.js";
 import { GameRoom } from "./room.js";
 
@@ -9,6 +9,7 @@ function numberEnv(name, fallback) {
 
 function searchText(mode) {
   if (mode === "ranked") return "Searching for a ranked match";
+  if (mode === "training") return "Waiting for a training opponent";
   return "Waiting for an opponent";
 }
 
@@ -21,6 +22,7 @@ export class Matchmaker {
     this.io = io;
     this.rooms = new Map();
     this.casual = [];
+    this.training = [];
     this.ranked = [];
     this.claimed = new Set();
     this.maxSpread = numberEnv("MMR_MAX_SPREAD", 200);
@@ -42,6 +44,7 @@ export class Matchmaker {
 
   findQueued(userId) {
     return this.casual.find((entry) => entry.userId === userId)
+      || this.training.find((entry) => entry.userId === userId)
       || this.ranked.find((entry) => entry.userId === userId)
       || null;
   }
@@ -148,8 +151,16 @@ export class Matchmaker {
       await this.startBot(socket, { view: intent.view });
       return;
     }
+    if (intent.mode === "trainBot") {
+      await this.startTrainBot(socket);
+      return;
+    }
     if (intent.mode === "casual") {
       await this.startCasual(socket);
+      return;
+    }
+    if (intent.mode === "trainCasual") {
+      await this.startTrainCasual(socket);
       return;
     }
     if (intent.mode === "listed") {
@@ -178,6 +189,14 @@ export class Matchmaker {
     await room.startCountdown();
   }
 
+  async startTrainBot(socket) {
+    const room = new GameRoom(this, this.io, "training");
+    this.rooms.set(room.id, room);
+    room.seatHuman("a", socket);
+    room.seatBot("b");
+    await room.startCountdown();
+  }
+
   async startCasual(socket) {
     const user = socket.data.user;
     const entry = {
@@ -193,6 +212,23 @@ export class Matchmaker {
     this.markSearchSession(socket, "casual");
     this.emitSearchLobby(entry);
     await this.pairCasual();
+  }
+
+  async startTrainCasual(socket) {
+    const user = socket.data.user;
+    const entry = {
+      userId: user.id,
+      name: user.name,
+      formbarId: user.formbarId || null,
+      mmr: null,
+      socket,
+      joinedAt: Date.now(),
+      mode: "training",
+    };
+    this.training.push(entry);
+    this.markSearchSession(socket, "training");
+    this.emitSearchLobby(entry);
+    await this.pairTraining();
   }
 
   async startListed(socket) {
@@ -331,6 +367,16 @@ export class Matchmaker {
     }
   }
 
+  async pairTraining() {
+    while (this.training.length >= 2) {
+      const a = this.training[0];
+      const b = this.training[1];
+      if (a.userId === b.userId) return;
+      this.training.splice(0, 2);
+      await this.beginPaired(a, b, "training");
+    }
+  }
+
   async pairRanked() {
     if (this.pairing) return;
     this.pairing = true;
@@ -349,6 +395,7 @@ export class Matchmaker {
 
   async removeQueued(entry) {
     this.casual = this.casual.filter((item) => item !== entry);
+    this.training = this.training.filter((item) => item !== entry);
     this.ranked = this.ranked.filter((item) => item !== entry);
     if (entry.mode === "ranked") await releaseHold(entry.formbarId);
     if (entry.socket) this.clearPlaySession(entry.socket);
@@ -443,6 +490,15 @@ export class Matchmaker {
         players: entry.name,
       });
     }
+    for (let i = 0; i < this.training.length; i += 1) {
+      const entry = this.training[i];
+      rows.push({
+        id: entry.userId,
+        mode: "training",
+        status: "searching",
+        players: entry.name,
+      });
+    }
     for (let i = 0; i < this.ranked.length; i += 1) {
       const entry = this.ranked[i];
       rows.push({
@@ -500,7 +556,7 @@ export class Matchmaker {
       return;
     }
 
-    if (mode === "casual" || mode === "ranked") {
+    if (mode === "casual" || mode === "ranked" || mode === "training") {
       if (otherSnap.socket) {
         otherSnap.socket.leave(room.roomName);
         otherSnap.socket.data.gameId = null;
@@ -527,6 +583,13 @@ export class Matchmaker {
         this.markSearchSession(entry.socket, mode);
         this.emitSearchLobby(entry);
         await this.pairRanked();
+        return;
+      }
+      if (mode === "training") {
+        this.training.push(entry);
+        this.markSearchSession(entry.socket, mode);
+        this.emitSearchLobby(entry);
+        await this.pairTraining();
         return;
       }
       this.casual.push(entry);

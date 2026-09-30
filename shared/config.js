@@ -96,6 +96,10 @@ export const CONFIG = {
   bankButtonSize: 40,
   /** Gap between bank buttons, in pixels, before UI scale. */
   bankButtonGap: 8,
+  /** Enemy bank buttons are smaller so the settings gear fits top-right. */
+  enemyBankScale: 0.62,
+  /** Logical canvas pixels kept free on the right for the settings gear. */
+  gearReserve: 56,
   /** Buy-button width, in pixels, before UI scale. */
   buyButtonW: 80,
   /** Buy-button height, in pixels, before UI scale. Name and cost stack as two rows. */

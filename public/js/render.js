@@ -151,15 +151,16 @@ const viewTroopMethods = {
     const selR = 3;
     const selGap = 2;
     const stackH = barH + barGap + barH + selGap + selR * 2;
-    // Bottom-lane telescope rotates the camera; keep bars across the unit.
+    // Bottom-lane telescope rotates the camera; keep bars screen-upright.
+    // Use the camera angle (not laneTangent): enemy waypoints run the other
+    // way, so facing-aligned rotation flips the HP/fatigue stack.
     const align = Boolean(board && board.telescope && this.lane === "bottom");
     ctx.save();
     let ox = this.x;
     let oy = this.y;
     if (align) {
-      const tan = this.laneTangent();
       ctx.translate(this.x, this.y);
-      ctx.rotate(Math.atan2(tan.y, tan.x));
+      ctx.rotate(board.telescopeCamera().angle);
       ox = 0;
       oy = 0;
     }
@@ -325,7 +326,7 @@ const viewSideMethods = {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = CONFIG.colors.text;
-      if (offered) {
+      if (offered && this.id === "player") {
         ctx.font = this.board.uiFont(14);
         ctx.fillText("🏛️", cx, box.y + box.h * 0.34);
         const price = `${nextCost}💰`;
@@ -366,6 +367,12 @@ const boardMethods = {
     this.canvas.height = Math.round(CONFIG.canvasHeight * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.cssScale = cssW / CONFIG.canvasWidth;
+    const left = (availW - cssW) / 2;
+    const top = (availH - cssH) / 2;
+    stage.style.setProperty("--board-left", `${left}px`);
+    stage.style.setProperty("--board-top", `${top}px`);
+    stage.style.setProperty("--board-width", `${cssW}px`);
+    stage.style.setProperty("--board-height", `${cssH}px`);
   },
 
 
@@ -558,6 +565,7 @@ const boardMethods = {
       ctx.fillStyle = CONFIG.colors.bg;
       ctx.fillRect(cam.x - 4000, cam.y - 4000, 8000, 8000);
       this.drawBattlefield(ctx);
+      this.drawGestureHints(ctx);
       ctx.restore();
       applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
       this.player.drawBanks(ctx);
@@ -585,6 +593,7 @@ const boardMethods = {
     this.drawStrategyButtons(ctx);
     this.drawInspectedUnit(ctx);
     this.drawOrderCallout(ctx);
+    this.drawGestureHints(ctx);
   },
 
 
@@ -708,6 +717,43 @@ const boardMethods = {
     ctx.restore();
   },
 
+  /** Press-time swipe / click / hold labels around the active control. */
+  drawGestureHints(ctx) {
+    const hints = this.gestureHints;
+    if (!hints || !hints.labels || !hints.labels.length) return;
+    const padX = 7 * CONFIG.uiScale;
+    const padY = 4 * CONFIG.uiScale;
+    const radius = 3 * CONFIG.uiScale;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = this.uiFont(13);
+    for (let i = 0; i < hints.labels.length; i += 1) {
+      const label = hints.labels[i];
+      const on = hints.active != null && label.id === hints.active;
+      const tw = ctx.measureText(label.text).width;
+      const twHalf = tw / 2 + padX;
+      const thHalf = 7 * CONFIG.uiScale + padY;
+      const x = label.x;
+      const y = label.y;
+      ctx.beginPath();
+      ctx.moveTo(x - twHalf + radius, y - thHalf);
+      ctx.arcTo(x + twHalf, y - thHalf, x + twHalf, y + thHalf, radius);
+      ctx.arcTo(x + twHalf, y + thHalf, x - twHalf, y + thHalf, radius);
+      ctx.arcTo(x - twHalf, y + thHalf, x - twHalf, y - thHalf, radius);
+      ctx.arcTo(x - twHalf, y - thHalf, x + twHalf, y - thHalf, radius);
+      ctx.closePath();
+      ctx.fillStyle = on ? "rgba(58, 49, 32, 0.96)" : "rgba(29, 40, 54, 0.92)";
+      ctx.fill();
+      ctx.lineWidth = on ? 2 : 1;
+      ctx.strokeStyle = on ? CONFIG.colors.gold : "#314257";
+      ctx.stroke();
+      ctx.fillStyle = on ? CONFIG.colors.gold : CONFIG.colors.text;
+      ctx.fillText(label.text, x, y);
+    }
+    ctx.restore();
+  },
+
   /** Player and bot stats plus keep score, between the two bank rows. */
   drawScoreboard(ctx) {
     const pLast = this.player.bankButtonRect(CONFIG.bankCount - 1);
@@ -797,9 +843,14 @@ const boardMethods = {
         && this.player.gold >= cost
         && this.player.land >= land;
       const lit = hover
+        && !this.strategyDrag
+        && (!drag || drag.index === i)
         && hover.x >= box.x && hover.x <= box.x + box.w
         && hover.y >= box.y && hover.y <= box.y + box.h;
-      const lane = drag && drag.index === i ? drag.lane : null;
+      const dragging = drag && drag.index === i;
+      const lane = dragging ? drag.lane : null;
+      const typeSwipe = dragging ? drag.variantSwipe : null;
+      const armed = Boolean(lane || typeSwipe);
       const mid = box.y + box.h / 2;
       const cx = box.x + box.w / 2;
       ctx.globalAlpha = can ? 1 : 0.45;
@@ -830,7 +881,16 @@ const boardMethods = {
         ctx.fillStyle = "rgba(255,255,255,0.22)";
         ctx.fillRect(box.x, lane === "top" ? box.y : mid, box.w, box.h / 2);
       }
-      ctx.strokeStyle = can && (lit || lane) ? "#ffffff" : unit.stroke;
+      if (typeSwipe) {
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(
+          typeSwipe < 0 ? box.x : box.x + box.w / 2,
+          box.y,
+          box.w / 2,
+          box.h,
+        );
+      }
+      ctx.strokeStyle = can && (lit || armed) ? "#ffffff" : unit.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(box.x, box.y, box.w, box.h);
       ctx.fillStyle = lane === "top" ? "#ffffff" : "#9ee8c8";
@@ -839,8 +899,9 @@ const boardMethods = {
       fillChevron(ctx, cx, box.y + box.h * 0.86, false);
       if (variant) {
         const edge = 7 * CONFIG.uiScale;
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = typeSwipe === -1 ? "#ffffff" : "#c8d2dc";
         fillSideArrow(ctx, box.x + edge, mid, false);
+        ctx.fillStyle = typeSwipe === 1 ? "#ffffff" : "#c8d2dc";
         fillSideArrow(ctx, box.x + box.w - edge, mid, true);
       }
       ctx.textAlign = "center";
@@ -897,18 +958,32 @@ const boardMethods = {
       const box = this.strategyButtonRect(lane);
       const mode = this.targetingMode(lane);
       const label = TARGETING_LABELS[mode] || mode;
-      const lit = hover && this.pointInBox(hover, box);
+      const lit = !this.buyDrag
+        && (!drag || drag.lane === lane)
+        && hover
+        && this.pointInBox(hover, box);
       const swiping = drag && drag.lane === lane;
+      const swipe = swiping ? drag.swipe : null;
       const mid = box.y + box.h / 2;
       const edge = 7 * CONFIG.uiScale;
       ctx.globalAlpha = over ? 0.45 : 1;
       ctx.fillStyle = fills[lane];
       ctx.fillRect(box.x, box.y, box.w, box.h);
+      if (swipe) {
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(
+          swipe < 0 ? box.x : box.x + box.w / 2,
+          box.y,
+          box.w / 2,
+          box.h,
+        );
+      }
       ctx.strokeStyle = (lit || swiping) && !over ? "#ffffff" : strokes[lane];
       ctx.lineWidth = 2;
       ctx.strokeRect(box.x, box.y, box.w, box.h);
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = swipe === -1 ? "#ffffff" : "#c8d2dc";
       fillSideArrow(ctx, box.x + edge, mid, false);
+      ctx.fillStyle = swipe === 1 ? "#ffffff" : "#c8d2dc";
       fillSideArrow(ctx, box.x + box.w - edge, mid, true);
       ctx.fillStyle = CONFIG.colors.gold;
       ctx.textAlign = "center";

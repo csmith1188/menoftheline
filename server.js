@@ -29,10 +29,12 @@ import {
   deleteWikiPageBySlug,
   reopenSuggestion,
   saveWikiPage,
+  setPlayerTooltips,
   setWikiRevisionRewarded,
   systemStats,
   ticketPack,
   topAccounts,
+  tooltipsEnabled,
   undoWikiRevision,
   upsertAccount,
   wikiRewardAmount,
@@ -122,6 +124,7 @@ async function playerFromSession(sess, options = {}) {
       name: account.name,
       formbarId: account.formbar_id,
       mmr: account.mmr,
+      tooltips: tooltipsEnabled(account),
     };
   }
   let guest = null;
@@ -135,6 +138,7 @@ async function playerFromSession(sess, options = {}) {
     name: guest.name,
     formbarId: null,
     mmr: null,
+    tooltips: tooltipsEnabled(guest),
   };
 }
 
@@ -650,8 +654,14 @@ function playView(req) {
 app.post("/play/bot", (req, res, next) => {
   startPlay(req, res, next, { mode: "bot", view: playView(req) });
 });
+app.post("/play/train/bot", (req, res, next) => {
+  startPlay(req, res, next, { mode: "trainBot" });
+});
 app.post("/play/casual", (req, res, next) => {
   startPlay(req, res, next, { mode: "casual", view: playView(req) });
+});
+app.post("/play/train/casual", (req, res, next) => {
+  startPlay(req, res, next, { mode: "trainCasual" });
 });
 app.post("/play/lobby", (req, res, next) => {
   startPlay(req, res, next, { mode: "listed", view: playView(req) });
@@ -798,6 +808,7 @@ app.get("/play", async (req, res, next) => {
       || (room && room.view3d);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: process.env.DEBUG_RANGES === "1",
+      tooltipsDefault: player.tooltips !== false,
     });
   } catch (err) {
     next(err);
@@ -838,6 +849,11 @@ io.on("connection", (socket) => {
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
   socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
   socket.on("debugPlay", (payload) => matchmaker.debugPlay(socket, payload));
+  socket.on("tooltips", (on) => {
+    const enabled = Boolean(on);
+    if (socket.data.user) socket.data.user.tooltips = enabled;
+    setPlayerTooltips(socket.data.user, enabled).catch((err) => console.error(err));
+  });
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));
   socket.on("disconnect", () => matchmaker.disconnect(socket));

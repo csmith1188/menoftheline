@@ -10,7 +10,7 @@
   <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="/css/game.css">
 </head>
-<body>
+<body data-tooltips-default="<%= tooltipsDefault ? "1" : "0" %>">
   <div class="shell">
     <div class="stage">
       <canvas id="board" width="960" height="620" role="img" aria-label="Lane map"></canvas>
@@ -23,68 +23,93 @@
         <p id="banner-text"></p>
         <button type="button" id="leave" class="action">Leave</button>
       </div>
-      <button type="button" id="gear" class="gear" aria-label="Menu">⚙</button>
-      <div id="menu" class="menu hidden">
-        <p class="label">You</p>
-        <p id="menu-you" class="value"></p>
-        <p class="label">Opponent</p>
-        <p id="opp-name" class="value"></p>
-        <p id="opp-kind" class="value"></p>
-        <button type="button" id="howto" class="action" aria-controls="rules" aria-expanded="false">How to play</button>
-        <button type="button" id="southpaw" class="action southpaw" aria-pressed="false" title="Blue on the right">
-          Southpaw
-          <span class="mark" aria-hidden="true"></span>
-        </button>
-        <div class="sound">
-          <div class="sound-head">
-            <span>Sound</span>
-            <button type="button" id="sound-mute" class="sound-mute" aria-pressed="false" title="Mute sound">Mute</button>
-          </div>
-          <input type="range" id="sound-volume" min="0" max="100" step="1" value="100" aria-label="Sound volume">
+      <div id="tutorial" class="tutorial hidden" role="region" aria-label="Training tutorial">
+        <p class="tutorial-title"></p>
+        <p class="tutorial-body"></p>
+        <div class="tutorial-nav">
+          <button type="button" class="action tutorial-back">Back</button>
+          <p class="tutorial-step"></p>
+          <button type="button" class="action tutorial-next">Next</button>
         </div>
-        <div id="training" class="training hidden">
-          <p class="label">Training</p>
-          <label class="training-row">
-            <span>Difficulty</span>
-            <select id="bot-difficulty" aria-label="Bot difficulty">
-              <option value="simple">Simple</option>
-              <option value="hard">Hard</option>
-            </select>
-          </label>
-          <label class="training-row">
-            <span>Speed</span>
-            <select id="bot-speed" aria-label="Game speed">
-              <option value="0.25">0.25×</option>
-              <option value="0.5">0.5×</option>
-              <option value="1" selected>1×</option>
-              <option value="1.5">1.5×</option>
-              <option value="2">2×</option>
-            </select>
-          </label>
-          <label class="training-row">
-            <span>Top strategy</span>
-            <select id="bot-strategy-top" aria-label="Bot top-lane strategy">
-              <option value="auto" selected>Auto</option>
-              <option value="bastion">Bastion</option>
-              <option value="attrition">Attrition</option>
-              <option value="terror">Terror</option>
-            </select>
-          </label>
-          <label class="training-row">
-            <span>Bottom strategy</span>
-            <select id="bot-strategy-bottom" aria-label="Bot bottom-lane strategy">
-              <option value="auto" selected>Auto</option>
-              <option value="bastion">Bastion</option>
-              <option value="attrition">Attrition</option>
-              <option value="terror">Terror</option>
-            </select>
-          </label>
+      </div>
+      <button type="button" id="gear" class="gear" aria-label="Menu" aria-controls="menu" aria-expanded="false">⚙</button>
+      <div id="menu" class="menu hidden" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+        <div class="menu-head">
+          <h2 id="menu-title">Settings</h2>
         </div>
-        <button type="button" id="concede" class="action">Concede</button>
-        <div id="confirm" class="confirm hidden">
-          <p>Concede this match?</p>
-          <button type="button" id="concede-yes" class="action">Concede</button>
-          <button type="button" id="concede-no" class="action">Cancel</button>
+        <div class="menu-grid">
+          <section class="menu-block">
+            <p class="label">You</p>
+            <p id="menu-you" class="value"></p>
+            <p class="label">Opponent</p>
+            <p id="opp-name" class="value"></p>
+            <p id="opp-kind" class="value"></p>
+          </section>
+          <section class="menu-block">
+            <button type="button" id="howto" class="action" aria-controls="rules" aria-expanded="false">How to play</button>
+            <button type="button" id="southpaw" class="action southpaw" aria-pressed="false" title="Blue on the right">
+              Southpaw
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="tooltips" class="action" aria-pressed="true" title="Show gesture hints while pressing">
+              Tooltips
+            </button>
+            <div class="sound">
+              <div class="sound-head">
+                <span>Sound</span>
+                <button type="button" id="sound-mute" class="sound-mute" aria-pressed="false" title="Mute sound">Mute</button>
+              </div>
+              <input type="range" id="sound-volume" min="0" max="100" step="1" value="100" aria-label="Sound volume">
+            </div>
+          </section>
+          <section id="training" class="menu-block training hidden">
+            <p class="label">Training</p>
+            <div class="training-grid">
+              <label class="training-row">
+                <span>Difficulty</span>
+                <select id="bot-difficulty" aria-label="Bot difficulty">
+                  <option value="simple">Simple</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+              <label class="training-row">
+                <span>Speed</span>
+                <select id="bot-speed" aria-label="Game speed">
+                  <option value="0.25">0.25×</option>
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="1.5">1.5×</option>
+                  <option value="2">2×</option>
+                </select>
+              </label>
+              <label class="training-row">
+                <span>Top strategy</span>
+                <select id="bot-strategy-top" aria-label="Bot top-lane strategy">
+                  <option value="auto" selected>Auto</option>
+                  <option value="bastion">Bastion</option>
+                  <option value="attrition">Attrition</option>
+                  <option value="terror">Terror</option>
+                </select>
+              </label>
+              <label class="training-row">
+                <span>Bottom strategy</span>
+                <select id="bot-strategy-bottom" aria-label="Bot bottom-lane strategy">
+                  <option value="auto" selected>Auto</option>
+                  <option value="bastion">Bastion</option>
+                  <option value="attrition">Attrition</option>
+                  <option value="terror">Terror</option>
+                </select>
+              </label>
+            </div>
+          </section>
+          <section class="menu-block menu-actions">
+            <button type="button" id="concede" class="action">Concede</button>
+            <div id="confirm" class="confirm hidden">
+              <p>Concede this match?</p>
+              <button type="button" id="concede-yes" class="action">Concede</button>
+              <button type="button" id="concede-no" class="action">Cancel</button>
+            </div>
+          </section>
         </div>
       </div>
       <div id="debug-play" class="debug-play hidden">
@@ -108,6 +133,25 @@
               <p id="rules-page"></p>
             </div>
             <button type="button" id="rules-next" class="action">Next</button>
+          </div>
+        </div>
+      </div>
+      <div id="unit-info" class="unit-info hidden" role="dialog" aria-modal="true" aria-labelledby="unit-info-title" tabindex="-1">
+        <div class="unit-info-card">
+          <div class="unit-info-head">
+            <h2 id="unit-info-title"></h2>
+            <button type="button" id="unit-info-close" class="action">Close</button>
+          </div>
+          <div class="unit-info-body">
+            <div class="unit-info-art-col">
+              <img id="unit-info-art" alt="" width="96" height="96">
+              <canvas id="unit-info-icon" width="72" height="72" aria-hidden="true"></canvas>
+            </div>
+            <div class="unit-info-main">
+              <p id="unit-info-summary" class="unit-info-summary"></p>
+              <div id="unit-info-stats" class="unit-info-stats"></div>
+              <ul id="unit-info-abilities" class="unit-info-abilities"></ul>
+            </div>
           </div>
         </div>
       </div>

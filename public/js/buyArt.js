@@ -8,9 +8,14 @@ const BUY_BG_SRC = {
 
 const buyBgImages = {};
 
+/** Public path for buy-button SVG art, or null. */
+export function buyBgSrc(type) {
+  return BUY_BG_SRC[type] || null;
+}
+
 /** Buy-button art for a unit type. Null until the image is ready. */
 export function buyBgImage(type) {
-  const src = BUY_BG_SRC[type];
+  const src = buyBgSrc(type);
   if (!src) return null;
   let img = buyBgImages[type];
   if (!img) {

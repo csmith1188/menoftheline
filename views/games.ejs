@@ -21,18 +21,24 @@
         <% if (rejoin) { %>
           <a class="action" href="/play">Rejoin match</a>
         <% } %>
-        <div class="play-split">
+        <div class="play-split play-thirds">
           <form method="post" action="/play/bot">
             <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
+          </form>
+          <form method="post" action="/play/train/bot">
+            <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs bot</button>
           </form>
           <form method="post" action="/play/bot">
             <input type="hidden" name="view" value="3d">
             <button type="submit" <%= rejoin ? "disabled" : "" %> title="Play vs bot in 3D" aria-label="Play vs bot in 3D">3D</button>
           </form>
         </div>
-        <div class="play-split">
+        <div class="play-split play-thirds">
           <form method="post" action="/play/casual">
             <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
+          </form>
+          <form method="post" action="/play/train/casual">
+            <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs random</button>
           </form>
           <form method="post" action="/play/casual">
             <input type="hidden" name="view" value="3d">

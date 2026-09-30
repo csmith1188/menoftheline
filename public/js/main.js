@@ -3,6 +3,9 @@ import { applyCountdownTiming, countdownSecondsLeft } from "./board.js";
 import { bindInput } from "./input.js";
 import { getSoundVolume, playCountdownBeep, playSounds, setSoundVolume, unlockAudio } from "./audio.js";
 import { bindRules } from "./rules.js";
+import { bindUnitInfo } from "./unitInfo.js";
+import { readTooltipsDefault } from "./tooltips.js";
+import { createTutorial } from "./tutorial.js";
 
 const canvas = document.getElementById("board");
 const lobby = document.getElementById("lobby");
@@ -22,6 +25,7 @@ const confirmBox = document.getElementById("confirm");
 const concedeYes = document.getElementById("concede-yes");
 const concedeNo = document.getElementById("concede-no");
 const southpawBtn = document.getElementById("southpaw");
+const tooltipsBtn = document.getElementById("tooltips");
 const soundVolume = document.getElementById("sound-volume");
 const soundMute = document.getElementById("sound-mute");
 const training = document.getElementById("training");
@@ -36,16 +40,33 @@ const debugBots = document.getElementById("debug-bots");
 const rulesUi = bindRules({
   onOpen() {
     menu.classList.add("hidden");
+    unitInfoUi.close();
+  },
+});
+
+const unitInfoUi = bindUnitInfo({
+  onOpen() {
+    menu.classList.add("hidden");
+    rulesUi.close();
   },
 });
 
 const board = createBoard(canvas);
+board.tooltips = readTooltipsDefault();
+board.onBuyInfo = (type) => unitInfoUi.open(type);
 southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");
 southpawBtn.addEventListener("click", () => {
   board.southpaw = !board.southpaw;
   writeSouthpaw(board.southpaw);
   southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");
   rulesUi.repaint();
+});
+tooltipsBtn.setAttribute("aria-pressed", board.tooltips ? "true" : "false");
+tooltipsBtn.addEventListener("click", () => {
+  board.tooltips = !board.tooltips;
+  tooltipsBtn.setAttribute("aria-pressed", board.tooltips ? "true" : "false");
+  if (!board.tooltips) board.gestureHints = null;
+  socket.emit("tooltips", board.tooltips);
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
@@ -116,7 +137,11 @@ let lobbyMessage = "Connecting...";
 let lastCountdownBeep = null;
 
 const socket = window.io();
-board.onCommand = (cmd) => socket.emit("command", cmd);
+const tutorial = createTutorial(document.getElementById("tutorial"));
+board.onCommand = (cmd) => {
+  socket.emit("command", cmd);
+  tutorial.noteCommand(cmd);
+};
 bindInput(board);
 
 botDifficulty.addEventListener("change", () => {
@@ -191,6 +216,7 @@ function apply(snap) {
     playSounds(sounds);
     lastTick = snap.tick;
   }
+  tutorial.noteState(snap);
   syncChrome();
 }
 
@@ -202,6 +228,15 @@ socket.on("lobby", (lobbyState) => {
   applyDebugPlayUi(lobbyState.debugPlay || null);
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
+  const isTraining = lobbyState.mode === "training";
+  board.trainingMode = isTraining;
+  if (isTraining && lobbyState.status === "countdown") {
+    tutorial.setActive(false, { board, seat, reset: true });
+  } else if (isTraining && lobbyState.status === "playing") {
+    tutorial.setActive(true, { board, seat });
+  } else {
+    tutorial.setActive(false);
+  }
   applyCountdownTiming(board, lobbyState);
   if (lobbyState.status === "waiting") {
     board.winner = null;
@@ -236,6 +271,7 @@ socket.on("replaced", () => {
   banner.classList.add("hidden");
   menu.classList.add("hidden");
   rulesUi.close();
+  unitInfoUi.close();
 });
 
 socket.on("go-home", () => {
@@ -251,6 +287,7 @@ socket.on("disconnect", () => {
   lobbyText.textContent = lobbyMessage;
   banner.classList.add("hidden");
   rulesUi.close();
+  unitInfoUi.close();
 });
 
 function askLeave() {
@@ -262,7 +299,9 @@ leave.addEventListener("click", askLeave);
 
 gear.addEventListener("click", () => {
   rulesUi.close();
+  unitInfoUi.close();
   menu.classList.toggle("hidden");
+  gear.setAttribute("aria-expanded", menu.classList.contains("hidden") ? "false" : "true");
   confirmBox.classList.add("hidden");
   if (board.status === "playing" && !board.winner) concede.classList.remove("hidden");
 });
@@ -280,6 +319,7 @@ concedeNo.addEventListener("click", () => {
 concedeYes.addEventListener("click", () => {
   socket.emit("concede");
   menu.classList.add("hidden");
+  gear.setAttribute("aria-expanded", "false");
   confirmBox.classList.add("hidden");
 });
 
@@ -290,6 +330,7 @@ document.addEventListener("pointerdown", (event) => {
   if (menu.classList.contains("hidden")) return;
   if (menu.contains(event.target) || event.target === gear) return;
   menu.classList.add("hidden");
+  gear.setAttribute("aria-expanded", "false");
 });
 
 function frame() {

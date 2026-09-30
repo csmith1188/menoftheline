@@ -2,9 +2,18 @@ import { CONFIG } from "../shared/config.js";
 import { UNIT_VARIANTS } from "../shared/units.js";
 import { Path, distance } from "../shared/path.js";
 import { unlockAudio } from "./audio.js";
+import {
+  clearGestureHints,
+  refreshGestureHintActive,
+  showBuyHints,
+  showStrategyHints,
+  showUnitHints,
+} from "./tooltips.js";
 
 /** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
+/** Hold this long on a buy button (no swipe) to open the unit info overlay. */
+const BUY_INFO_HOLD_MS = 1800;
 /** Two-finger spread / squeeze past this ratio counts as zoom in / out. */
 const PINCH_OUT = 1.12;
 const PINCH_IN = 0.88;
@@ -49,6 +58,7 @@ const pointerMethods = {
             wasSelected,
           };
           if (meleeSolo) this.selectTroop(troop, true);
+          showUnitHints(this, troop);
           this.canvas.setPointerCapture(event.pointerId);
           return;
         }
@@ -82,7 +92,10 @@ const pointerMethods = {
         hy: point.y,
         lane: null,
         variantSwipe: null,
+        downAt: performance.now(),
+        infoOpened: false,
       };
+      showBuyHints(this, buy.type, this.buyButtonRect(buy.index));
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
@@ -94,7 +107,9 @@ const pointerMethods = {
         y: point.y,
         hx: point.x,
         hy: point.y,
+        swipe: null,
       };
+      showStrategyHints(this, this.strategyButtonRect(strategy.lane));
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
@@ -143,6 +158,7 @@ const pointerMethods = {
       wasSelected,
     };
     if (meleeSolo) this.selectTroop(troop, true);
+    showUnitHints(this, troop);
     this.canvas.setPointerCapture(event.pointerId);
   },
 
@@ -196,6 +212,7 @@ const pointerMethods = {
         const world = this.worldPoint(event);
         this.drag.hx = world.x;
         this.drag.hy = world.y;
+        refreshGestureHintActive(this);
         this.canvas.style.cursor = "pointer";
         return;
       }
@@ -213,20 +230,22 @@ const pointerMethods = {
     if (this.buyDrag) {
       this.buyDrag.hx = point.x;
       this.buyDrag.hy = point.y;
-      this.buyDrag.lane = this.buyLaneFromSwipe(this.buyDrag, point);
-      const swipe = this.buyVariantFromSwipe(this.buyDrag, point);
-      if (swipe && this.buyDrag.variantSwipe !== swipe) {
-        this.buyDrag.variantSwipe = swipe;
-        this.cycleBuyVariant(this.buyDrag.type, swipe);
+      if (!this.buyDrag.infoOpened) {
+        this.buyDrag.lane = this.buyLaneFromSwipe(this.buyDrag, point);
+        this.buyDrag.variantSwipe = this.buyVariantFromSwipe(this.buyDrag, point);
+        refreshGestureHintActive(this);
       }
     }
     if (this.strategyDrag) {
       this.strategyDrag.hx = point.x;
       this.strategyDrag.hy = point.y;
+      this.strategyDrag.swipe = this.strategySwipeDir(this.strategyDrag, point);
+      refreshGestureHintActive(this);
     }
     if (this.drag) {
       this.drag.hx = point.x;
       this.drag.hy = point.y;
+      refreshGestureHintActive(this);
     }
     const overUI = this.hitBuyAt(point)
       || this.hitStrategyAt(point)
@@ -242,6 +261,7 @@ const pointerMethods = {
     if (!event.isPrimary) {
       return;
     }
+    clearGestureHints(this);
     const rightRelease = event.pointerType === "mouse" && event.button === 2;
     if (event.pointerType === "mouse" && event.button !== 0) {
       // Only finish a right-click solo drag; ignore other mouse buttons.
@@ -304,11 +324,14 @@ const pointerMethods = {
     if (this.buyDrag) {
       const start = this.buyDrag;
       this.buyDrag = null;
+      if (start.infoOpened) return;
       if (this.winner || this.status !== "playing") {
         return;
       }
       const point = this.canvasPoint(event);
-      if (start.variantSwipe) {
+      const swipe = this.buyVariantFromSwipe(start, point);
+      if (swipe) {
+        this.cycleBuyVariant(start.type, swipe);
         return;
       }
       const lane = this.buyLaneFromSwipe(start, point);
@@ -325,9 +348,8 @@ const pointerMethods = {
       }
       const point = this.canvasPoint(event);
       const swipe = this.strategySwipeDir(start, point);
-      // Click or swipe right → forward; swipe left → back.
-      const dir = swipe === -1 ? -1 : 1;
-      const mode = this.nextTargetingMode(start.lane, dir);
+      if (!swipe) return;
+      const mode = this.nextTargetingMode(start.lane, swipe);
       if (!this.player.targeting) {
         this.player.targeting = { top: "bastion", bottom: "bastion" };
       }
@@ -564,27 +586,41 @@ const pointerMethods = {
    * does not fake a drag, and the hold cancels if the unit leaves the finger.
    */
   refreshHoldSelect() {
+    this.refreshBuyInfoHold();
     const drag = this.drag;
     if (!drag || !drag.troop || drag.troop.hp <= 0 || drag.downAt == null) {
       return;
     }
-    if (drag.soloPick) {
+    if (!drag.soloPick
+        && performance.now() - drag.downAt >= SELECT_HOLD_MS) {
+      const troop = drag.troop;
+      const finger = { x: drag.hx, y: drag.hy };
+      // Unit walked out from under the press — not a hold on that unit.
+      if (this.hitAnyTroopAt(finger) === troop
+          && this.dragPullFromUnit(drag, finger, troop) < this.orderDragMin()) {
+        drag.soloPick = true;
+        this.selectTroop(troop, true);
+      }
+    }
+    if (this.gestureHints) refreshGestureHintActive(this);
+  },
+
+  /**
+   * Hold still on a buy button to open the unit info overlay. Any swipe past
+   * the deploy / variant threshold cancels the hold.
+   */
+  refreshBuyInfoHold() {
+    const drag = this.buyDrag;
+    if (!drag || drag.infoOpened || drag.downAt == null) return;
+    const point = { x: drag.hx, y: drag.hy };
+    if (this.buyLaneFromSwipe(drag, point) || this.buyVariantFromSwipe(drag, point)) {
       return;
     }
-    if (performance.now() - drag.downAt < SELECT_HOLD_MS) {
-      return;
-    }
-    const troop = drag.troop;
-    const finger = { x: drag.hx, y: drag.hy };
-    // Unit walked out from under the press — not a hold on that unit.
-    if (this.hitAnyTroopAt(finger) !== troop) {
-      return;
-    }
-    if (this.dragPullFromUnit(drag, finger, troop) >= this.orderDragMin()) {
-      return;
-    }
-    drag.soloPick = true;
-    this.selectTroop(troop, true);
+    if (performance.now() - drag.downAt < BUY_INFO_HOLD_MS) return;
+    drag.infoOpened = true;
+    clearGestureHints(this);
+    const spawn = this.selectedBuyUnit(drag.type);
+    if (typeof this.onBuyInfo === "function") this.onBuyInfo(spawn);
   },
 
   /**
@@ -676,6 +712,9 @@ const pointerMethods = {
     if (Math.abs(dy) < min || Math.abs(dy) <= Math.abs(dx)) {
       return null;
     }
+    if (this.trainingMode) {
+      return dy > 0 ? "bottom" : null;
+    }
     return dy < 0 ? "top" : "bottom";
   },
 
@@ -728,6 +767,7 @@ export function bindInput(board) {
     board.telescopeSlide = 0;
     board.lanePress = null;
     board.enemyPress = null;
+    clearGestureHints(board);
   }
 
   function pinchCenterEvent() {

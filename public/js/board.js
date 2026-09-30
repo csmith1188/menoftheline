@@ -148,14 +148,24 @@ export const sideStateMethods = {
   /** World box of one bank button above this capital, kept inside the keep. */
   bankButtonRect(index) {
     const ui = this.board.uiMetrics();
-    const size = ui.bank;
-    const gap = ui.bankGap;
+    const scale = this.id === "enemy" ? CONFIG.enemyBankScale : 1;
+    const size = ui.bank * scale;
+    const gap = ui.bankGap * scale;
     const count = CONFIG.bankCount;
     const total = count * size + (count - 1) * gap;
     const edge = CONFIG.capitalRadius;
-    const x = this.id === "player"
-      ? this.capital.x - edge + index * (size + gap)
-      : this.capital.x + edge - total + index * (size + gap);
+    let x;
+    if (this.id === "player") {
+      x = this.capital.x - edge + index * (size + gap);
+    } else {
+      const gearCss = 48;
+      const reserve = Math.max(
+        CONFIG.gearReserve,
+        gearCss / (this.board.cssScale || 1),
+      );
+      const right = Math.min(this.capital.x + edge, CONFIG.canvasWidth - reserve);
+      x = right - total + index * (size + gap);
+    }
     const y = 8;
     return { x, y, w: size, h: size };
   },
@@ -860,8 +870,11 @@ export const boardStateMethods = {
       this.orderCallout = null;
       return;
     }
-    if (action === "back" && troop && this.enemy) {
-      troop.inMelee = inMeleeContact(troop, this.enemy.troops);
+    if (troop) {
+      const foes = troop.side && troop.side.id === "player"
+        ? (this.enemy && this.enemy.troops)
+        : (this.player && this.player.troops);
+      troop.inMelee = bodyInMelee(troop, foes || []);
     }
     const shown = this.switchAnnouncement(troop, action, dir) || orderAnnouncement(troop, action);
     if (!shown) return;
@@ -887,6 +900,55 @@ export const boardStateMethods = {
     const group = reformSeekGroup(troop, allies);
     if (group.length < 2 || lineIsPerfect(group)) return null;
     return { text: "Reform", color: CONFIG.colors.reform };
+  },
+
+  /**
+   * Tooltip / callout word for an across-swipe in ±1 sublane direction.
+   * Solo units always Switch; lines may Reform into a matching mate or stagger.
+   */
+  switchSwipeLabel(troop, dir, solo) {
+    if (dir !== 1 && dir !== -1) return "Switch";
+    if (solo || !troop || !troop.side) return "Switch";
+    const allies = troop.side.troops;
+    if (lineMateOnRow(troop, troop.sublane + dir, allies)) return "Reform";
+    const group = reformSeekGroup(troop, allies);
+    if (group.length >= 2 && !lineIsPerfect(group)) return "Reform";
+    return "Switch";
+  },
+
+  /**
+   * Whether a +across swipe (screen "down" label) steps sublane +1 or −1.
+   * Returns the sublane dir for that visual side, or 0 if neither neighbor exists.
+   */
+  acrossSwipeDir(troop, towardAcrossPositive) {
+    if (!troop || !troop.side) return 0;
+    const count = Path.sublaneCount(troop.lane);
+    const tan = Path.tangentAt(
+      Path.waypoints(troop.side.id, troop.lane, troop.sublane),
+      troop.progress || 0,
+    );
+    const across = { x: -tan.y, y: tan.x };
+    const here = Path.pointAt(
+      Path.waypoints(troop.side.id, troop.lane, troop.sublane),
+      troop.progress || 0,
+    );
+    let best = 0;
+    let bestDot = -Infinity;
+    for (const dir of [-1, 1]) {
+      const row = troop.sublane + dir;
+      if (row < 0 || row >= count) continue;
+      const next = Path.pointAt(
+        Path.waypoints(troop.side.id, troop.lane, row),
+        troop.progress || 0,
+      );
+      const dot = (next.x - here.x) * across.x + (next.y - here.y) * across.y;
+      const want = towardAcrossPositive ? dot > 0 : dot < 0;
+      if (want && Math.abs(dot) > bestDot) {
+        bestDot = Math.abs(dot);
+        best = dir;
+      }
+    }
+    return best;
   },
 
   /** True when this troop is locked in body contact with a melee foe. */
@@ -1044,6 +1106,23 @@ function hasChargeSpeed(troop) {
   if (troop.order !== "charge" && troop.order !== "retreat") return false;
   if (!stats.chargeSpeed || stats.chargeSpeed === 1) return false;
   return true;
+}
+
+/** Body contact, same test the sim uses for melee order lock. */
+function bodyInMelee(troop, enemies) {
+  const stats = troopKindStats(troop);
+  if (!stats.fightsMelee || troop.hp <= 0) return false;
+  const radius = troop.radius || stats.radius;
+  const reach = radius + (CONFIG.meleeSlack || 0);
+  for (let i = 0; i < enemies.length; i += 1) {
+    const foe = enemies[i];
+    if (!foe || foe.hp <= 0 || foe.lane !== troop.lane) continue;
+    const foeStats = troopKindStats(foe);
+    if (!foeStats.fightsMelee) continue;
+    const foeRadius = foe.radius || foeStats.radius;
+    if (distance(troop, foe) <= reach + foeRadius) return true;
+  }
+  return false;
 }
 
 function inMeleeContact(troop, enemies) {
@@ -1252,7 +1331,12 @@ function orderAnnouncement(troop, action) {
     const next = action === "speedUp"
       ? Math.min(ladder.length - 1, idx + 1)
       : Math.max(0, idx - 1);
-    return orderStatus(ladder[next], false);
+    const nextOrder = ladder[next];
+    if (action === "speedDown" && troop && troop.inMelee
+      && (nextOrder === "fallback" || nextOrder === "retreat")) {
+      return orderStatus("retreat", false);
+    }
+    return orderStatus(nextOrder, false);
   }
   if (action === "cycle") {
     if (troop && troop.order === "halt") return { text: "Advance", color: CONFIG.colors.text };
@@ -1262,6 +1346,7 @@ function orderAnnouncement(troop, action) {
     return { text: "Charge", color: CONFIG.colors.charge };
   }
   if (action === "fallback" || action === "back") {
+    if (troop && troop.inMelee) return { text: "Retreat", color: CONFIG.colors.retreat };
     return { text: "Fallback", color: CONFIG.colors.fallback };
   }
   if (action === "switch" || action === "shift") return { text: "Switch", color: CONFIG.colors.laneHover };
@@ -1444,7 +1529,8 @@ export function applySnapshot(board, snap, seat, controlSide) {
     else board.drag.troop = next;
   }
   return (snap.sounds || []).map((sound) => {
-    if (sound.type !== "shoot") return sound;
+    if (sound.type !== "shoot" && sound.type !== "melee") return sound;
+    if (!sound.sideId) return sound;
     return { ...sound, sideId: viewOwner(sound.sideId) || sound.sideId };
   });
 }
@@ -1481,6 +1567,8 @@ export function createBoardState(canvas) {
     lanePress: null,
     enemyPress: null,
     orderCallout: null,
+    gestureHints: null,
+    tooltips: false,
     inspectedId: null,
     inspectedSolo: false,
     inspectedLineIds: null,
@@ -1502,5 +1590,6 @@ export function createBoardState(canvas) {
     laneCenterFromAt: 0,
     laneCenterToAt: 0,
     onCommand() {},
+    trainingMode: false,
   });
 }

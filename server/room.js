@@ -9,6 +9,8 @@ import {
 } from "./db.js";
 import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
+import { applyTrainingRules } from "./training.js";
+import { TrainingBotController } from "./trainingBot.js";
 
 export const TICK_MS = 50;
 export const STEP_DT = 0.05;
@@ -69,6 +71,9 @@ export class GameRoom {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),
     };
+    if (mode === "training") {
+      applyTrainingRules(this);
+    }
   }
 
   seatBySocket(socket) {
@@ -158,6 +163,10 @@ export class GameRoom {
     seat.mmr = null;
     seat.socket = null;
     seat.queue = [];
+    if (this.mode === "training") {
+      seat.bot = new TrainingBotController(seat.sideId);
+      return;
+    }
     seat.bot = new BotController(seat.sideId, {
       difficulty: this.botDifficulty,
       strategy: { ...this.botStrategy },
@@ -280,9 +289,13 @@ export class GameRoom {
     return true;
   }
 
-  /** 10s vs humans, 5s vs bot. */
+  /** 10s vs humans, 5s vs bot / train-vs-bot. */
   countdownDurationMs() {
-    return this.mode === "bot" ? BOT_COUNTDOWN_MS : COUNTDOWN_MS;
+    if (this.mode === "bot") return BOT_COUNTDOWN_MS;
+    if (this.mode === "training" && (this.seat.a.bot || this.seat.b.bot)) {
+      return BOT_COUNTDOWN_MS;
+    }
+    return COUNTDOWN_MS;
   }
 
   cancelCountdown() {
@@ -303,7 +316,9 @@ export class GameRoom {
 
   tick() {
     if (this.status !== "playing") return;
-    const scale = this.mode === "bot" ? this.speedScale : 1;
+    const scale = (this.mode === "bot" || this.mode === "training")
+      ? this.speedScale
+      : 1;
     this.speedAccum += scale;
     const cap = CONFIG.botSpeedStepCap || 4;
     let steps = Math.floor(this.speedAccum);
@@ -352,6 +367,9 @@ export class GameRoom {
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
     if (!cmd || typeof cmd !== "object" || Array.isArray(cmd)) return;
+    if (this.mode === "training" && cmd.type === "buy" && cmd.lane !== "bottom") {
+      return;
+    }
     if (seat.queue.length >= 30) return;
     seat.queue.push(cmd);
   }
@@ -415,6 +433,7 @@ export class GameRoom {
 
   waitingText() {
     if (this.mode === "ranked") return "Searching for a ranked match";
+    if (this.mode === "training") return "Waiting for a training opponent";
     return "Waiting for an opponent";
   }
 

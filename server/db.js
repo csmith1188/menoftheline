@@ -65,6 +65,7 @@ export async function initDb() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    tooltips INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
   )`);
   await run(`CREATE TABLE IF NOT EXISTS accounts (
@@ -75,6 +76,7 @@ export async function initDb() {
     held INTEGER NOT NULL DEFAULT 0,
     wins INTEGER NOT NULL DEFAULT 0,
     losses INTEGER NOT NULL DEFAULT 0,
+    tooltips INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -137,6 +139,14 @@ export async function initDb() {
     rewarded_at INTEGER
   )`);
   await run("UPDATE accounts SET held = 0");
+  const accountCols = await all("PRAGMA table_info(accounts)");
+  if (!accountCols.some((col) => col.name === "tooltips")) {
+    await run("ALTER TABLE accounts ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
+  }
+  const userCols = await all("PRAGMA table_info(users)");
+  if (!userCols.some((col) => col.name === "tooltips")) {
+    await run("ALTER TABLE users ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
+  }
   await seedWikiHome();
 }
 
@@ -169,7 +179,7 @@ export async function createGuest() {
 
 export async function getUser(id) {
   if (!id) return null;
-  const row = await get("SELECT id, name FROM users WHERE id = ?", [id]);
+  const row = await get("SELECT id, name, tooltips FROM users WHERE id = ?", [id]);
   return row || null;
 }
 
@@ -195,7 +205,7 @@ export async function getAccount(formbarId) {
   const id = Number(formbarId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const row = await get(
-    "SELECT formbar_id, name, mmr, tickets, held, wins, losses FROM accounts WHERE formbar_id = ?",
+    "SELECT formbar_id, name, mmr, tickets, held, wins, losses, tooltips FROM accounts WHERE formbar_id = ?",
     [id],
   );
   return row || null;
@@ -317,6 +327,32 @@ export async function insertGame(game) {
       game.endedAt,
     ],
   );
+}
+
+/** Persist in-match gesture tooltip preference for an account or guest. */
+export async function setPlayerTooltips(player, on) {
+  const value = on ? 1 : 0;
+  if (!player) return false;
+  if (player.formbarId) {
+    const id = Number(player.formbarId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    const result = await run(
+      "UPDATE accounts SET tooltips = ?, updated_at = ? WHERE formbar_id = ?",
+      [value, Date.now(), id],
+    );
+    return result.changes > 0;
+  }
+  if (!player.id) return false;
+  const result = await run(
+    "UPDATE users SET tooltips = ? WHERE id = ?",
+    [value, player.id],
+  );
+  return result.changes > 0;
+}
+
+export function tooltipsEnabled(row) {
+  if (!row || row.tooltips == null) return true;
+  return Number(row.tooltips) !== 0;
 }
 
 export async function topAccounts(limit = 10) {

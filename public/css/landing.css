@@ -203,6 +203,32 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
+.play-split.play-thirds form {
+  flex: 1 1 0;
+}
+
+.play-split.play-thirds form button {
+  border-radius: 0;
+  border-right: none;
+  border-left: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
+  padding-left: 8px;
+  padding-right: 8px;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+}
+
+.play-split.play-thirds form:first-child button {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  border-left: none;
+}
+
+.play-split.play-thirds form:last-child button {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  border-right: none;
+}
+
 label {
   font-size: 0.85rem;
   letter-spacing: 0.06em;

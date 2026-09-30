@@ -438,7 +438,10 @@ export function createScene(canvas) {
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
+  const hintScratch = new THREE.Vector3();
   let lastPickedTroopId = null;
+  const gestureHintsEl = document.getElementById("gesture-hints");
+  const hintNodes = [];
 
   function fitBoardMetrics(board) {
     const rect = canvas.getBoundingClientRect();
@@ -902,16 +905,20 @@ export function createScene(canvas) {
       const land = unitLandCost(spawn);
       const can = !over && board.player.gold >= stats.cost && board.player.land >= land;
       const lane = board.buyDrag && board.buyDrag.index === i ? board.buyDrag.lane : null;
+      const typeSwipe = board.buyDrag && board.buyDrag.index === i
+        ? board.buyDrag.variantSwipe
+        : null;
+      const armed = Boolean(lane || typeSwipe);
       const alt = spawn !== unit.type;
       const unitBg = buyBgImage(unit.type);
       mesh.material.color.set(alt ? "#ffffff" : unit.fill);
       mesh.material.opacity = can ? 1 : 0.45;
       mesh.material.transparent = true;
-      mesh.material.emissive.set(lane ? "#ffffff" : "#000000");
-      mesh.material.emissiveIntensity = lane ? 0.22 : 0;
+      mesh.material.emissive.set(armed ? "#ffffff" : "#000000");
+      mesh.material.emissiveIntensity = armed ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
       const hasVariant = Boolean(UNIT_VARIANTS[unit.type]);
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${alt}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${typeSwipe || ""}:${alt}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -986,9 +993,10 @@ export function createScene(canvas) {
       const mode = board.targetingMode(lane);
       const label = TARGETING_LABELS[mode] || mode;
       const dragging = board.strategyDrag && board.strategyDrag.lane === lane;
+      const swipe = dragging ? board.strategyDrag.swipe : null;
       mesh.material.emissive.set(dragging ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = dragging ? 0.18 : 0;
-      const key = `${label}:${over}:${dragging ? 1 : 0}`;
+      const key = `${label}:${over}:${dragging ? 1 : 0}:${swipe || ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
@@ -996,7 +1004,7 @@ export function createScene(canvas) {
           width: 256,
           height: 96,
           fill: fills[lane],
-          stroke: strokes[lane],
+          stroke: dragging && !over ? "#ffffff" : strokes[lane],
           sideArrows: true,
           key,
         });
@@ -1022,6 +1030,49 @@ export function createScene(canvas) {
     syncShots(board);
     syncSplats(board);
     renderer.render(scene, camera);
+    syncGestureHints(board);
+  }
+
+  function syncGestureHints(board) {
+    if (!gestureHintsEl) return;
+    const hints = board.gestureHints;
+    const labels = hints && hints.labels ? hints.labels : [];
+    while (hintNodes.length < labels.length) {
+      const el = document.createElement("span");
+      el.className = "gesture-hint";
+      gestureHintsEl.appendChild(el);
+      hintNodes.push(el);
+    }
+    const rect = canvas.getBoundingClientRect();
+    const stage = gestureHintsEl.parentElement;
+    const stageRect = stage ? stage.getBoundingClientRect() : rect;
+    world.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    for (let i = 0; i < hintNodes.length; i += 1) {
+      const el = hintNodes[i];
+      const label = labels[i];
+      if (!label) {
+        el.style.display = "none";
+        continue;
+      }
+      // Buy/strategy pads sit a bit above the ground plane; units are ~12.
+      const lift = board.buyDrag || board.strategyDrag ? 18 : 14;
+      hintScratch.set(label.x, lift, label.y);
+      world.localToWorld(hintScratch);
+      hintScratch.project(camera);
+      if (!Number.isFinite(hintScratch.x) || !Number.isFinite(hintScratch.y)
+          || hintScratch.z < -1 || hintScratch.z > 1) {
+        el.style.display = "none";
+        continue;
+      }
+      const sx = (hintScratch.x * 0.5 + 0.5) * rect.width + (rect.left - stageRect.left);
+      const sy = (-hintScratch.y * 0.5 + 0.5) * rect.height + (rect.top - stageRect.top);
+      el.textContent = label.text;
+      el.classList.toggle("active", hints.active != null && label.id === hints.active);
+      el.style.display = "block";
+      el.style.left = `${sx}px`;
+      el.style.top = `${sy}px`;
+    }
   }
 
   function frameOverview() {

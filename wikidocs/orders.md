@@ -11,7 +11,7 @@ A unit is always under one order. Advance is the order units start with. How to 
 
 **Fall Back.** The unit moves backward at half speed and ignores friendly footprints. It may shoot at engagement range, but reloads at half speed. Skirmishers reload at full speed. See [[Units]] and [[Shooting]].
 
-**Retreat.** The unit moves backward at charge speed and ignores friendly footprints. It gains fatigue while it moves, and Falls Back when the fatigue bar is full or when it reaches its own end of the lane. You cannot order Retreat yourself. Broken units Retreat on their own. See [[Fatigue and Breaking]].
+**Retreat.** The unit moves backward at charge speed and ignores friendly footprints. It keeps moving while in melee. Melee attacks and leaving melee range do not stop or cancel Retreat. It gains fatigue while it moves, and Falls Back when it reaches its own end of the lane. Fall Back while in melee orders Retreat on that unit alone. Broken units Retreat on their own until the fatigue bar is full or they reach their own end of the lane, then Fall Back. See [[Fatigue and Breaking]].
 
 **Reform.** The furthest-forward units in the line stop. The furthest-back units move at full speed. Everyone else moves at half speed. Units walk up until they match the front's place along the lane — they do not snap into place. When the whole line is level with the front, every unit Halts. Reform only recruits same-type units on adjacent rows that are In Line; an empty row still splits the chain. See [[Lines]] and [[The Map]].
 
@@ -19,4 +19,4 @@ A unit is always under one order. Advance is the order units start with. How to 
 
 ## Melee orders
 
-A unit in [[Melee]] keeps its order. The only order you may give it is Fall Back, and that Fall Back applies to that unit alone. When a unit that is not Charging leaves melee because the enemy is no longer in reach, it Halts. A unit that would enter melee while overlapping a friendly already in melee peels away and returns to Advance.
+A unit in [[Melee]] keeps its order. The only order you may give it is Fall Back, and that applies to that unit alone. Fall Back in melee is Retreat. Retreat keeps moving through the fight, and melee attacks or leaving melee range do not stop or cancel it. When a unit that is not Charging or Retreating leaves melee because the enemy is no longer in reach, it Halts. A unit that would enter melee while overlapping a friendly already in melee peels away and returns to Advance.

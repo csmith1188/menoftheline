@@ -1,5 +1,14 @@
 [
   {
+    "date": "2026-09-30",
+    "title": "Training Mode and Tooltips",
+    "summary": "New features have been added to help new players get oriented.",
+    "items": [
+      "Can start a training mode game against a bot or other random player. Only the bottom lane is active, and the game is slowed down.",
+      "Tooltips now show you the anticipated action when clicking/touching an object in the game."
+    ]
+  },
+  {
     "date": "2026-09-29",
     "title": "3D Client and Speed Tweaks",
     "summary": "Play in 3D!",
@@ -7,7 +16,8 @@
       "Choose the 3D client when creating or joining a game.",
       "Game speed is now 2/3 the original speed. This should allow players to spend more time arranging their units and managin their economy."
     ]
-  },{
+  },
+  {
     "date": "2026-09-29",
     "title": "Unit, Unit Controls, and Unit Icons Rework",
     "summary": "Unit names and controls have been updated to reflect the new unit types.",

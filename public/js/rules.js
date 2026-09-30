@@ -805,7 +805,7 @@ const howtoPages = [
           "Click Banks to buy them.",
           "Swipe Unit Buttons up/down to purchase for the top/bottom lane.",
           "Swipe Unit Buttons left/right to change the unit type.",
-          "Swipe Strategy Buttons left/right or click to change Strategy for that lane.",
+          "Swipe Strategy Buttons left/right to change Strategy for that lane.",
           "Click a Town you control to enable/disable researching in that town.",
         ],
       },

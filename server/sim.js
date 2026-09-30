@@ -287,7 +287,6 @@ class Unit {
     this.meleeLockTimer = 0;
     this.orderHeld = false;
     this.heldOrder = null;
-    this.fallbackLeavesMelee = false;
     /** Prior tick order; used to detect ending a pass-through while stacked. */
     this.prevCollisionOrder = null;
     /** Prior tick melee lock; paired with prevCollisionOrder for peel detect. */
@@ -387,11 +386,13 @@ class Unit {
 
   /**
    * Accept an order. In melee the only accepted order is Fall Back,
-   * and it is not stored for later.
+   * and that is Retreat immediately. Retreat is not stored for later.
    */
   commitOrder(next, enemies) {
     if (this.broken) return;
-    if (enemies && this.isInMelee(enemies) && next !== "fallback") return;
+    const inMelee = Boolean(enemies && this.isInMelee(enemies));
+    if (inMelee && next === "fallback") next = "retreat";
+    if (inMelee && next !== "retreat") return;
     this.orderHeld = false;
     this.heldOrder = null;
     this.squared = false;
@@ -407,7 +408,6 @@ class Unit {
       this.switchEaseDir = 0;
       this.playerSwitch = false;
     }
-    this.fallbackLeavesMelee = false;
   }
 
   /** Apply an order to this troop's order group. */
@@ -523,13 +523,18 @@ class Unit {
   }
 
   /**
-   * Fall back at reform speed. Starts even in melee. A fallback that
-   * then leaves melee becomes a retreat, without breaking the unit.
+   * Fall back at reform speed. In melee this is Retreat immediately:
+   * retreat speed, and the order keeps moving through contact.
+   * Melee attacks and leaving melee range do not cancel that Retreat.
    */
   issueFallback(allies, enemies, solo) {
-    if (this.broken || this.order === "fallback") {
+    if (this.broken) return;
+    if (enemies && this.isInMelee(enemies)) {
+      if (this.order === "retreat") return;
+      this.applyGroupOrder(allies, "retreat", solo, enemies);
       return;
     }
+    if (this.order === "fallback") return;
     this.applyGroupOrder(allies, "fallback", solo, enemies);
   }
 
@@ -1656,7 +1661,6 @@ class Unit {
     this.pendingSwitchDir = null;
     this.orderHeld = false;
     this.heldOrder = null;
-    this.fallbackLeavesMelee = false;
   }
 
   /**
@@ -2510,10 +2514,18 @@ class Unit {
       const along = this.alongSigned(other);
       // Away from the closer unit: ahead → back, behind → forward, tie → back.
       this.peelDir = along < 0 ? 1 : -1;
+      // Lane start clamps progress at 0 — backward peel cannot clear a stack.
+      if (this.peelDir < 0 && this.progress <= 0) {
+        this.peelDir = 1;
+      }
     }
     // Ignore friendlies and enemies while peeling off a friendly stack so we
     // can leave the pile. Melee lock against enemies is restored after.
-    this.easeAlong(dt, allies, enemies, this.peelDir, true, true);
+    if (!this.easeAlong(dt, allies, enemies, this.peelDir, true, true)
+      && this.peelDir < 0) {
+      this.peelDir = 1;
+      this.easeAlong(dt, allies, enemies, this.peelDir, true, true);
+    }
 
     if (!this.peelTarget(allies, enemies)) {
       this.peelingFromPassThrough = false;
@@ -3166,7 +3178,7 @@ class Unit {
     const shot = this.attackDamage(target, strike, allies);
     if (strike === "melee") {
       this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnMelee);
-      this.side.sim.emitSound({ type: "melee" });
+      this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
       if (target && target.capitalHP !== undefined) {
         const sum = (shot.attackerSum || 0)
           - CONFIG.armorPerUpgrade * target.upgrades.armor;
@@ -3235,7 +3247,15 @@ class Unit {
     } else if (this.meleeLockTimer > 0) {
       this.meleeLockTimer = Math.max(0, this.meleeLockTimer - dt);
     }
-    if (this.wasInMelee && !inMeleeNow && !this.broken && this.order !== "charge") {
+    // Fall Back that is still in the fight is Retreat. A retreat that has
+    // already reached this side's end of the lane stays Fall Back.
+    if (inMeleeNow && !this.broken && this.order === "fallback" && this.progress > 0) {
+      this.order = "retreat";
+    }
+    // Leaving melee Halts, except Charge and Retreat. Retreat is not
+    // cancelled by walking out of contact or by the fight that caused it.
+    if (this.wasInMelee && !inMeleeNow && !this.broken
+      && this.order !== "charge" && this.order !== "retreat") {
       this.order = "halt";
       this.reformNeedsAlign = false;
       this.priorOrder = null;
@@ -3285,8 +3305,10 @@ class Unit {
       return;
     }
 
-    // In melee a unit holds still, unless sliding a non-adjacent escape.
-    const meleeLock = inMeleeNow && !this.switchEscape;
+    // In melee a unit holds still, unless retreating or sliding a
+    // non-adjacent escape. Retreat keeps its order and its movement;
+    // melee swings and contact distance do not stop it.
+    const meleeLock = inMeleeNow && !this.switchEscape && this.order !== "retreat";
     if (this.strafing && !meleeLock && this.strafe(dt, enemies, allies)) {
       return;
     }

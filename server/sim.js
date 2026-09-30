@@ -1606,7 +1606,8 @@ class Unit {
    * retreating until fatigue is full or they reach their own end of the
    * lane, then switch to fallback. Otherwise halt recovers at idle rate,
    * and own capital recovers faster. Overlapping the keep also restores
-   * health at that same recovery rate. A broken unit rallies once fatigue
+   * health at that same recovery rate when no enemy stands between the
+   * keep and its fort in this lane. A broken unit rallies once fatigue
    * is at or below half its current hp.
    */
   tickFatigue(dt, enemies) {
@@ -1622,7 +1623,7 @@ class Unit {
     } else if (this.inCapitalRange()) {
       const recovered = CONFIG.fatigueRecoverRate * dt;
       this.fatigue = Math.max(0, this.fatigue - recovered);
-      if (this.hp > 0 && this.overlapsOwnCapital()) {
+      if (this.hp > 0 && this.overlapsOwnCapital() && this.laneClearToOwnFort()) {
         this.hp = Math.min(this.maxHp, this.hp + recovered);
       }
     } else if (this.order === "halt") {
@@ -1764,6 +1765,22 @@ class Unit {
     for (let i = 0; i < foes.length; i += 1) {
       const foe = foes[i];
       if (foe.hp > 0 && !foe.broken && foe.lane === this.lane) return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when no living enemy stands in this lane from our keep out to
+   * our fort. Keep health restore only runs while this is clear.
+   */
+  laneClearToOwnFort() {
+    const foes = this.enemyTroops();
+    const limit = CONFIG.fortDistancePaces;
+    const sideId = this.side.id;
+    for (let i = 0; i < foes.length; i += 1) {
+      const foe = foes[i];
+      if (foe.hp <= 0 || foe.lane !== this.lane) continue;
+      if (foe.pacesFromKeep(sideId) <= limit) return false;
     }
     return true;
   }
@@ -4455,6 +4472,8 @@ export class GameSim {
    * Strongest officer, strongest color guard, and the keep band.
    * They stack with each other. A second officer or color guard does not.
    * Double rate when the source is ahead of the unit. The keep band does not.
+   * Keep health restore only applies when that lane has no enemy between
+   * the keep and its fort; keep fatigue restore still runs.
    */
   applySupport(side, dt) {
     const troops = side.troops;
@@ -4483,7 +4502,8 @@ export class GameSim {
       const keepRate = guardBase * this.keepAuraMultiplier(unit);
       const fatigue = (bestOfficer + bestGuard + keepRate) * dt;
       if (fatigue > 0) unit.fatigue = Math.max(0, unit.fatigue - fatigue);
-      const heal = (bestGuard + keepRate) * dt;
+      const keepHeal = unit.laneClearToOwnFort() ? keepRate : 0;
+      const heal = (bestGuard + keepHeal) * dt;
       if (heal > 0) this.applyHeal(unit, heal);
     }
   }

@@ -1,6 +1,6 @@
 <form class="buy" method="post" action="/tickets">
   <input type="hidden" name="next" value="<%= nextPath %>">
   <label for="pin">Digipog PIN</label>
-  <input id="pin" name="pin" inputmode="numeric" autocomplete="off" required>
+  <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Enter your PIN" required>
   <button type="submit">Buy <%= packSize %> tickets for <%= packCost %> digipogs</button>
 </form>

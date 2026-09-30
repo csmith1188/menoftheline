@@ -18,11 +18,11 @@
 
 # Feature
 - Load wiki from MDs, not database? How will it diff?
+- Wiki Categories
 - Add more game metrics
     Each type of game played
     Average length of game
     Tickets spent
-
 - Music
 - terrain:
     - hills -> neutral forts

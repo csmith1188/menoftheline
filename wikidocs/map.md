@@ -15,7 +15,8 @@ Distances along a lane are measured from a unit's center. Each figure below is a
 
 - **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot.
 - **In Line:** 8 paces either side. [[Lines]] form inside this reach.
-- **Footprint:** 12 paces either side. Footprints that meet are touching. Overlapping footprints are in [[Melee]].
+- **Footprint:** 12 paces either side. Footprints that meet are touching. Friendly blocking and fort cover use this reach.
+- **Melee reach:** footprint plus 6 paces of slack either side. Same-row or adjacent-row contact inside this reach is [[Melee]]. Chargers stop just outside the hard footprint and lock in that slack ring.
 - **Shooting range:** each unit has its own, measured either way along the lane. See [[Shooting]] and [[Units]].
 - **Engagement range:** half of that unit's shooting range.
 

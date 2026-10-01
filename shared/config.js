@@ -77,12 +77,10 @@ export const CONFIG = {
   upgradeMax: 5,
   /** Added to the side speed multiplier per speed purchase. */
   speedUpgradeAmount: 0.1,
-  /** Extra attack-rate fraction per speed upgrade. */
-  speedAttackFactor: 0.05,
   /** Extra outgoing damage per damage purchase. */
-  damageUpgradeAmount: 0.1,
+  damageUpgradeAmount: 0.05,
   /** Incoming damage reduction per armor purchase. */
-  armorPerUpgrade: 0.1,
+  armorPerUpgrade: 0.05,
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
   /** Alternate unit land price as a fraction of its gold cost. */

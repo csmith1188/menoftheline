@@ -175,8 +175,10 @@ class Projectile {
       return;
     }
     if (this.target.capitalHP !== undefined) {
-      const sum = (this.attackerSum || 0) - CONFIG.armorPerUpgrade * this.target.upgrades.armor;
-      const hit = truncateDamage(Math.max(0, this.damage * (1 + sum)));
+      const hit = truncateDamage(Math.max(
+        0,
+        this.damage * (1 + (this.attackerSum || 0)) * (1 - this.target.armorReduction()),
+      ));
       this.target.capitalHP -= hit;
       const keep = this.target.capital;
       this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
@@ -1832,7 +1834,7 @@ class Unit {
     if (kind !== "melee" && this.order === "fallback" && this.type !== "skirmisher") {
       base *= 2;
     }
-    return base / (1 + CONFIG.speedAttackFactor * this.side.upgrades.speed);
+    return base;
   }
 
   /** Snap onto the current sublane path. Used after a finished strafe. */
@@ -3047,12 +3049,14 @@ class Unit {
   }
 
   /**
-   * Apply raw (base × falloff) plus the attacker's percent sum.
-   * Defense, cover, and skirmisher shot resistance join that sum here.
+   * Apply raw (base × falloff), the attacker's percent sum, then defensive
+   * multipliers (armor, cover, skirmisher shot resistance) one after another.
    */
   takeDamage(raw, kind, attackerSum) {
-    const sum = (attackerSum || 0) + this.incomingPercents(kind);
-    const hit = truncateDamage(Math.max(0, raw * (1 + sum)));
+    const hit = truncateDamage(Math.max(
+      0,
+      raw * (1 + (attackerSum || 0)) * this.incomingMultiplier(kind),
+    ));
     this.hp -= hit;
     this.flash = 0.12;
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
@@ -3064,13 +3068,16 @@ class Unit {
     this.tryBreak();
   }
 
-  /** Signed percents for armor, fort cover, and skirmisher shot resistance. */
-  incomingPercents(kind) {
-    const armor = this.side ? CONFIG.armorPerUpgrade * this.side.upgrades.armor : 0;
-    let sum = -armor;
-    if (this.hasCover()) sum -= CONFIG.quarterArmor;
-    if (kind !== "melee" && this.type === "skirmisher") sum -= 0.5;
-    return sum;
+  /**
+   * Product of defensive factors: armor ranks, fort cover, and skirmisher
+   * shot resistance. Each stacks by multiplying, not by adding percents.
+   */
+  incomingMultiplier(kind) {
+    let mult = 1;
+    if (this.side) mult *= 1 - this.side.armorReduction();
+    if (this.hasCover()) mult *= 1 - CONFIG.quarterArmor;
+    if (kind !== "melee" && this.type === "skirmisher") mult *= 0.5;
+    return Math.max(0, mult);
   }
 
   /** True when this body overlaps this side's fort in this lane. */
@@ -3110,7 +3117,8 @@ class Unit {
 
   /**
    * Attacker percents added together: variance, charge, flank, line,
-   * damage upgrade, and the officer-damage bonus. Not yet truncated.
+   * damage upgrade, and the officer-damage bonus. Defense is applied
+   * separately on impact as multipliers. Not yet truncated.
    */
   attackerPercents(target, kind, allies) {
     const strike = kind || "shoot";
@@ -3127,7 +3135,8 @@ class Unit {
 
   /**
    * Base × falloff, before percent modifiers. Melee has no falloff.
-   * The percent sum travels with the shot and is applied on impact.
+   * The attacker percent sum travels with the shot; defensive multipliers
+   * are applied on impact.
    */
   attackDamage(target, kind, allies) {
     const strike = kind || "shoot";
@@ -3164,9 +3173,10 @@ class Unit {
       this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnMelee);
       this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
       if (target && target.capitalHP !== undefined) {
-        const sum = (shot.attackerSum || 0)
-          - CONFIG.armorPerUpgrade * target.upgrades.armor;
-        const hit = truncateDamage(Math.max(0, shot.raw * (1 + sum)));
+        const hit = truncateDamage(Math.max(
+          0,
+          shot.raw * (1 + (shot.attackerSum || 0)) * (1 - target.armorReduction()),
+        ));
         target.capitalHP -= hit;
         this.side.sim.spawnSplat(target.capital.x, target.capital.y, hit, "melee");
       } else if (target && target.takeDamage) {
@@ -3794,16 +3804,16 @@ class Side {
     return this.land >= this.upgradeCost(kind);
   }
 
-  /** Incoming damage multiplier after armor ranks. */
+  /** Fraction of incoming damage removed by armor ranks (capped). */
   armorReduction() {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
 
-  /** Apply armor as a percent taken off the incoming amount. */
+  /** Apply armor and optional fort cover as separate multipliers. */
   mitigate(amount, cover) {
-    let sum = -CONFIG.armorPerUpgrade * this.upgrades.armor;
-    if (cover) sum -= CONFIG.quarterArmor;
-    return Math.max(0, amount * (1 + sum));
+    let mult = 1 - this.armorReduction();
+    if (cover) mult *= 1 - CONFIG.quarterArmor;
+    return Math.max(0, amount * mult);
   }
 
   /** Outgoing damage multiplier from damage ranks. */
@@ -4040,8 +4050,7 @@ class Side {
       },
     ));
     this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "cannon", sideId: this.id });
-    this.shotCooldown = CONFIG.capitalCannonAttackCooldown
-      / (1 + CONFIG.speedAttackFactor * this.upgrades.speed);
+    this.shotCooldown = CONFIG.capitalCannonAttackCooldown;
   }
 
   /** Tick the keep gun: fire at the nearest in-range foe when ready. */

@@ -6,7 +6,7 @@ The Bottom lane has five towns, spaced evenly along the lane. See [[The Map]]. T
 From either end the towns are Defense, Speed, Damage, Speed, Defense. Research spends 1 land per second until the rank is paid for. Each rank costs the same land price. There are five ranks.
 
 - **Defense** reduces [[Damage]] taken by 10% per rank.
-- **Speed** increases move speed and charge speed by 10% per rank. [[Shooting]] and [[Melee]] reload 5% faster per rank.
+- **Speed** increases move speed and charge speed by 10% per rank.
 - **Damage** increases melee and shooting damage by 10% per rank.
 
-Ranks of the same upgrade add together. Rank 3 is one +30% modifier, not three separate +10% multipliers. How those modifiers combine is on [[Damage]].
+Ranks of the same upgrade add together. Rank 3 Damage is one +30% attacker modifier, not three separate ×1.1 multipliers. Rank 3 Defense is one ×0.7 incoming factor. Defense then multiplies with cover and other defensive factors. How those modifiers combine is on [[Damage]].

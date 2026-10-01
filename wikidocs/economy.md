@@ -6,7 +6,7 @@ Each player starts with 600 gold and 0 land.
 - Gain 10 gold per second.
 - Gain up to 10 more gold per second, multiplied by your share of the Top middle line. A 60% share pays 6 gold per second.
 - Gain up to 10 land per second, multiplied by your share of the Bottom middle line.
-- Pay upkeep each second: half a percent of the gold cost of each unit you control, scaled by that unit's remaining health.
+- Pay upkeep each second: one percent of the gold cost of each living unit you control.
 
 How that share is measured is on [[The Middle Line]]. Spend land on [[Towns]]. Unit costs are on [[Units]].
 

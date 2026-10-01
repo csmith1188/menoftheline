@@ -47,13 +47,13 @@ export const UNIT_STATS = {
   skirmisher: {
     ...SHOT,
     hp: 100,
-    rangedDamage: 8,
-    meleeDamage: 8,
+    rangedDamage: 7,
+    meleeDamage: 7,
     range: 200,
     engageRange: 0.5,
     chargeSpeed: 1.5,
     flankMultiplier: 1.2,
-    rangedCooldown: 1.5,
+    rangedCooldown: 1,
     meleeCooldown: 1.5,
     speed: 15,
     cost: 100,
@@ -255,7 +255,7 @@ export function unitLandCost(type) {
 
 /**
  * Gold drained per second for the units on the field.
- * Each living unit pays massTaxRate of its gold cost, scaled by remaining health.
+ * Each living unit pays massTaxRate of its gold cost (full cost, not scaled by HP).
  */
 export function massTaxOf(troops) {
   if (!troops) return 0;
@@ -265,9 +265,7 @@ export function massTaxOf(troops) {
     const troop = troops[i];
     if (!troop || troop.hp <= 0) continue;
     const stats = unitStats(troop.variant || troop.type);
-    const maxHp = troop.maxHp || stats.hp;
-    if (maxHp <= 0) continue;
-    tax += stats.cost * (Math.max(0, troop.hp) / maxHp) * rate;
+    tax += stats.cost * rate;
   }
   return tax;
 }

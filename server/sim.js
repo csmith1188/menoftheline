@@ -4303,12 +4303,18 @@ export class GameSim {
 
 
   /**
-   * Income uses the live middle line. The client eases the drawn line
-   * on its own, so the payout is never waiting on that animation.
+   * Glide the drawn lane shares toward the live push. A hit, break, or
+   * death changes the target at once; the line and the payout catch up.
    */
-  easeLaneCenters() {
-    this.shownTop = this.laneCenterT("top");
-    this.shownBottom = this.laneCenterT("bottom");
+  easeLaneCenters(dt) {
+    const tau = CONFIG.laneCenterEase;
+    const k = !(tau > 0) ? 1 : 1 - Math.exp(-dt / tau);
+    const top = this.laneCenterT("top");
+    const bottom = this.laneCenterT("bottom");
+    this.shownTop += (top - this.shownTop) * k;
+    this.shownBottom += (bottom - this.shownBottom) * k;
+    if (Math.abs(top - this.shownTop) < 1e-4) this.shownTop = top;
+    if (Math.abs(bottom - this.shownBottom) < 1e-4) this.shownBottom = bottom;
   }
 
   /**
@@ -4329,7 +4335,7 @@ export class GameSim {
    * Tax cannot push a treasury below zero.
    */
   tickIncome(dt) {
-    this.easeLaneCenters();
+    this.easeLaneCenters(dt);
     this.refreshIncomes();
     this.player.gold = Math.max(0, this.player.gold + (this.player.income - this.player.massTax()) * dt);
     this.enemy.gold = Math.max(0, this.enemy.gold + (this.enemy.income - this.enemy.massTax()) * dt);

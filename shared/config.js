@@ -48,9 +48,10 @@ export const CONFIG = {
   /**
    * Time constant, in seconds, for the lane-center line. Each interval
    * of this length closes about two thirds of the gap after a sudden
-   * change in push. Gold and land use this eased share.
+   * change in push. Gold and land use this eased share. The client
+   * also glides the drawn line between snapshots using this pace.
    */
-  laneCenterEase: 0.4,
+  laneCenterEase: 1.0,
   /** How many banks sit above each capital. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
@@ -59,10 +60,7 @@ export const CONFIG = {
   bankCostStep: 120,
   /** Gold/sec granted per unlock, times current unlocked count. */
   bankIncomePer: 3,
-  /**
-   * Mass tax per second: this fraction of a living unit's gold cost,
-   * times its remaining health (current hp / max hp).
-   */
+  /** Mass tax per second: this fraction of a living unit's gold cost. */
   massTaxRate: 0.01,
   /** Match time (seconds) when each bank becomes purchasable. */
   bankUnlockAt: [0, 120, 240],

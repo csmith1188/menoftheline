@@ -25,13 +25,6 @@
 - 3d should always zoom in to fill screen with map
 - draw everything in canvas and take full screen
 
-# Feedback Notes
-- Armor / defense algorithm?
-- Upgrade power
-- Line Bonus?
-- Upkeep whole unit
-- Easing Middle Line
-
 # Roadmap
 - Feedback Patches
 - Lancer charge first hit damage

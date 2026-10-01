@@ -198,16 +198,23 @@ export const boardStateMethods = {
   },
 
   /**
-   * Glide the drawn lane lines from the previous snapshot share to the
-   * latest one. Gold and land labels on the line read these values.
+   * Glide the drawn lane lines toward the latest snapshot share.
+   * Gold and land labels on the line read these values.
    */
   presentLaneCenters(now = performance.now()) {
-    const fromAt = this.laneCenterFromAt;
-    const toAt = this.laneCenterToAt;
-    if (!fromAt || !toAt || toAt <= fromAt) return;
-    const u = Math.min(1, (now - fromAt) / (toAt - fromAt));
-    this.topCenter = this.topCenterFrom + (this.topCenterTo - this.topCenterFrom) * u;
-    this.bottomCenter = this.bottomCenterFrom + (this.bottomCenterTo - this.bottomCenterFrom) * u;
+    const last = this.laneCenterLastAt || now;
+    const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+    this.laneCenterLastAt = now;
+    const tau = CONFIG.laneCenterEase;
+    const k = !(tau > 0) || dt <= 0 ? 1 : 1 - Math.exp(-dt / tau);
+    this.topCenter += (this.topCenterTo - this.topCenter) * k;
+    this.bottomCenter += (this.bottomCenterTo - this.bottomCenter) * k;
+    if (Math.abs(this.topCenterTo - this.topCenter) < 1e-4) {
+      this.topCenter = this.topCenterTo;
+    }
+    if (Math.abs(this.bottomCenterTo - this.bottomCenter) < 1e-4) {
+      this.bottomCenter = this.bottomCenterTo;
+    }
   },
 
   /** Drawn control sizes plus extra hit padding so taps reach 44 CSS px. */
@@ -1472,20 +1479,15 @@ export function applySnapshot(board, snap, seat, controlSide) {
   applyCountdownTiming(board, snap);
   const top = mirror ? 1 - snap.topCenter : snap.topCenter;
   const bottom = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
-  board.presentLaneCenters();
-  const now = performance.now();
-  const first = !board.laneCenterFromAt;
-  const gap = board.laneCenterToAt > board.laneCenterFromAt
-    ? board.laneCenterToAt - board.laneCenterFromAt
-    : 50;
-  board.topCenterFrom = first ? top : board.topCenter;
-  board.bottomCenterFrom = first ? bottom : board.bottomCenter;
+  const first = !board.laneCenterLastAt;
+  if (!first) board.presentLaneCenters();
   board.topCenterTo = top;
   board.bottomCenterTo = bottom;
-  board.topCenter = board.topCenterFrom;
-  board.bottomCenter = board.bottomCenterFrom;
-  board.laneCenterFromAt = now;
-  board.laneCenterToAt = first ? now : now + Math.min(250, Math.max(16, gap));
+  if (first) {
+    board.topCenter = top;
+    board.bottomCenter = bottom;
+    board.laneCenterLastAt = performance.now();
+  }
   board.player = makeSide(snap.sides[mine], "player", board, mx);
   board.enemy = makeSide(snap.sides[mine === "player" ? "enemy" : "player"], "enemy", board, mx);
   board.checkpoints = snap.checkpoints.map((town) => makeCheckpoint({
@@ -1563,12 +1565,9 @@ export function createBoardState(canvas) {
     southpaw: readSouthpaw(),
     topCenter: 0.5,
     bottomCenter: 0.5,
-    topCenterFrom: 0.5,
-    bottomCenterFrom: 0.5,
     topCenterTo: 0.5,
     bottomCenterTo: 0.5,
-    laneCenterFromAt: 0,
-    laneCenterToAt: 0,
+    laneCenterLastAt: 0,
     onCommand() {},
     trainingMode: false,
   });

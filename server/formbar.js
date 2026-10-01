@@ -106,18 +106,21 @@ export async function payPool(socketClient, { userId, poolId, amount, pin, reaso
   });
 }
 
-/** Pool owner → contributor (wiki rewards). Uses POOL_OWNER_ID + POOL_PIN. */
-export async function rewardFromPool(socketClient, { userId, amount, reason }) {
+/**
+ * Admin → player digipog transfer for wiki/suggestion rewards.
+ * Uses ADMIN_USER_ID + POOL_PIN via POST /api/digipogs/transfer.
+ */
+export async function rewardFromPool(_socketClient, { userId, amount, reason }) {
   const toId = Number(userId);
-  const fromId = Number(process.env.POOL_OWNER_ID);
-  const pin = process.env.POOL_PIN;
+  const fromId = Number(process.env.ADMIN_USER_ID);
+  const pin = pinNumber(process.env.POOL_PIN);
   if (!Number.isInteger(toId) || toId <= 0) {
     return { success: false, message: "Contributor Formbar id is missing." };
   }
   if (!Number.isInteger(fromId) || fromId <= 0) {
-    return { success: false, message: "Pool owner id is not configured." };
+    return { success: false, message: "Admin user id is not configured." };
   }
-  if (!pin) {
+  if (Number.isNaN(pin)) {
     return { success: false, message: "Pool PIN is not configured." };
   }
   const digipogs = Number(amount);
@@ -125,11 +128,50 @@ export async function rewardFromPool(socketClient, { userId, amount, reason }) {
     return { success: false, message: "Reward amount is invalid." };
   }
 
-  return transferDigipogs(socketClient, {
-    from: fromId,
-    to: toId,
-    amount: digipogs,
-    pin,
-    reason: reason || "Wiki contribution",
-  });
+  const base = String(process.env.AUTH_URL || "https://formbar.yorktechapps.com")
+    .replace(/\/$/, "");
+  const apiKey = process.env.API_KEY || "";
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) headers.API = apiKey;
+
+  try {
+    const response = await fetch(`${base}/api/digipogs/transfer`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        from: fromId,
+        to: toId,
+        amount: digipogs,
+        pin: String(pin),
+        reason: reason || "Wiki contribution",
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        success: false,
+        message:
+          (payload && (payload.message || payload.error)) ||
+          `Transfer failed (${response.status}).`,
+      };
+    }
+    if (payload && payload.success === false) {
+      return {
+        success: false,
+        message: payload.message || payload.error || "Transfer failed.",
+      };
+    }
+    return {
+      success: true,
+      message:
+        (payload && payload.data && payload.data.message) ||
+        (payload && payload.message) ||
+        "",
+    };
+  } catch (err) {
+    return {
+      success: false,
+      message: err.message || "Transfer request failed.",
+    };
+  }
 }

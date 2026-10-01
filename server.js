@@ -437,7 +437,7 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
       transfer = await rewardFromPool(formbarSocket, {
         userId: suggestion.formbar_id,
         amount,
-        reason: "Suggestion",
+        reason: "MOTL Suggestion Reward",
       });
     } catch (err) {
       await reopenSuggestion(suggestion.id);
@@ -584,7 +584,7 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
     const transfer = await rewardFromPool(formbarSocket, {
       userId: revision.formbar_id,
       amount,
-      reason: `Wiki: ${revision.title}`,
+      reason: `MOTL Wiki Reward: ${revision.title}`,
     });
     if (!transfer.success) {
       req.session.notice = transfer.message || "Reward transfer failed.";

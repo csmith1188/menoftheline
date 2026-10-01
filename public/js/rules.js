@@ -767,6 +767,32 @@ function drawHowtoUnits(ctx, w, h) {
   });
 }
 
+function drawHowtoPushback(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 1);
+
+  const shooter = placeX("player", 2, 430, "skirmisher");
+  const target = placeX("enemy", 2, 560, "troop");
+  vignette(ctx, panels[0], around([shooter, target], 80, 40), "Hit · push back one pace", (frame) => {
+    drawGround(ctx);
+    drawUnit(ctx, shooter);
+    drawUnit(ctx, target);
+    drawShot(ctx, (shooter.x + target.x) / 2, shooter.y - 14);
+    worldArrow(ctx, target.x + 8, target.y + 28, target.x + 70, target.y + 28, CONFIG.colors.enemy);
+    zoomInk(ctx, frame, "push", target.x + 40, target.y + 48, CONFIG.colors.enemy, 12);
+  });
+
+  const blocked = placeX("enemy", 2, 520, "troop");
+  const rear = placeX("enemy", 2, 600, "troop");
+  vignette(ctx, panels[1], around([blocked, rear], 80, 40), "Blocked · fatigue instead", (frame) => {
+    drawGround(ctx);
+    drawUnit(ctx, blocked);
+    drawUnit(ctx, rear);
+    worldArrow(ctx, blocked.x + 10, blocked.y - 30, blocked.x + 55, blocked.y - 30, "#8aa0b8");
+    zoomInk(ctx, frame, `+${CONFIG.fatiguePerPace} fatigue`, blocked.x + 32, blocked.y - 48, CONFIG.colors.fatigue, 12);
+  });
+}
+
 const howtoPages = [
   {
     title: "Main Objective",
@@ -845,6 +871,23 @@ const howtoPages = [
       },
     ],
     draw: drawHowtoUnits,
+  },
+  {
+    title: "Pushback",
+    artHeight: 230,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          `Hits add pushback. Every ${CONFIG.pushbackPerPace} pushback forces one pace toward your keep.`,
+          "Shooting always applies the shooter's shooting pushback. Melee pushback only from a Charge.",
+          `If a friendly blocks the pace back, that pace is still spent and adds ${CONFIG.fatiguePerPace} fatigue (guns skip fatigue on recoil).`,
+          "Guns recoil themselves when they fire. Grenadiers take half of all incoming pushback.",
+          "Stacked paces ease through fast at first, then slower.",
+        ],
+      },
+    ],
+    draw: drawHowtoPushback,
   },
 ];
 

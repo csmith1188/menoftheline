@@ -26,16 +26,6 @@
 - draw everything in canvas and take full screen
 
 # Roadmap
-- Pushback when shot
-    - Skirmishers more pushback
-    - Can't pushback if unit behind you
-    - Double up lines to prevent it
-    - Want to do this anyways to reinforce breaking lines
-    - Making you more vulnerable to round shot
-    - Grenadiers take less pushback, give more in melee (get rid of flank negation)
-    - Lancers get pushback on charge
-    - cannons push themselves back when fired lol
-    - if enemy cannot pace back because they are blocked, doubled fatigue
 - Skirmisher rework
 - Lancer charge first hit damage
 - terrain:
@@ -68,7 +58,6 @@
 + High Pushback
 = Range and stats
 = Reload while falling back
-- whole line slow
 - Only rifles double damage against 
 
 ## Rifles

@@ -25,4 +25,6 @@ Troops, Dragoons, Guns, and Officers will not shoot an Officer while another uni
 
 Shot [[Damage]] falls off with distance, down to a quarter of the hit at maximum range.
 
+**Pushback.** Every ranged hit adds the shooter's shooting pushback to the target's pushback counter. When the counter reaches the pushback-per-pace threshold, the target owes a pace back toward its own keep. Stacked paces ease through quickly at first, then slower. If the target cannot step back because a friendly blocks it, that pace is still spent and the target gains fatigue instead. Guns and Howitzers also apply their own shooting pushback to themselves as recoil when they fire; blocked recoil does not add fatigue. Grenadiers take half of all incoming pushback. See [[Melee]], [[Fatigue and Breaking]], and [[Units]].
+
 A Gun shell that hits a unit looks further along its path on the same row. If the next enemy footprint is within 24 paces of the struck footprint's edge, that unit is hit for half of the original blow, and a third unit may be hit for a quarter. The shell then stops. If the next unit is in melee, the shell stops without hitting it. If the aimed unit dies before the shell arrives, the shell goes to the place that unit last occupied and then continues to the next target.

@@ -1,21 +1,21 @@
 [[Units]]
 ## Units
 
-Each unit has its own health, ranges, damage, and speeds. Each type has an alternate that counts as the same type for forming a line, with its own name, numbers, and ability. How a line is chosen is on [[Lines]].
+Each unit has its own health, ranges, damage, speeds, and pushback. Each type has an alternate that counts as the same type for forming a line, with its own name, numbers, and ability. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
 
 - **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
 
-- **Grenadiers:** are tougher and do not take extra damage from flanks. See [[Melee]].
+- **Grenadiers:** are tougher and take half pushback from shooting and melee. See [[Melee]] and [[Shooting]].
 
-- **Skirmisher:** May fire at full range and full reload whenever firing is allowed, including while Falling Back. Takes half damage from shooting. See [[Shooting]], [[Orders]], and [[Damage]].
+- **Skirmisher:** May fire at full range and full reload whenever firing is allowed, including while Falling Back. Takes half damage from shooting. Stronger shooting pushback. See [[Shooting]], [[Orders]], and [[Damage]].
 
 - **Rifles:** deal double damage to Officers.
 
-- **Dragoon:** A larger flank bonus while charging and flanking. Lancers keep a normal flank bonus and use a 1.8× charge bonus. See [[Melee]] and [[Orders]].
+- **Dragoon:** A larger flank bonus while charging and flanking. Lancers keep a normal flank bonus and use a 1.8× charge bonus with stronger melee pushback on the charge. See [[Melee]] and [[Orders]].
 
-- **Gun:** A hit can strike up to two more units behind the first, as described under [[Shooting]].
+- **Gun:** A hit can strike up to two more units behind the first, as described under [[Shooting]]. Firing recoils the gun itself.
 
-- **Howitzers:** Instead fire at one target in every row of their lane. See [[Shooting]].
+- **Howitzers:** Instead fire at one target in every row of their lane. They also recoil when they fire. See [[Shooting]].
 
 - **Officer:** Troops, Dragoons, Guns, and Officers avoid shooting Officers while another unit type is in range. An Officer restores fatigue to friends within 50 paces on every row of its lane. The restore is doubled for friends behind the Officer. A second Officer does not add more; only the stronger restore applies. See [[Shooting]] and [[Fatigue and Breaking]].
 

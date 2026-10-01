@@ -51,6 +51,9 @@ class Projectile {
     this.splash = shot && shot.splash != null ? shot.splash : 0;
     this.attackerSum = shot && shot.attackerSum ? shot.attackerSum : 0;
     this.shotSign = shot && shot.shotSign ? shot.shotSign : 1;
+    this.shootingPushback = shot && shot.shootingPushback != null
+      ? shot.shootingPushback
+      : 0;
     this.alive = true;
     this.bounce = null;
     this.anchor = null;
@@ -187,33 +190,9 @@ class Projectile {
     }
     const struck = this.target;
     const raw = this.baseDamage * this.hitFactor();
-    struck.takeDamage(raw, this.kind, this.attackerSum);
-    if (this.penHits === 0) {
-      this.slowSkirmisherLine(struck);
-    }
+    struck.takeDamage(raw, this.kind, this.attackerSum, this.shootingPushback);
     this.penHits += 1;
     this.continueBehind(struck);
-  }
-
-  /**
-   * A skirmisher shot slows every living unit in the target's line,
-   * not only the body that was hit. Halt and reform still ignore the
-   * slow while that order lasts.
-   */
-  slowSkirmisherLine(hit) {
-    if (this.sourceType !== "skirmisher" || this.kind === "melee" || !hit || !hit.side) {
-      return;
-    }
-    const line = hit.lineGroup(hit.side.troops);
-    for (let i = 0; i < line.length; i += 1) {
-      const other = line[i];
-      if (other === hit || other.hp <= 0) {
-        continue;
-      }
-      if (other.order === null || other.order === "charge") {
-        other.shotSlow = other.shotSlowSpeed;
-      }
-    }
   }
 
 }
@@ -273,7 +252,12 @@ class Unit {
     this.broken = false;
     this.reformNeedsAlign = false;
     this.squared = false;
-    this.shotSlow = 0;
+    this.pushbackCounter = 0;
+    /** Queued paces: { fatigueOnBlock, easeIndex }. */
+    this.pushbackQueue = [];
+    this.pushbackNextEaseIndex = 0;
+    /** Active eased pace: { from, to, elapsed, duration, fatigueOnBlock }. */
+    this.pushbackMove = null;
     this.switch = null;
     this.switchEscape = false;
     this.switchEaseDir = 0;
@@ -313,8 +297,11 @@ class Unit {
     this.rangedDamage = stats.rangedDamage;
     this.meleeDamage = stats.meleeDamage;
     this.range = stats.range;
-    this.shotSlowSpeed = stats.shotSlowSpeed;
-    this.slowFactor = stats.slowFactor;
+    this.shootingPushback = stats.shootingPushback || 0;
+    this.meleePushback = stats.meleePushback || 0;
+    this.pushbackTakenFactor = stats.pushbackTakenFactor != null
+      ? stats.pushbackTakenFactor
+      : 1;
     this.engageRange = stats.engageRange;
     this.chargeSpeed = stats.chargeSpeed;
     this.chargeMultiplier = stats.chargeMultiplier;
@@ -1524,20 +1511,6 @@ class Unit {
     return (paceSpeed * dt) / lanePaces;
   }
 
-  /**
-   * Advancing and charging troops walk at half speed after a shot.
-   * Halt and reform are unchanged.
-   */
-  shotSlowScale() {
-    if (this.shotSlow <= 0) {
-      return 1;
-    }
-    if (this.order !== null && this.order !== "charge") {
-      return 1;
-    }
-    return this.slowFactor;
-  }
-
   /** Living troops on the other side. */
   enemyTroops() {
     const sim = this.side && this.side.sim;
@@ -1674,8 +1647,7 @@ class Unit {
    * and everyone else walks at half speed until the line is square.
    */
   marchSpeed(allies) {
-    const scale = this.shotSlowScale();
-    const base = this.speed * this.side.speedMultiplier * scale;
+    const base = this.speed * this.side.speedMultiplier;
     if (this.order === "halt") {
       return 0;
     }
@@ -1855,8 +1827,7 @@ class Unit {
     const ny = tan.x;
     const across = (dest.x - this.x) * nx + (dest.y - this.y) * ny;
     const charge = this.chargeSpeedScale();
-    const step = this.speed * this.side.speedMultiplier
-      * this.shotSlowScale() * charge * dt;
+    const step = this.speed * this.side.speedMultiplier * charge * dt;
     const dir = across > 0 ? 1 : -1;
     const move = Math.min(Math.abs(across), step) * dir;
     const nxPos = this.x + nx * move;
@@ -2422,8 +2393,8 @@ class Unit {
   /**
    * Same-row friendly overlap while collision is already on. Does not
    * handle collision re-enable peel (that runs first in update). Halt
-   * does not move here. True while holding a stack so advance does not
-   * shove anyone.
+   * does not move here. A unit with someone behind may keep advancing;
+   * the rear stops on isBlockedBy. Perfect overlap eases one body back.
    */
   resolveAllyCollision(dt, allies, enemies) {
     const other = this.collidingAlly(allies);
@@ -2436,8 +2407,10 @@ class Unit {
       return false;
     }
     const along = this.alongSigned(other);
+    // Other is behind: do not freeze the front — let it march; the rear
+    // will stop when blocked ahead.
     if (along < 0) {
-      return true;
+      return false;
     }
     if (along === 0) {
       this.easeBack(dt, allies, enemies);
@@ -2742,8 +2715,7 @@ class Unit {
         }
       }
     }
-    const scale = this.shotSlowScale();
-    const speed = this.speed * this.side.speedMultiplier * scale;
+    const speed = this.speed * this.side.speedMultiplier;
     const delta = this.alongDelta(speed, dt);
     const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
     if (nextProgress === this.progress) {
@@ -3051,8 +3023,9 @@ class Unit {
   /**
    * Apply raw (base × falloff), the attacker's percent sum, then defensive
    * multipliers (armor, cover, skirmisher shot resistance) one after another.
+   * Optional pushAmount is shooting/melee pushback from the attacker.
    */
-  takeDamage(raw, kind, attackerSum) {
+  takeDamage(raw, kind, attackerSum, pushAmount) {
     const hit = truncateDamage(Math.max(
       0,
       raw * (1 + (attackerSum || 0)) * this.incomingMultiplier(kind),
@@ -3062,10 +3035,132 @@ class Unit {
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
     const fatigueGain = kind === "melee" ? CONFIG.fatigueOnMelee : CONFIG.fatigueOnShot;
     this.fatigue = Math.min(this.maxFatigue, this.fatigue + fatigueGain);
-    if (kind !== "melee" && (this.order === null || this.order === "charge")) {
-      this.shotSlow = this.shotSlowSpeed;
+    if (pushAmount > 0) {
+      this.applyPushback(pushAmount, true);
     }
     this.tryBreak();
+  }
+
+  /**
+   * Add pushback points. When the counter crosses pushbackPerPace, enqueue
+   * a pace. fatigueOnBlock is false for cannon self-recoil.
+   */
+  applyPushback(amount, fatigueOnBlock) {
+    if (!(amount > 0) || this.hp <= 0) return;
+    const taken = amount * (this.pushbackTakenFactor != null ? this.pushbackTakenFactor : 1);
+    if (!(taken > 0)) return;
+    const perPace = CONFIG.pushbackPerPace > 0 ? CONFIG.pushbackPerPace : 1;
+    this.pushbackCounter += taken;
+    while (this.pushbackCounter >= perPace) {
+      this.pushbackCounter -= perPace;
+      this.pushbackQueue.push({
+        fatigueOnBlock: Boolean(fatigueOnBlock),
+        easeIndex: this.pushbackNextEaseIndex,
+      });
+      this.pushbackNextEaseIndex += 1;
+    }
+  }
+
+  /** Progress change for one pace toward this side's keep. */
+  pushbackPaceDelta() {
+    const lanePaces = Path.lanePaces(this.lane);
+    if (!(lanePaces > 0)) return 0;
+    return 1 / lanePaces;
+  }
+
+  /** True when a same-row collidable ally sits behind within the block gap. */
+  pushbackBlocked(allies) {
+    if (!allies) return false;
+    for (let i = 0; i < allies.length; i += 1) {
+      if (this.isBlockedToward(allies[i], -1)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Ease queued pushback paces toward own keep. Stacked paces ease
+   * fast-to-slow by easeIndex. Blocked paces still consume the queue;
+   * fatigue applies unless this was cannon recoil.
+   */
+  tickPushback(dt, allies) {
+    if (this.pushbackMove) {
+      const move = this.pushbackMove;
+      move.elapsed += dt;
+      const t = move.duration > 0 ? Math.min(1, move.elapsed / move.duration) : 1;
+      // Ease-out: start fast, settle slow.
+      const eased = 1 - (1 - t) * (1 - t);
+      const next = move.from + (move.to - move.from) * eased;
+      if (this.pushbackBlocked(allies)) {
+        this.progress = move.from;
+        this.syncPosition();
+        if (move.fatigueOnBlock) {
+          this.fatigue = Math.min(
+            this.maxFatigue,
+            this.fatigue + CONFIG.fatiguePerPace,
+          );
+        }
+        this.pushbackMove = null;
+        this.resetPushbackEaseIfIdle();
+        return;
+      }
+      this.progress = Math.max(0, Math.min(1, next));
+      this.syncPosition();
+      if (t >= 1) {
+        this.progress = Math.max(0, move.to);
+        this.syncPosition();
+        this.pushbackMove = null;
+        this.resetPushbackEaseIfIdle();
+      }
+      return;
+    }
+
+    while (this.pushbackQueue.length > 0 && !this.pushbackMove) {
+      const pace = this.pushbackQueue.shift();
+      if (this.pushbackBlocked(allies)) {
+        if (pace.fatigueOnBlock) {
+          this.fatigue = Math.min(
+            this.maxFatigue,
+            this.fatigue + CONFIG.fatiguePerPace,
+          );
+        }
+        this.resetPushbackEaseIfIdle();
+        continue;
+      }
+      const delta = this.pushbackPaceDelta();
+      if (!(delta > 0) || this.progress <= 0) {
+        if (pace.fatigueOnBlock && this.progress <= 0) {
+          this.fatigue = Math.min(
+            this.maxFatigue,
+            this.fatigue + CONFIG.fatiguePerPace,
+          );
+        }
+        this.resetPushbackEaseIfIdle();
+        continue;
+      }
+      const from = this.progress;
+      const to = Math.max(0, from - delta);
+      const duration = CONFIG.pushbackEaseMin
+        + CONFIG.pushbackEaseStep * (pace.easeIndex || 0);
+      if (!(duration > 0.001)) {
+        this.progress = to;
+        this.syncPosition();
+        this.resetPushbackEaseIfIdle();
+        continue;
+      }
+      this.pushbackMove = {
+        from,
+        to,
+        elapsed: 0,
+        duration,
+        fatigueOnBlock: pace.fatigueOnBlock,
+      };
+    }
+  }
+
+  resetPushbackEaseIfIdle() {
+    if (!this.pushbackMove && this.pushbackQueue.length === 0) {
+      this.pushbackNextEaseIndex = 0;
+    }
   }
 
   /**
@@ -3124,7 +3219,7 @@ class Unit {
     const strike = kind || "shoot";
     let sum = (Math.random() * 2 - 1) * CONFIG.damageVariance;
     if (strike === "melee" && this.order === "charge") sum += this.chargeMultiplier - 1;
-    if (strike === "melee" && target.lane && this.isFlanking(target) && target.variant !== "grenadier") {
+    if (strike === "melee" && target.lane && this.isFlanking(target)) {
       sum += this.flankMultiplier - 1;
     }
     if (strike !== "melee") sum += this.lineDamagePercent(allies);
@@ -3180,7 +3275,8 @@ class Unit {
         target.capitalHP -= hit;
         this.side.sim.spawnSplat(target.capital.x, target.capital.y, hit, "melee");
       } else if (target && target.takeDamage) {
-        target.takeDamage(shot.raw, "melee", shot.attackerSum);
+        const push = this.order === "charge" ? this.meleePushback : 0;
+        target.takeDamage(shot.raw, "melee", shot.attackerSum, push);
       }
       this.cooldown = this.strikeDelay(strike);
       this.flash = 0.12;
@@ -3209,15 +3305,20 @@ class Unit {
         splash: this.splash,
         attackerSum: shot.attackerSum,
         shotSign: target.station && this.station ? Math.sign(target.station() - this.station()) || 1 : 1,
+        shootingPushback: this.shootingPushback,
       },
     ));
     this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
+    if (this.type === "cannon") {
+      this.applyPushback(this.shootingPushback, false);
+    }
   }
 
   /**
    * One unit decision: finish a lane change first, then shoot or swing,
-   * then start a slide toward a side enemy or around a blocker, or march.
+   * then start a slide toward a side enemy, or march (advance stops when
+   * a friendly blocks ahead).
    */
   update(dt, allies, enemies, enemySide, projectiles) {
     if (this.cooldown > 0) {
@@ -3226,13 +3327,22 @@ class Unit {
     if (this.flash > 0) {
       this.flash -= dt;
     }
-    if (this.shotSlow > 0) {
-      this.shotSlow -= dt;
-    }
 
     this.tickFatigue(dt, enemies);
     this.releaseHeldOrder(enemies);
 
+    try {
+      this.updateActions(dt, allies, enemies, enemySide, projectiles);
+    } finally {
+      this.tickPushback(dt, allies);
+    }
+  }
+
+  /**
+   * Orders, shooting, melee, and marching for one step. Pushback eases in
+   * update()'s finally so every early return still resolves paces.
+   */
+  updateActions(dt, allies, enemies, enemySide, projectiles) {
     const inMeleeNow = this.isInMelee(enemies);
     // Sticky melee lock so brief footprint gaps cannot open a shoot window.
     if (inMeleeNow) {
@@ -3421,7 +3531,10 @@ class Unit {
       }
     }
     if (blocked) {
-      this.pursueSublaneChange(dt, allies, enemies);
+      // Advance stops behind friendlies. Charge may still sidestep.
+      if (charging) {
+        this.pursueSublaneChange(dt, allies, enemies);
+      }
       return;
     }
 
@@ -3528,7 +3641,7 @@ class Officer extends Unit {
   }
 }
 
-/** Troop alternate: tougher body; ignores bonus flanking damage. */
+/** Troop alternate: tougher body; takes half pushback. */
 class Grenadier extends Troop {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
@@ -3665,11 +3778,13 @@ class Howitzer extends Cannon {
           splash: 0,
           attackerSum: shot.attackerSum,
           shotSign: aim.station ? (Math.sign(aim.station() - this.station()) || 1) : 1,
+          shootingPushback: this.shootingPushback,
         },
       ));
     }
     this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
+    this.applyPushback(this.shootingPushback, false);
   }
 }
 
@@ -4288,7 +4403,6 @@ export class GameSim {
         fatigue: troop.fatigue,
         maxFatigue: troop.maxFatigue,
         broken: troop.broken,
-        shotSlow: troop.shotSlow,
         priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
         radius: troop.radius,
         x: troop.x,

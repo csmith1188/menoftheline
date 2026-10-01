@@ -61,7 +61,7 @@ export const CONFIG = {
   /** Gold/sec granted per unlock, times current unlocked count. */
   bankIncomePer: 3,
   /** Mass tax per second: this fraction of a living unit's gold cost. */
-  massTaxRate: 0.01,
+  massTaxRate: 0.005,
   /** Match time (seconds) when each bank becomes purchasable. */
   bankUnlockAt: [0, 120, 240],
 
@@ -164,6 +164,14 @@ export const CONFIG = {
   keepAuraPaces: [40, 80, 120],
   /** Flat fatigue added when hit in melee or when making a melee attack. */
   fatigueOnMelee: 2,
+  /** Pushback counter points needed to force one pace back. */
+  pushbackPerPace: 1.5,
+  /** Fatigue added when a melee/hit pushback pace is blocked behind. */
+  fatiguePerPace: 1,
+  /** Seconds to ease the first queued pushback pace (near-instant). */
+  pushbackEaseMin: 0.05,
+  /** Extra seconds of ease duration per later queued pace. */
+  pushbackEaseStep: 0.1,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
   /** Incoming damage removed while overlapping your fort in this lane. */

@@ -5,8 +5,9 @@ import { CONFIG } from "./config.js";
  * onto each instance. Keys match the spawn type. Alternates keep their
  * base `type` in play (troop, skirmisher, …) and carry a `variant` id.
  *
- * shotSlowSpeed is how long a received shot slows the unit, in seconds.
- * slowFactor is the walk-speed multiplier while that slow lasts.
+ * shootingPushback / meleePushback accumulate on the target's pushback
+ * counter (melee pushback only from Charge). pushbackTakenFactor scales
+ * incoming pushback (grenadiers take half).
  * engageRange is the fraction of range at which the unit opens fire on its own.
  * chargeSpeed is the walk multiplier while charging (1 = no bonus).
  * fatigue is the max fatigue pool (breaks when fatigue % exceeds hp %).
@@ -14,8 +15,9 @@ import { CONFIG } from "./config.js";
  * officerDamageMultiplier scales damage when hitting an officer.
  */
 const SHOT = {
-  shotSlowSpeed: 0.6,
-  slowFactor: 0.6,
+  shootingPushback: 1,
+  meleePushback: 1,
+  pushbackTakenFactor: 1,
   chargeMultiplier: 1.2,
   projectileSize: 4,
   projectileSpeed: 220,
@@ -63,6 +65,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
+    shootingPushback: 2,
   },
   dragoon: {
     ...SHOT,
@@ -125,7 +128,7 @@ export const UNIT_STATS = {
     officerDamageMultiplier: 1,
   },
   // Alternates (same base type in play; white square behind the icon)
-  /** Troop with more hit points; ignores bonus flanking damage. */
+  /** Troop with more hit points; takes half pushback; stronger melee push. */
   grenadier: {
     ...SHOT,
     hp: 250,
@@ -145,6 +148,8 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    meleePushback: 1.5,
+    pushbackTakenFactor: 0.5,
   },
   /** Skirmisher: longer shot, harder hit, slower reload. */
   rifle: {
@@ -166,8 +171,9 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
+    shootingPushback: 1
   },
-  /** Dragoon: normal flank multiplier, stronger charge hits. */
+  /** Dragoon: normal flank multiplier, stronger charge hits and melee push. */
   lancer: {
     ...SHOT,
     hp: 200,
@@ -188,6 +194,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    meleePushback: 2,
   },
   /** Cannon: shorter reach, cannister — one shell per in-range row, no splash. */
   howitzer: {

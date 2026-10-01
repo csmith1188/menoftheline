@@ -1178,11 +1178,6 @@ function underOfficerRestore(troop, allies) {
   return found;
 }
 
-function shotSlowActive(troop) {
-  if (!(troop.shotSlow > 0)) return false;
-  return troop.order == null || troop.order === "charge";
-}
-
 function multText(n) {
   const rounded = Math.round(n * 100) / 100;
   return `×${rounded}`;
@@ -1212,7 +1207,6 @@ function activeBonuses(board, troop, allies) {
   let flanking = false;
   for (let i = 0; i < enemies.length; i += 1) {
     const foe = enemies[i];
-    if (foe.variant === "grenadier") continue;
     if (isFlanking(troop, foe)) {
       flanking = true;
       break;
@@ -1239,10 +1233,6 @@ function activeBonuses(board, troop, allies) {
   //   if (dmgRanks > 0) {
   //     labels.push(`Upgrade dmg ${multText(1 + CONFIG.damageUpgradeAmount * dmgRanks)}`);
   //   }
-  // }
-
-  // if (shotSlowActive(troop) && stats.slowFactor && stats.slowFactor !== 1) {
-  //   labels.push(`Slowed ${multText(stats.slowFactor)}`);
   // }
 
   // if (troop.order === "reform") {
@@ -1383,7 +1373,6 @@ function makeTroop(data, side, mx) {
   troop.fatigue = data.fatigue;
   troop.maxFatigue = data.maxFatigue;
   troop.broken = Boolean(data.broken);
-  troop.shotSlow = data.shotSlow || 0;
   troop.priorOrder = data.priorOrder === undefined ? null : data.priorOrder;
   troop.radius = data.radius;
   troop.x = mx(data.x);

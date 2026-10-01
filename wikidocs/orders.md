@@ -3,7 +3,7 @@
 
 A unit is always under one order. Advance is the order units start with. How to give an order is on [[Giving Orders]]. An order given to a unit is also given to the rest of its line. See [[Lines]].
 
-**Advance.** The unit marches forward. It shoots at engagement range, then keeps marching when it has nothing to shoot. In a line that is already Perfect Line, once any mate has opened fire the others that are Perfect Line with it hold and shoot with it. Units still closing up keep marching. Advance does not stop or dress the line just to square it when nobody is shooting. Engagement range and Perfect Line are on [[The Map]]. What they shoot is on [[Shooting]].
+**Advance.** The unit marches forward. It shoots at engagement range, then keeps marching when it has nothing to shoot. If a friendly is close ahead on the same row, it stops; it does not switch rows to go around. In a line that is already Perfect Line, once any mate has opened fire the others that are Perfect Line with it hold and shoot with it. Units still closing up keep marching. Advance does not stop or dress the line just to square it when nobody is shooting. Engagement range and Perfect Line are on [[The Map]]. What they shoot is on [[Shooting]].
 
 **Halt.** The unit stops and shoots at full range. It recovers fatigue over time. See [[Shooting]] and [[Fatigue and Breaking]].
 

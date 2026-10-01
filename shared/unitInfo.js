@@ -20,7 +20,7 @@ export const UNIT_SUMMARIES = {
   officer:
     "A Major keeps battalions toeghether by keeping discipline.",
   grenadier:
-    "Elite heavy infantry. Hold the line under pressure and shrug off flanking blows.",
+    "Elite heavy infantry. Hold the line under pressure and shrug off pushback.",
   rifle:
     "Marksmen with rifled barrels to make them accurate hunters of skirmishers and officers.",
   lancer:
@@ -90,6 +90,18 @@ const BASIC_FIELDS = [
     label: "Melee",
     value: (s) => s.meleeDamage,
     display: (s) => fmtNum(s.meleeDamage),
+  },
+  {
+    key: "shootingPushback",
+    label: "Shot Push",
+    value: (s) => s.shootingPushback,
+    display: (s) => fmtNum(s.shootingPushback),
+  },
+  {
+    key: "meleePushback",
+    label: "Melee Push",
+    value: (s) => s.meleePushback,
+    display: (s) => fmtNum(s.meleePushback),
   },
   {
     key: "rangedCooldown",
@@ -196,14 +208,17 @@ export function unitAbilityLines(type) {
     );
   }
   if (type === "grenadier") {
-    lines.push("Ignores bonus flanking damage when hit.");
+    lines.push("Takes half pushback from shooting and melee.");
+  }
+  if ((stats.meleePushback || 0) > 1) {
+    lines.push(`Charge melee pushback: ${fmtNum(stats.meleePushback)}.`);
+  }
+  if ((stats.shootingPushback || 0) > 1) {
+    lines.push(`Shooting pushback: ${fmtNum(stats.shootingPushback)}.`);
   }
   if (base === "skirmisher") {
     lines.push("Fires at full range and full reload whenever firing is allowed, including Fall Back.");
     lines.push("Takes 50% less damage from shooting.");
-    lines.push(
-      `Shots slow every living unit in the target's line for ${fmtNum(stats.shotSlowSpeed)}s (walk ×${fmtNum(stats.slowFactor)}).`,
-    );
   }
   if ((stats.officerDamageMultiplier || 1) > 1) {
     lines.push(`Deals ${times(stats.officerDamageMultiplier)} damage to Officers.`);
@@ -218,6 +233,11 @@ export function unitAbilityLines(type) {
     const hits = splashHits(stats.splash);
     lines.push(
       `Shell penetrates along the row: up to ${hits} bodies (full / half / quarter damage).`,
+    );
+  }
+  if (base === "cannon") {
+    lines.push(
+      `Firing recoils this gun by its shooting pushback (${fmtNum(stats.shootingPushback)}).`,
     );
   }
   if (type === "howitzer") {

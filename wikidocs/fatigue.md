@@ -1,4 +1,3 @@
-[[Fatigue and Breaking]]
 # Fatigue and Breaking
 
 Every unit starts with an empty fatigue bar that fills at 100.
@@ -9,7 +8,7 @@ Every unit starts with an empty fatigue bar that fills at 100.
 - Charging, Retreating, or standing in melee adds fatigue over time. See [[Orders]].
 - Halting removes fatigue over time.
 - When a pushback pace cannot move the unit back because a friendly blocks it, that pace still counts and adds fatigue (guns ignore fatigue on blocked recoil). See [[Melee]] and [[Shooting]].
-- Your keep restores fatigue and health. Officers and the keep's restore are on [[Units]].
+- Your keep restores fatigue while you are in range. It also restores health, but only while no enemy stands behind either of your forts. Officers and the keep's restore are on [[Units]].
 
 When a unit is hit, roll from 1 to 100. If the roll is less than its fatigue percent minus its remaining health percent, it becomes Broken.
 

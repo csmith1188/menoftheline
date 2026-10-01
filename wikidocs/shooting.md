@@ -9,7 +9,6 @@ The enemy keep can be shot only when it is the last enemy in that same lane that
 
 - Advancing and Falling Back units use engagement range.
 - Halted units use full range.
-- Skirmishers use full range whenever they are allowed to fire.
 - Units do not shoot while in [[Melee]], and they do not aim at a unit that is already in melee. A shot already in the air still lands.
 - Guns do not shoot in melee. They still fight in melee with their melee damage.
 

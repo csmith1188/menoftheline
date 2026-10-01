@@ -911,7 +911,7 @@ const howtoPages = [
       {
         kind: "ul",
         items: [
-          "Fire at full range and full reload whenever firing is allowed, including Fall Back.",
+          "Full reload whenever firing is allowed, including Fall Back.",
           "Ignore lane strategy. Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",

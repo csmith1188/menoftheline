@@ -59,7 +59,8 @@ function pushBox(marks, lane, sublane, t0, t1, color, alpha) {
 function firingPaces(troop) {
   const stats = unitStats(troop.variant || troop.type);
   const full = Path.pacesFromPx(stats.range || 0);
-  const active = troop.type === "skirmisher" || troop.order === "halt" ? full : full * 0.5;
+  const fraction = troop.order === "halt" ? 1 : (stats.engageRange == null ? 0.5 : stats.engageRange);
+  const active = full * fraction;
   return { full, active };
 }
 

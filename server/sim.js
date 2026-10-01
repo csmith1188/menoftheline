@@ -1711,12 +1711,13 @@ class Unit {
   }
 
   /**
-   * Halt shoots at full range. Advance and Fall Back shoot at half.
-   * Skirmishers use full range whenever they are allowed to fire.
+   * Halt shoots at full range. Advance and Fall Back use engageRange
+   * (fraction of weapon range).
    */
   relevantRangePaces() {
-    if (this.type === "skirmisher" || this.order === "halt") return this.rangePaces();
-    return this.rangePaces() * 0.5;
+    if (this.order === "halt") return this.rangePaces();
+    const fraction = this.engageRange == null ? 0.5 : this.engageRange;
+    return this.rangePaces() * fraction;
   }
 
   /** Distance along this lane from the named keep, in paces. */

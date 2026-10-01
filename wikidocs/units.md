@@ -7,7 +7,7 @@ Each unit has its own health, ranges, damage, speeds, and pushback. Each type ha
 
 - **Grenadiers:** are tougher and take half pushback from shooting and melee. See [[Melee]] and [[Shooting]].
 
-- **Skirmisher:** May fire at full range and full reload whenever firing is allowed, including while Falling Back. Stronger shooting pushback. Ignores lane strategy and instead shoots by type priority: cavalry if it is the closest target, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. Troop line bonus does not apply against them. See [[Shooting]], [[Orders]], and [[Damage]].
+- **Skirmisher:** Full reload whenever firing is allowed, including while Falling Back. Stronger shooting pushback. Ignores lane strategy and instead shoots by type priority: cavalry if it is the closest target, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. Troop line bonus does not apply against them. See [[Shooting]], [[Orders]], and [[Damage]].
 
 - **Rifles:** deal double damage to Officers. They share Skirmisher targeting and open-order rules.
 

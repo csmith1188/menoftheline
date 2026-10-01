@@ -71,8 +71,8 @@ tooltipsBtn.addEventListener("click", () => {
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
 let syncingBotUi = false;
-/** Sim side inputs command in debug bot games. */
-let controlSide = "player";
+/** Sim side for debug bot games only; null uses seat for multiplayer mirror. */
+let controlSide = null;
 
 function syncSoundUi() {
   const volume = getSoundVolume();
@@ -101,7 +101,7 @@ function applyDebugPlayUi(settings) {
   const show = Boolean(settings);
   debugPlay.classList.toggle("hidden", !show);
   if (!settings) {
-    controlSide = "player";
+    controlSide = null;
     return;
   }
   controlSide = settings.controlSide === "enemy" ? "enemy" : "player";

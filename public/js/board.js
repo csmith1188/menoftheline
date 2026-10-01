@@ -1452,9 +1452,10 @@ export function countdownSecondsLeft(board) {
  * @param {string} [controlSide] sim side the human is commanding
  */
 export function applySnapshot(board, snap, seat, controlSide) {
+  // controlSide is debug-only; normal multiplayer mirrors from seat (b → enemy → left/blue).
   const mine = controlSide === "player" || controlSide === "enemy"
     ? controlSide
-    : (seat === "a" ? "player" : "enemy");
+    : (seat === "b" ? "enemy" : "player");
   const mirror = mine === "enemy";
   const mx = (x) => (mirror ? CONFIG.canvasWidth - x : x);
   const viewOwner = (owner) => {

@@ -1,6 +1,5 @@
 # Bugs
-- How does passing friendly blocking units work and when?
-- Do a lookover of unused code
+- Pushback on retreating/falling back units stacking and pinning
 
 # Ideas
 - officers make order sounds when near lines given orders

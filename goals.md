@@ -2,39 +2,17 @@
 - How does passing friendly blocking units work and when?
 - Do a lookover of unused code
 
-# Units
-- Bottom lane alternatives
-- Militiamen
-    - Cheap troop for spam
-- Guerillas
-    - Not shown to enemy (server side) unless within 10 paces or shot within the last second
-    - Terrain ambush (always flanking when in terrain. move full speed?)
-- Light Calvary
-    - Raiding towns
-    - Must attack single units in packs
-    - Terrain speed
-- Horse Guns. Faster, less range and damage
-- Engineer
-    - Terrain manipulation
-
-- Grenadiers recovery fatigue at double rate when halted
-- 
-
-
 # Ideas
 - officers make order sounds when near lines given orders
-- charging cancels cover bonuses
 - column. faster move in matching in line in same row.
+- change auto-orders, in python
+- Click, drag, long press (or rmb drag) to set a target
+- Reinforced Learning player
+- Game -> Client API
+- Site Services -> Client API (play without ever visiting site)
 
 # Feature
-- Click, drag, long press (or rmb drag) to set a target
-- Pushback when shot
-    - Skirmishers more pushback
-    - Can't pushback if unit behind you
-    - Double up lines to prevent it
-    - Want to do this anyways to reinforce breaking lines
-    - Making you more vulnerable to round shot
-
+- deeper cannon sounds
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories
 - Add more game metrics
@@ -42,35 +20,55 @@
     Average length of game
     Tickets spent
 - Music
-- terrain:
-    - hills -> neutral forts
-    - woods -> block LoS unless inside, cover and slow
-    - river -> allow infantry, blocks horse and gun
-    - peaks -> block los unless inside, slow infantry, blocks horse and gun
-    - bridge -> cannot switch lanes
-- Reinforced Learning player
-- Game -> Client API
-- Site Services -> Client API (play without ever visiting site)
 
 # UI
 - 3d should always zoom in to fill screen with map
 - draw everything in canvas and take full screen
 
 # Feedback Notes
-- Armor algorithm
-- Dragoon Speed
-- Easing
+- Armor / defense algorithm?
+- Upgrade power
+- Line Bonus?
+- Upkeep whole unit
+- Easing Middle Line
 
 # Roadmap
-
 - Feedback Patches
-- 
-- Remove dead special rules
-- Pushback
-- Terrain
+- Lancer charge first hit damage
+- Pushback when shot
+    - Skirmishers more pushback
+    - Can't pushback if unit behind you
+    - Double up lines to prevent it
+    - Want to do this anyways to reinforce breaking lines
+    - Making you more vulnerable to round shot
+    - Grenadiers take less pushback, give more in melee (get rid of flank negation)
+    - Lancers get pushback on charge
+    - cannons push themselves back when fired lol
+    - if enemy cannot pace back because they are blocked, doubled fatigue
+- Skirmisher rework
+- terrain:
+    - hills -> neutral forts
+    - woods -> block LoS unless inside, cover and slow
+    - river -> allow infantry, blocks horse and gun
+    - peaks -> block los unless inside, slow infantry, blocks horse and gun
+    - bridge -> cannot switch lanes
 - Bottom Lane Units
-
-
+    - Militiamen
+        - Cheap troop for spam with poor endurance and discipline
+    - Guerillas
+        - Not shown to enemy (server side) unless within 10 paces or shot within the last second
+        - Terrain ambush (always flanking when in terrain. move full speed?)
+    - Light Calvary
+        - Raiding towns
+        - Must attack single units in packs
+        - Terrain speed
+    - Horse Guns. Faster, less range and damage
+    - engineer unit, interacts with terrain behind it within an area
+        - adds pontoons to rivers
+        - can walk over mountains at half speed
+        - can shoot through woods
+        - can cancel fort cover
+        - increases range of nearby units when on a hill
 
 ## Skirmisher
 + Half damage from troops ? or negate line bonus?

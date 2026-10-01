@@ -311,7 +311,6 @@ class Unit {
     this.rangedDamage = stats.rangedDamage;
     this.meleeDamage = stats.meleeDamage;
     this.range = stats.range;
-    this.meleeReach = stats.meleeReach;
     this.shotSlowSpeed = stats.shotSlowSpeed;
     this.slowFactor = stats.slowFactor;
     this.engageRange = stats.engageRange;

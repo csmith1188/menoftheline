@@ -26,8 +26,6 @@
 - draw everything in canvas and take full screen
 
 # Roadmap
-- Feedback Patches
-- Lancer charge first hit damage
 - Pushback when shot
     - Skirmishers more pushback
     - Can't pushback if unit behind you
@@ -39,6 +37,7 @@
     - cannons push themselves back when fired lol
     - if enemy cannot pace back because they are blocked, doubled fatigue
 - Skirmisher rework
+- Lancer charge first hit damage
 - terrain:
     - hills -> neutral forts
     - woods -> block LoS unless inside, cover and slow

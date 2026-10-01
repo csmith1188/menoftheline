@@ -793,6 +793,38 @@ function drawHowtoPushback(ctx, w, h) {
   });
 }
 
+function drawHowtoSkirmishers(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 1);
+
+  const skirm = placeX("player", 2, 420, "skirmisher");
+  const horse = placeX("enemy", 2, 520, "dragoon");
+  const nearTroop = placeX("enemy", 1, 560, "troop");
+  vignette(ctx, panels[0], around([skirm, horse, nearTroop], 90, 50), "Priority · cavalry if closest", (frame) => {
+    drawGround(ctx);
+    drawUnit(ctx, nearTroop);
+    drawUnit(ctx, horse);
+    drawUnit(ctx, skirm);
+    drawShot(ctx, (skirm.x + horse.x) / 2, skirm.y - 12);
+    worldArrow(ctx, skirm.x + 12, skirm.y - 22, horse.x - 10, horse.y - 18, CONFIG.colors.gold);
+    zoomInk(ctx, frame, "first", horse.x, horse.y - 36, CONFIG.colors.gold, 12);
+  });
+
+  const lineTroops = [
+    placeX("enemy", 1, 430, "troop"),
+    placeX("enemy", 2, 430, "troop"),
+    placeX("enemy", 3, 430, "troop"),
+  ];
+  const light = placeX("player", 2, 560, "skirmisher");
+  vignette(ctx, panels[1], around([...lineTroops, light], 90, 50), "Troop line · no bonus vs skirmish", (frame) => {
+    drawGround(ctx);
+    for (let i = 0; i < lineTroops.length; i += 1) drawUnit(ctx, lineTroops[i]);
+    drawUnit(ctx, light);
+    drawShot(ctx, (lineTroops[1].x + light.x) / 2, lineTroops[1].y - 12);
+    zoomInk(ctx, frame, "no line +", (lineTroops[1].x + light.x) / 2, lineTroops[1].y - 36, CONFIG.colors.gold, 12);
+  });
+}
+
 const howtoPages = [
   {
     title: "Main Objective",
@@ -871,6 +903,22 @@ const howtoPages = [
       },
     ],
     draw: drawHowtoUnits,
+  },
+  {
+    title: "Skirmishers & Rifles",
+    artHeight: 230,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Fire at full range and full reload whenever firing is allowed, including Fall Back.",
+          "Ignore lane strategy. Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+          "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
+          "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
+        ],
+      },
+    ],
+    draw: drawHowtoSkirmishers,
   },
   {
     title: "Pushback",

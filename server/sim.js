@@ -30,6 +30,19 @@ function isBetterTarget(mode, candD, candVit, bestD, bestVit) {
 }
 
 /**
+ * Skirmisher / Rifles shot priority (lower is better). Cavalry is tier 0
+ * only when it is the closest valid target; otherwise it sits after guns.
+ */
+function skirmisherTargetTier(type, dist, closestDist) {
+  if (type === "dragoon") return dist <= closestDist ? 0 : 4;
+  if (type === "skirmisher") return 1;
+  if (type === "officer") return 2;
+  if (type === "cannon") return 3;
+  if (type === "troop") return 5;
+  return 6;
+}
+
+/**
  * Shot fired by a troop or cannon. Travels over intervening units and
  * only collides with its chosen target (or the target keep). A shell
  * already in flight still hits if that target later enters melee.
@@ -2951,12 +2964,15 @@ class Unit {
    * Same lane uses along-track paces. The other lane is in range only
    * when the path back through our keep is under 200 paces and inside
    * maxRange. Officers are skipped while another unit type is in that
-   * same range. The keep is a target only when it is the last unrouted
-   * enemy in this lane.
+   * same range (except skirmishers/rifles, which use a fixed type
+   * priority instead of the lane strategy). The keep is a target only
+   * when it is the last unrouted enemy in this lane.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
-    const shyOfOfficers = this.type !== "skirmisher";
+    if (this.type === "skirmisher") {
+      return this.skirmisherNearestTarget(enemies, range, enemySide);
+    }
     const mode = (this.side && this.side.targeting && this.side.targeting[this.lane])
       || "bastion";
     let best = null;
@@ -2972,9 +2988,9 @@ class Unit {
       if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) continue;
       if (!this.inShotRange(other, range)) continue;
       const d = this.shotPaces(other);
-      if (shyOfOfficers && other.type !== "officer") otherInRange = true;
+      if (other.type !== "officer") otherInRange = true;
       const vit = targetVitality(other);
-      if (other.type === "officer" && shyOfOfficers) {
+      if (other.type === "officer") {
         if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
           bestOfficerVit = vit;
@@ -2988,7 +3004,39 @@ class Unit {
         best = other;
       }
     }
-    if (!best && !(shyOfOfficers && otherInRange)) best = bestOfficer;
+    if (!best && !otherInRange) best = bestOfficer;
+    if (!best && enemySide && this.inShotRange(enemySide, range)) return enemySide;
+    return best;
+  }
+
+  /**
+   * Skirmisher / Rifles: fixed type priority, closest within the best
+   * tier. Ignores Bastion / Attrition / Terror.
+   */
+  skirmisherNearestTarget(enemies, range, enemySide) {
+    const candidates = [];
+    let closestDist = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (other.hp <= 0) continue;
+      if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) continue;
+      if (!this.inShotRange(other, range)) continue;
+      const d = this.shotPaces(other);
+      if (d < closestDist) closestDist = d;
+      candidates.push({ other, d });
+    }
+    let best = null;
+    let bestTier = Infinity;
+    let bestD = Infinity;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const { other, d } = candidates[i];
+      const tier = skirmisherTargetTier(other.type, d, closestDist);
+      if (tier < bestTier || (tier === bestTier && d < bestD)) {
+        bestTier = tier;
+        bestD = d;
+        best = other;
+      }
+    }
     if (!best && enemySide && this.inShotRange(enemySide, range)) return enemySide;
     return best;
   }
@@ -3022,8 +3070,8 @@ class Unit {
 
   /**
    * Apply raw (base × falloff), the attacker's percent sum, then defensive
-   * multipliers (armor, cover, skirmisher shot resistance) one after another.
-   * Optional pushAmount is shooting/melee pushback from the attacker.
+   * multipliers (armor, cover) one after another. Optional pushAmount is
+   * shooting/melee pushback from the attacker.
    */
   takeDamage(raw, kind, attackerSum, pushAmount) {
     const hit = truncateDamage(Math.max(
@@ -3164,14 +3212,13 @@ class Unit {
   }
 
   /**
-   * Product of defensive factors: armor ranks, fort cover, and skirmisher
-   * shot resistance. Each stacks by multiplying, not by adding percents.
+   * Product of defensive factors: armor ranks and fort cover. Each stacks
+   * by multiplying, not by adding percents.
    */
   incomingMultiplier(kind) {
     let mult = 1;
     if (this.side) mult *= 1 - this.side.armorReduction();
     if (this.hasCover()) mult *= 1 - CONFIG.quarterArmor;
-    if (kind !== "melee" && this.type === "skirmisher") mult *= 0.5;
     return Math.max(0, mult);
   }
 
@@ -3212,7 +3259,8 @@ class Unit {
 
   /**
    * Attacker percents added together: variance, charge, flank, line,
-   * damage upgrade, and the officer-damage bonus. Defense is applied
+   * damage upgrade, and the officer-damage bonus. Troop line bonus does
+   * not apply when shooting skirmishers/rifles. Defense is applied
    * separately on impact as multipliers. Not yet truncated.
    */
   attackerPercents(target, kind, allies) {
@@ -3222,7 +3270,9 @@ class Unit {
     if (strike === "melee" && target.lane && this.isFlanking(target)) {
       sum += this.flankMultiplier - 1;
     }
-    if (strike !== "melee") sum += this.lineDamagePercent(allies);
+    if (strike !== "melee" && target.type !== "skirmisher") {
+      sum += this.lineDamagePercent(allies);
+    }
     if (this.side) sum += this.side.damageScale() - 1;
     if (target.type === "officer") sum += (this.officerDamageMultiplier || 1) - 1;
     return sum;
@@ -3561,7 +3611,8 @@ class Troop extends Unit {
 }
 
 /**
- * Light infantry. Long range, light hits. Same click orders as a troop.
+ * Light infantry. Full fire range, fixed type-priority targeting, and
+ * troop line bonus does not apply against them.
  */
 class Skirmisher extends Unit {
   constructor(id, side, lane, sublane) {
@@ -3651,7 +3702,7 @@ class Grenadier extends Troop {
   }
 }
 
-/** Skirmisher alternate: longer reach, harder shot, slower reload. */
+/** Skirmisher alternate: harder shot, slower reload; double damage to Officers. */
 class Rifle extends Skirmisher {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);

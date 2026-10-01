@@ -5,6 +5,18 @@ const SHOT_NOTES = {
 };
 
 const NOTE_FREQ = {
+  "C2": 65.41,
+  "C#2": 69.30,
+  "D2": 73.42,
+  "D#2": 77.78,
+  "E2": 82.41,
+  "F2": 87.31,
+  "F#2": 92.50,
+  "G2": 98.00,
+  "G#2": 103.83,
+  "A2": 110.00,
+  "A#2": 116.54,
+  "B2": 123.47,
   "C3": 130.81,
   "C#3": 138.59,
   "D3": 146.83,
@@ -111,18 +123,26 @@ const ShotTone = {
     const name = names && names[sublane];
     let freq = name && NOTE_FREQ[name];
     if (!freq) return;
-    if (type === "cannon") freq /= 2;
+    let sustain = 0.14;
+    let baseVolume = sideId === "enemy" ? 0.04 : 0.07;
+    let decay = sustain; // Default: decay equals sustain
+    if (type === "cannon") {
+      freq /= 4; 
+      sustain = 0.32; // Longer sustain for cannon shots
+      baseVolume *= 2; // Louder cannon
+      decay = 0.5; // Increased decay for cannon
+    }
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = sideId === "enemy" ? "square" : "triangle";
     osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(sideId === "enemy" ? 0.04 : 0.07, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    gain.gain.setValueAtTime(baseVolume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + decay);
     osc.connect(gain);
     gain.connect(this.master);
     osc.start(now);
-    osc.stop(now + 0.16);
+    osc.stop(now + Math.max(sustain, decay) + 0.02);
   },
 
   /** Short tone for one second of the match-start countdown. */

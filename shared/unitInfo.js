@@ -22,7 +22,7 @@ export const UNIT_SUMMARIES = {
   grenadier:
     "Elite heavy infantry. Hold the line under pressure and shrug off pushback.",
   rifle:
-    "Marksmen with rifled barrels to make them accurate hunters of skirmishers and officers.",
+    "Marksmen with rifled barrels. Accurate hunters of officers.",
   lancer:
     "Cavalry that reaches from their horse with a long spear, making them deadly in any charge.",
   howitzer:
@@ -204,7 +204,7 @@ export function unitAbilityLines(type) {
 
   if (stats.lineBonus > 0) {
     lines.push(
-      `Line shooting bonus: +${pct(stats.lineBonus)} per other eligible troop in the line.`,
+      `Line shooting bonus: +${pct(stats.lineBonus)} per other eligible troop in the line (not vs Skirmishers/Rifles).`,
     );
   }
   if (type === "grenadier") {
@@ -218,7 +218,10 @@ export function unitAbilityLines(type) {
   }
   if (base === "skirmisher") {
     lines.push("Fires at full range and full reload whenever firing is allowed, including Fall Back.");
-    lines.push("Takes 50% less damage from shooting.");
+    lines.push("Troop line bonus does not apply when shooting this unit.");
+    lines.push(
+      "Ignores lane strategy. Shoots by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+    );
   }
   if ((stats.officerDamageMultiplier || 1) > 1) {
     lines.push(`Deals ${times(stats.officerDamageMultiplier)} damage to Officers.`);

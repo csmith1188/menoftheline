@@ -15,15 +15,15 @@ The enemy keep can be shot only when it is the last enemy in that same lane that
 
 Which range an order uses is on [[Orders]].
 
-Each lane has its own strategy. You change it with that lane's strategy control. The control is on [[Quick Start]].
+Each lane has its own strategy. You change it with that lane's strategy control. The control is on [[Quick Start]]. Skirmishers and Rifles ignore it and use their own type priority instead. See [[Units]].
 
 - **Bastion** (the default): shoot the closest target.
 - **Attrition:** shoot the target with the highest remaining health percent minus fatigue percent.
 - **Terror:** shoot the target with the lowest remaining health percent minus fatigue percent.
 
-Troops, Dragoons, Guns, and Officers will not shoot an Officer while another unit type is inside the range their current order uses. Skirmishers may shoot Officers. A Howitzer picks the closest valid target in each row of its own lane, and will shoot an Officer in a row that has no other valid target. See [[Units]].
+Troops, Dragoons, Guns, and Officers will not shoot an Officer while another unit type is inside the range their current order uses. Skirmishers and Rifles may shoot Officers and pick targets in this order: cavalry if it is the closest target, then other Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. A Howitzer picks the closest valid target in each row of its own lane, and will shoot an Officer in a row that has no other valid target. See [[Units]].
 
-Shot [[Damage]] falls off with distance, down to a quarter of the hit at maximum range.
+Shot [[Damage]] falls off with distance, down to a quarter of the hit at maximum range. Troop line bonus does not apply when the target is a Skirmisher or Rifles.
 
 **Pushback.** Every ranged hit adds the shooter's shooting pushback to the target's pushback counter. When the counter reaches the pushback-per-pace threshold, the target owes a pace back toward its own keep. Stacked paces ease through quickly at first, then slower. If the target cannot step back because a friendly blocks it, that pace is still spent and the target gains fatigue instead. Guns and Howitzers also apply their own shooting pushback to themselves as recoil when they fire; blocked recoil does not add fatigue. Grenadiers take half of all incoming pushback. See [[Melee]], [[Fatigue and Breaking]], and [[Units]].
 

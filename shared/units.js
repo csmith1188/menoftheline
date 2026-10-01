@@ -64,7 +64,7 @@ export const UNIT_STATS = {
     splash: 0,
     restoreRange: 0,
     restoreRate: 0,
-    officerDamageMultiplier: 2,
+    officerDamageMultiplier: 1,
     shootingPushback: 2,
   },
   dragoon: {

@@ -26,8 +26,6 @@
 - draw everything in canvas and take full screen
 
 # Roadmap
-- Skirmisher rework
-- Lancer charge first hit damage
 - terrain:
     - hills -> neutral forts
     - woods -> block LoS unless inside, cover and slow
@@ -51,18 +49,3 @@
         - can shoot through woods
         - can cancel fort cover
         - increases range of nearby units when on a hill
-
-## Skirmisher
-+ Half damage from troops ? or negate line bonus?
-+ Calvary if its the closest -> Light troop -> officers -> artillery -> troops
-+ High Pushback
-= Range and stats
-= Reload while falling back
-- Only rifles double damage against 
-
-## Rifles
-+ Higher damage
-+ Low push
-= Double damage against open order (skirmishers)
-- Long range
-Skirmishers can't shoot through troops?

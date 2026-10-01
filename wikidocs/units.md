@@ -3,13 +3,13 @@
 
 Each unit has its own health, ranges, damage, speeds, and pushback. Each type has an alternate that counts as the same type for forming a line, with its own name, numbers, and ability. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
 
-- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
+- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
 
 - **Grenadiers:** are tougher and take half pushback from shooting and melee. See [[Melee]] and [[Shooting]].
 
-- **Skirmisher:** May fire at full range and full reload whenever firing is allowed, including while Falling Back. Takes half damage from shooting. Stronger shooting pushback. See [[Shooting]], [[Orders]], and [[Damage]].
+- **Skirmisher:** May fire at full range and full reload whenever firing is allowed, including while Falling Back. Stronger shooting pushback. Ignores lane strategy and instead shoots by type priority: cavalry if it is the closest target, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. Troop line bonus does not apply against them. See [[Shooting]], [[Orders]], and [[Damage]].
 
-- **Rifles:** deal double damage to Officers.
+- **Rifles:** deal double damage to Officers. They share Skirmisher targeting and open-order rules.
 
 - **Dragoon:** A larger flank bonus while charging and flanking. Lancers keep a normal flank bonus and use a 1.8× charge bonus with stronger melee pushback on the charge. See [[Melee]] and [[Orders]].
 

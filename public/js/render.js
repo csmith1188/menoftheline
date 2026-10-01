@@ -10,7 +10,6 @@ import {
   inspectReadout,
   readSouthpaw,
   sideStateMethods,
-  TARGETING_LABELS,
   townStateMethods,
   troopStateMethods,
   useDrawPrototypes,
@@ -590,7 +589,6 @@ const boardMethods = {
     this.drawScoreboard(ctx);
     this.drawUpgradeReadouts(ctx);
     this.drawBuyButtons(ctx);
-    this.drawStrategyButtons(ctx);
     this.drawInspectedUnit(ctx);
     this.drawOrderCallout(ctx);
     this.drawGestureHints(ctx);
@@ -797,31 +795,35 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Speed, damage, and armor, stacked on the left/right edges. */
+  /** Speed, damage, and armor under the buy row (former strategy slots). */
   drawUpgradeReadouts(ctx) {
     if (!this.player || !this.enemy) return;
-    const pad = 14 * CONFIG.uiScale;
-    const lineH = 16 * CONFIG.uiScale;
-    const baseY = CONFIG.canvasHeight - 12 * CONFIG.uiScale;
-    const drawStack = (lines, x, align, color) => {
-      ctx.textAlign = align;
+    const lineH = 14 * CONFIG.uiScale;
+    const drawStack = (lines, box, color) => {
+      const midX = box.x + box.w / 2;
+      const totalH = (lines.length - 1) * lineH;
+      const startY = box.y + box.h / 2 - totalH / 2;
+      ctx.textAlign = "center";
       ctx.fillStyle = color;
       for (let i = 0; i < lines.length; i += 1) {
-        const y = baseY - (lines.length - 1 - i) * lineH;
-        ctx.strokeText(lines[i], x, y);
-        ctx.fillText(lines[i], x, y);
+        const y = startY + i * lineH;
+        ctx.strokeText(lines[i], midX, y);
+        ctx.fillText(lines[i], midX, y);
       }
     };
     ctx.save();
-    ctx.textBaseline = "bottom";
+    ctx.textBaseline = "middle";
     ctx.font = this.uiFont(12);
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
-    drawStack(this.player.upgradeLines(), pad, "left", CONFIG.colors.player);
+    drawStack(
+      this.player.upgradeLines(),
+      this.upgradeReadoutRect("player"),
+      CONFIG.colors.player,
+    );
     drawStack(
       this.enemy.upgradeLines(),
-      CONFIG.canvasWidth - pad,
-      "right",
+      this.upgradeReadoutRect("enemy"),
       CONFIG.colors.enemy,
     );
     ctx.restore();
@@ -941,56 +943,6 @@ const boardMethods = {
         ctx.fillText(landText, ubox.x + ubox.w / 2, ubox.y + ubox.h / 2);
         ctx.globalAlpha = 1;
       }
-    }
-  },
-
-  /** Per-lane Bastion / Attrition / Terror controls under the buy row. */
-  drawStrategyButtons(ctx) {
-    if (!this.player) return;
-    const over = Boolean(this.winner) || this.status !== "playing";
-    const hover = this.hover;
-    const drag = this.strategyDrag;
-    const lanes = ["top", "bottom"];
-    const fills = { top: "#2a4a3a", bottom: "#4a3a2a" };
-    const strokes = { top: "#6ab890", bottom: "#c4a05a" };
-    for (let i = 0; i < lanes.length; i += 1) {
-      const lane = lanes[i];
-      const box = this.strategyButtonRect(lane);
-      const mode = this.targetingMode(lane);
-      const label = TARGETING_LABELS[mode] || mode;
-      const lit = !this.buyDrag
-        && (!drag || drag.lane === lane)
-        && hover
-        && this.pointInBox(hover, box);
-      const swiping = drag && drag.lane === lane;
-      const swipe = swiping ? drag.swipe : null;
-      const mid = box.y + box.h / 2;
-      const edge = 7 * CONFIG.uiScale;
-      ctx.globalAlpha = over ? 0.45 : 1;
-      ctx.fillStyle = fills[lane];
-      ctx.fillRect(box.x, box.y, box.w, box.h);
-      if (swipe) {
-        ctx.fillStyle = "rgba(255,255,255,0.22)";
-        ctx.fillRect(
-          swipe < 0 ? box.x : box.x + box.w / 2,
-          box.y,
-          box.w / 2,
-          box.h,
-        );
-      }
-      ctx.strokeStyle = (lit || swiping) && !over ? "#ffffff" : strokes[lane];
-      ctx.lineWidth = 2;
-      ctx.strokeRect(box.x, box.y, box.w, box.h);
-      ctx.fillStyle = swipe === -1 ? "#ffffff" : "#c8d2dc";
-      fillSideArrow(ctx, box.x + edge, mid, false);
-      ctx.fillStyle = swipe === 1 ? "#ffffff" : "#c8d2dc";
-      fillSideArrow(ctx, box.x + box.w - edge, mid, true);
-      ctx.fillStyle = CONFIG.colors.gold;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.font = this.uiFont(12);
-      ctx.fillText(label, box.x + box.w / 2, mid);
-      ctx.globalAlpha = 1;
     }
   },
 };

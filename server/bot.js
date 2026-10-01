@@ -228,24 +228,8 @@ export class BotController {
     return false;
   }
 
-  updateTargeting(sim, self) {
-    for (let i = 0; i < LANES.length; i += 1) {
-      const lane = LANES[i];
-      const override = this.strategy[lane];
-      let mode;
-      if (override !== "auto") {
-        mode = override;
-      } else {
-        const share = sideShare(sim, self, lane);
-        if (share < CONFIG.botShareBastion) mode = "bastion";
-        else if (share > CONFIG.botShareTerror) mode = "terror";
-        else mode = "attrition";
-      }
-      if (self.targeting[lane] !== mode) {
-        this.cmd(sim, { type: "targeting", lane, mode });
-      }
-    }
-  }
+  /** Grand strategies disabled; targeting stays Bastion. */
+  updateTargeting() {}
 
   weakestLane(sim, self) {
     const top = sideShare(sim, self, "top");

@@ -13,11 +13,7 @@ The enemy keep can be shot whenever it is within the shooter's current weapon ra
 
 Which range an order uses is on [[Orders]].
 
-Each lane has its own strategy. You change it with that lane's strategy control. The control is on [[Quick Start]]. Skirmishers and Rifles ignore it and use their own type priority instead. See [[Units]].
-
-- **Bastion** (the default): shoot the closest target (the keep uses its 50-pace priority distance).
-- **Attrition:** shoot the target with the highest remaining health percent minus fatigue percent.
-- **Terror:** shoot the target with the lowest remaining health percent minus fatigue percent.
+Each unit shoots the closest eligible target (the keep uses its 50-pace priority distance when choosing). Skirmishers and Rifles use their own type priority instead. See [[Units]].
 
 Troops, Dragoons, Guns, and Officers will not shoot an Officer while another unit type is inside the range their current order uses. Skirmishers and Rifles may shoot Officers and pick targets in this order: cavalry if it is the closest target, then other Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. A Howitzer picks the closest valid target in each row of its own lane, and will shoot an Officer in a row that has no other valid target. The keep competes only in the middle row (using that same 50-pace priority), so a Howitzer volley hits it at most once. See [[Units]].
 

@@ -126,7 +126,7 @@ export const sideStateMethods = {
     return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰  −${investText}🌿`;
   },
 
-  /** Speed, damage, and armor ranks as separate lines for edge readouts. */
+  /** Speed, damage, and armor ranks as separate lines for upgrade readouts. */
   upgradeLines() {
     return [
       `${this.speedMultiplier.toFixed(2)}x ⚡`,
@@ -135,7 +135,7 @@ export const sideStateMethods = {
     ];
   },
 
-  /** Speed, damage, and armor ranks, stacked for the screen-edge HUD. */
+  /** Speed, damage, and armor ranks, stacked for the upgrade HUD. */
   upgradeLabel() {
     return this.upgradeLines().join("\n");
   },
@@ -370,17 +370,8 @@ export const boardStateMethods = {
     return best;
   },
 
-  /** Grand strategy button under the pointer, or null. */
-  hitStrategyAt(point) {
-    const pad = this.uiMetrics().hitPad;
-    const lanes = ["top", "bottom"];
-    for (let i = 0; i < lanes.length; i += 1) {
-      const lane = lanes[i];
-      const box = this.strategyButtonRect(lane);
-      if (this.pointInBox(point, box, pad)) {
-        return { lane, box };
-      }
-    }
+  /** Strategy buttons disabled; always miss. */
+  hitStrategyAt() {
     return null;
   },
 
@@ -391,7 +382,7 @@ export const boardStateMethods = {
     return side.targeting[lane] || "bastion";
   },
 
-  /** Next/prev mode in Bastion → Attrition → Terror cycle. */
+  /** Next/prev mode in Bastion → Attrition → Terror cycle (unused while disabled). */
   nextTargetingMode(lane, dir) {
     const cur = this.targetingMode(lane);
     let idx = TARGETING_MODES.indexOf(cur);
@@ -448,15 +439,16 @@ export const boardStateMethods = {
     const dx = Math.min(row / 2, rIn - 8);
     const ringY = c.y + Math.sqrt(Math.max(0, rIn * rIn - dx * dx));
     const maxY = ringY - pad - h - reserveUnlockGap - reserveUnlockH - strategyGap - strategyH;
-    // Pack the buy / strategy cluster toward the bottom of the pocket.
+    // Pack the buy / upgrade-readout cluster toward the bottom of the pocket.
     let y = maxY;
     y = Math.max(minY, Math.min(y, maxY));
     return { x, y, h, unlockH, unlockGap: gap, ui, strategyH, strategyGap, row };
   },
 
-  /** Two buy-width strategy buttons centered under the buy row.
-   *  Y always assumes the land-cost strip height so the row does not jump
-   *  when alternate buy chips appear or disappear.
+  /**
+   * Two buy-width slots centered under the buy row (upgrade readouts).
+   * Y always assumes the land-cost strip height so the row does not jump
+   * when alternate buy chips appear or disappear.
    */
   strategyRowLayout() {
     const buy = this.buyRowLayout();
@@ -488,6 +480,11 @@ export const boardStateMethods = {
       h: layout.h,
       lane,
     };
+  },
+
+  /** Upgrade readout box: player left (top slot), enemy right (bottom slot). */
+  upgradeReadoutRect(sideId) {
+    return this.strategyButtonRect(sideId === "enemy" ? "bottom" : "top");
   },
 
   buyButtonRect(index) {

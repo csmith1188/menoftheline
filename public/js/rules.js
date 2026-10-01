@@ -635,25 +635,10 @@ function drawHowtoButtons(ctx, w, h) {
   vignette(ctx, panels[3], around([
     { x: town.x, y: town.y },
     place("player", "bottom", 1, 0.45, "troop"),
-  ], 70, 50), "Strategy swipe · town research", () => {
+  ], 70, 50), "Click town · research", () => {
     drawGround(ctx);
     drawTownMarker(ctx, town, "player", true);
-    const bx = town.x;
-    const by = town.y + 48;
-    const bw = 72;
-    const bh = 22;
-    ctx.fillStyle = "#2a4a3a";
-    ctx.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
-    ctx.strokeStyle = "#6ab890";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
-    ctx.fillStyle = CONFIG.colors.gold;
-    ctx.font = "11px Trebuchet MS, Segoe UI, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Bastion", bx, by);
-    worldArrow(ctx, bx - bw / 2 - 4, by, bx - bw / 2 - 22, by, "#8aa0b8");
-    worldArrow(ctx, bx + bw / 2 + 4, by, bx + bw / 2 + 22, by, "#8aa0b8");
+    drawUnit(ctx, place("player", "bottom", 1, 0.45, "troop"));
   });
 }
 
@@ -863,7 +848,6 @@ const howtoPages = [
           "Click Banks to buy them.",
           "Swipe Unit Buttons up/down to purchase for the top/bottom lane.",
           "Swipe Unit Buttons left/right to change the unit type.",
-          "Swipe Strategy Buttons left/right to change Strategy for that lane.",
           "Click a Town you control to enable/disable researching in that town.",
         ],
       },
@@ -912,7 +896,7 @@ const howtoPages = [
         kind: "ul",
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
-          "Ignore lane strategy. Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+          "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
         ],

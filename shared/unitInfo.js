@@ -220,7 +220,7 @@ export function unitAbilityLines(type) {
     lines.push("Full reload whenever firing is allowed, including Fall Back.");
     lines.push("Troop line bonus does not apply when shooting this unit.");
     lines.push(
-      "Ignores lane strategy. Shoots by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+      "Shoots by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
     );
   }
   if ((stats.officerDamageMultiplier || 1) > 1) {

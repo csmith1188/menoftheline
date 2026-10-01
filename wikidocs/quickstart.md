@@ -1,4 +1,3 @@
-[[Quick Start]]
 # Quick How To Play
 
 ## Main Objective
@@ -10,7 +9,6 @@
 - Click Banks to buy them. See [[Gold, Land, and Banks]].
 - Swipe Unit Buttons up/down to purchase for the top/bottom lane. See [[Units]].
 - Swipe Unit Buttons left/right to change the unit type
-- Swipe Strategy Buttons left/right or click to change Strategy for that lane. See [[Shooting]].
 - Click a Town you control to enable/disable researching in that town. See [[Towns]].
 ## Map Controls
 - Click an empty part of lane, pinch zoom in, or mouse wheel up to zoom into that lane. See [[The Map]].

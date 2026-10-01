@@ -2,8 +2,9 @@ import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
 import { UNIT_STATS, unitStats, massTaxOf, unitLandCost, isAlternateUnit } from "../shared/units.js";
 import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 
-/** Per-lane grand strategy modes (cycle order). */
+/** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
+void TARGETING_MODES;
 
 /** hp% − fatigue%; Attrition maximizes, Terror minimizes. Keep uses HP only. */
 function targetVitality(unit) {
@@ -2986,22 +2987,22 @@ class Unit {
   }
 
   /**
-   * Best living enemy inside maxRange paces under this lane's strategy.
+   * Best living enemy inside maxRange paces (closest eligible = Bastion).
    * Same lane uses along-track paces. The other lane is in range only
    * when the path back through our keep is under 200 paces and inside
    * maxRange. Officers are skipped while another unit type is in that
    * same range (except skirmishers/rifles, which use a fixed type
-   * priority instead of the lane strategy). The Keep competes using
-   * targetPriorityPaces (50 paces closer for ranking only) whenever it
-   * is within actual weapon range; melee does not lock the Keep.
+   * priority). The Keep competes using targetPriorityPaces (50 paces
+   * closer for ranking only) whenever it is within actual weapon range;
+   * melee does not lock the Keep.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
     if (this.type === "skirmisher") {
       return this.skirmisherNearestTarget(enemies, range, enemySide);
     }
-    const mode = (this.side && this.side.targeting && this.side.targeting[this.lane])
-      || "bastion";
+    // Grand strategies disabled; always Bastion (closest eligible).
+    const mode = "bastion";
     let best = null;
     let bestD = Infinity;
     let bestVit = 0;
@@ -3047,7 +3048,7 @@ class Unit {
 
   /**
    * Skirmisher / Rifles: fixed type priority, closest within the best
-   * tier. Ignores Bastion / Attrition / Terror. Keep wins only when its
+   * tier (not closest-eligible Bastion). Keep wins only when its
    * priority distance is closer than every valid unit.
    */
   skirmisherNearestTarget(enemies, range, enemySide) {
@@ -4018,16 +4019,16 @@ class Side {
     this.banks = 0;
     this.troops = [];
     this.shotCooldown = 0;
-    /** Per-lane fire priority: bastion | attrition | terror. */
+    /** Per-lane fire priority (grand strategies disabled; always bastion). */
     this.targeting = { top: "bastion", bottom: "bastion" };
   }
 
-  /** Set grand strategy for a lane. False if lane or mode is invalid. */
+  /**
+   * Grand strategies are disabled in the current game mode.
+   * Kept for a future mode; always rejects so targeting stays Bastion.
+   */
   setTargeting(lane, mode) {
-    if (lane !== "top" && lane !== "bottom") return false;
-    if (TARGETING_MODES.indexOf(mode) < 0) return false;
-    this.targeting[lane] = mode;
-    return true;
+    return false;
   }
 
   /** Land price of the next rank of this upgrade. */
@@ -4234,12 +4235,13 @@ class Side {
   }
 
   /**
-   * Best enemy troop in cannon range under the top-lane grand strategy
-   * (keeps have no lane of their own). May fire into melee.
+   * Best enemy troop in cannon range (closest eligible = Bastion;
+   * keeps have no lane of their own). May fire into melee.
    * Officers are ignored while any other enemy is in cannon range.
    */
   capitalTarget(enemies, allies) {
-    const mode = (this.targeting && this.targeting.top) || "bastion";
+    // Grand strategies disabled; always Bastion (closest eligible).
+    const mode = "bastion";
     let best = null;
     let bestD = Infinity;
     let bestVit = 0;

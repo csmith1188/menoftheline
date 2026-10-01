@@ -4,7 +4,6 @@ import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost } from "
 import { Path, quarterSegments } from "../shared/path.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
-import { TARGETING_LABELS } from "./board.js";
 
 function labelTexture(lines, opts = {}) {
   const width = opts.width || 256;
@@ -427,7 +426,7 @@ export function createScene(canvas) {
   world.add(hud);
   const buyMeshes = [];
   const unlockMeshes = [];
-  const strategyMeshes = [];
+  const upgradeMeshes = [];
 
   const units = new Map();
   const towns = new Map();
@@ -967,45 +966,47 @@ export function createScene(canvas) {
     }
   }
 
-  function syncStrategyUi(board) {
+  function syncUpgradeUi(board) {
     const show = Boolean(board.player) && !board.telescope;
-    const over = Boolean(board.winner) || board.status !== "playing";
-    const lanes = ["top", "bottom"];
-    const fills = { top: "#2a4a3a", bottom: "#4a3a2a" };
-    const strokes = { top: "#6ab890", bottom: "#c4a05a" };
-    while (strategyMeshes.length < lanes.length) {
-      const lane = lanes[strategyMeshes.length];
-      const pad = makePad(80, 40, fills[lane]);
-      strategyMeshes.push(pad);
+    const sides = [
+      { id: "player", fill: "#1a2a3a", stroke: CONFIG.colors.player },
+      { id: "enemy", fill: "#2a1a1a", stroke: CONFIG.colors.enemy },
+    ];
+    while (upgradeMeshes.length < sides.length) {
+      const side = sides[upgradeMeshes.length];
+      const pad = makePad(80, 40, side.fill);
+      upgradeMeshes.push(pad);
       hud.add(pad);
     }
-    for (let i = 0; i < lanes.length; i += 1) {
-      const lane = lanes[i];
-      const mesh = strategyMeshes[i];
+    for (let i = 0; i < sides.length; i += 1) {
+      const side = sides[i];
+      const mesh = upgradeMeshes[i];
       mesh.visible = show;
       if (!show) continue;
-      const box = board.strategyButtonRect(lane);
+      const owner = board[side.id];
+      if (!owner) {
+        mesh.visible = false;
+        continue;
+      }
+      const box = board.upgradeReadoutRect(side.id);
       placePad(mesh, box, 15);
       mesh.scale.set(box.w / 80, 1.1, box.h / 40);
       mesh.userData.face.scale.x = board.southpaw ? -1 : 1;
-      mesh.material.opacity = over ? 0.45 : 1;
+      mesh.material.opacity = 1;
       mesh.material.transparent = true;
-      const mode = board.targetingMode(lane);
-      const label = TARGETING_LABELS[mode] || mode;
-      const dragging = board.strategyDrag && board.strategyDrag.lane === lane;
-      const swipe = dragging ? board.strategyDrag.swipe : null;
-      mesh.material.emissive.set(dragging ? "#ffffff" : "#000000");
-      mesh.material.emissiveIntensity = dragging ? 0.18 : 0;
-      const key = `${label}:${over}:${dragging ? 1 : 0}:${swipe || ""}`;
+      const lines = owner.upgradeLines();
+      const key = `${lines.join("|")}:${side.id}`;
       if (mesh.userData.face.userData.key !== key) {
-        setLabel(mesh.userData.face, [
-          { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
-        ], {
+        setLabel(mesh.userData.face, lines.map((text) => ({
+          text,
+          font: "bold 28px Trebuchet MS, sans-serif",
+          color: side.stroke,
+        })), {
           width: 256,
-          height: 96,
-          fill: fills[lane],
-          stroke: dragging && !over ? "#ffffff" : strokes[lane],
-          sideArrows: true,
+          height: 128,
+          fill: side.fill,
+          stroke: side.stroke,
+          textOutline: "#0d1218",
           key,
         });
         mesh.userData.face.userData.key = key;
@@ -1023,7 +1024,7 @@ export function createScene(canvas) {
     syncHover(board);
     syncKeeps(board);
     syncBuysUi(board);
-    syncStrategyUi(board);
+    syncUpgradeUi(board);
     syncTowns(board);
     syncDebugRanges(board);
     syncUnits(board);
@@ -1055,7 +1056,7 @@ export function createScene(canvas) {
         el.style.display = "none";
         continue;
       }
-      // Buy/strategy pads sit a bit above the ground plane; units are ~12.
+      // Buy/upgrade pads sit a bit above the ground plane; units are ~12.
       const lift = board.buyDrag || board.strategyDrag ? 18 : 14;
       hintScratch.set(label.x, lift, label.y);
       world.localToWorld(hintScratch);

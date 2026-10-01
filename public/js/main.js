@@ -31,8 +31,6 @@ const soundMute = document.getElementById("sound-mute");
 const training = document.getElementById("training");
 const botDifficulty = document.getElementById("bot-difficulty");
 const botSpeed = document.getElementById("bot-speed");
-const botStrategyTop = document.getElementById("bot-strategy-top");
-const botStrategyBottom = document.getElementById("bot-strategy-bottom");
 const debugPlay = document.getElementById("debug-play");
 const debugSide = document.getElementById("debug-side");
 const debugBots = document.getElementById("debug-bots");
@@ -90,10 +88,6 @@ function applyBotSettingsUi(settings) {
   syncingBotUi = true;
   if (settings.difficulty) botDifficulty.value = settings.difficulty;
   if (settings.speed != null) botSpeed.value = String(settings.speed);
-  if (settings.strategy) {
-    if (settings.strategy.top) botStrategyTop.value = settings.strategy.top;
-    if (settings.strategy.bottom) botStrategyBottom.value = settings.strategy.bottom;
-  }
   syncingBotUi = false;
 }
 
@@ -151,18 +145,6 @@ botDifficulty.addEventListener("change", () => {
 botSpeed.addEventListener("change", () => {
   if (syncingBotUi) return;
   socket.emit("botSettings", { speed: Number(botSpeed.value) });
-});
-botStrategyTop.addEventListener("change", () => {
-  if (syncingBotUi) return;
-  socket.emit("botSettings", {
-    strategy: { lane: "top", mode: botStrategyTop.value },
-  });
-});
-botStrategyBottom.addEventListener("change", () => {
-  if (syncingBotUi) return;
-  socket.emit("botSettings", {
-    strategy: { lane: "bottom", mode: botStrategyBottom.value },
-  });
 });
 
 debugSide.addEventListener("click", () => {

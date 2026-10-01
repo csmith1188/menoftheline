@@ -12,7 +12,7 @@
 - Wiki Categories
 
 # Feature
-- Remove Grand Strategies?
+- ~~Remove Grand Strategies?~~ (disabled; Bastion default; restore in another mode)
 - Late game land?
 - Add more game metrics
     Each type of game played

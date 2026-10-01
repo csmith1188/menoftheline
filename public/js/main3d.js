@@ -31,8 +31,6 @@ const soundMute = document.getElementById("sound-mute");
 const training = document.getElementById("training");
 const botDifficulty = document.getElementById("bot-difficulty");
 const botSpeed = document.getElementById("bot-speed");
-const botStrategyTop = document.getElementById("bot-strategy-top");
-const botStrategyBottom = document.getElementById("bot-strategy-bottom");
 const debugPlay = document.getElementById("debug-play");
 const debugSide = document.getElementById("debug-side");
 const debugBots = document.getElementById("debug-bots");
@@ -41,9 +39,6 @@ const scoreEl = document.getElementById("score");
 const banksPlayer = document.getElementById("banks-player");
 const banksEnemy = document.getElementById("banks-enemy");
 const hudEl = document.getElementById("hud");
-const upgradeBar = document.getElementById("upgrade-bar");
-const upgradePlayer = document.getElementById("upgrade-player");
-const upgradeEnemy = document.getElementById("upgrade-enemy");
 const inspectEl = document.getElementById("inspect");
 const orderEl = document.getElementById("order-flash");
 
@@ -129,10 +124,6 @@ function applyBotSettingsUi(settings) {
   syncingBotUi = true;
   if (settings.difficulty) botDifficulty.value = settings.difficulty;
   if (settings.speed != null) botSpeed.value = String(settings.speed);
-  if (settings.strategy) {
-    if (settings.strategy.top) botStrategyTop.value = settings.strategy.top;
-    if (settings.strategy.bottom) botStrategyBottom.value = settings.strategy.bottom;
-  }
   syncingBotUi = false;
 }
 
@@ -188,18 +179,6 @@ botSpeed.addEventListener("change", () => {
   if (syncingBotUi) return;
   socket.emit("botSettings", { speed: Number(botSpeed.value) });
 });
-botStrategyTop.addEventListener("change", () => {
-  if (syncingBotUi) return;
-  socket.emit("botSettings", {
-    strategy: { lane: "top", mode: botStrategyTop.value },
-  });
-});
-botStrategyBottom.addEventListener("change", () => {
-  if (syncingBotUi) return;
-  socket.emit("botSettings", {
-    strategy: { lane: "bottom", mode: botStrategyBottom.value },
-  });
-});
 
 debugSide.addEventListener("click", () => {
   const next = controlSide === "enemy" ? "player" : "enemy";
@@ -234,8 +213,6 @@ function syncScore() {
     `<div class="keeps"><span class="you">${pHp}</span> — <span class="them">${eHp}</span></div>`,
     `<div class="side foe">${sideLine(board.enemy)}</div>`,
   ].join("");
-  if (upgradePlayer) upgradePlayer.textContent = board.player.upgradeLabel();
-  if (upgradeEnemy) upgradeEnemy.textContent = board.enemy.upgradeLabel();
 }
 
 function bankRowKey(side, clickable) {
@@ -377,7 +354,6 @@ function syncChrome() {
   const showHud = Boolean(board.player) && !waiting;
   topChrome.classList.toggle("hidden", !showHud);
   if (hudEl) hudEl.classList.toggle("hidden", !showHud);
-  if (upgradeBar) upgradeBar.classList.toggle("hidden", !showHud);
   if (showHud) {
     syncScore();
     syncBanks();

@@ -17,7 +17,7 @@ Each unit has its own health, ranges, damage, and speeds. Each type has an alter
 
 - **Howitzers:** Instead fire at one target in every row of their lane. See [[Shooting]].
 
-- **Officer:** Troops, Dragoons, Guns, and Officers avoid shooting Officers while another unit type is in range. An Officer restores fatigue to friends within 10 paces on every row of its lane. The restore is doubled for friends behind the Officer. A second Officer does not add more; only the stronger restore applies. See [[Shooting]] and [[Fatigue and Breaking]].
+- **Officer:** Troops, Dragoons, Guns, and Officers avoid shooting Officers while another unit type is in range. An Officer restores fatigue to friends within 50 paces on every row of its lane. The restore is doubled for friends behind the Officer. A second Officer does not add more; only the stronger restore applies. See [[Shooting]] and [[Fatigue and Breaking]].
 
 - **Color Guard:** An Officer that also restores health in that same area, doubled the same way. Color Guards do not stack with each other. One Officer and one Color Guard do stack. See [[Fatigue and Breaking]].
 

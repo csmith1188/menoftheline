@@ -49,7 +49,6 @@ class Projectile {
     this.size = shot && shot.size != null ? shot.size : UNIT_STATS.troop.projectileSize;
     this.color = shot && shot.color ? shot.color : UNIT_STATS.troop.projectileColor;
     this.splash = shot && shot.splash != null ? shot.splash : 0;
-    this.splashWholeLine = Boolean(shot && shot.splashWholeLine);
     this.attackerSum = shot && shot.attackerSum ? shot.attackerSum : 0;
     this.shotSign = shot && shot.shotSign ? shot.shotSign : 1;
     this.alive = true;
@@ -99,8 +98,7 @@ class Projectile {
 
   /**
    * Next enemy footprint within gunPenetratePaces of this one's edge,
-   * further along the shot. Guns stay on the struck row unless
-   * splashWholeLine is set.
+   * further along the shot on the same row.
    */
   nextBehind(from) {
     if (!from || !from.lane || !from.side) return null;
@@ -112,7 +110,7 @@ class Projectile {
     for (let i = 0; i < foes.length; i += 1) {
       const other = foes[i];
       if (other === from || other.hp <= 0 || other.lane !== from.lane) continue;
-      if (!this.splashWholeLine && other.sublane !== from.sublane) continue;
+      if (other.sublane !== from.sublane) continue;
       const delta = other.station() - from.station();
       if (sign > 0 && delta <= 0) continue;
       if (sign < 0 && delta >= 0) continue;
@@ -263,8 +261,6 @@ class Unit {
     this.type = "troop";
     this.variant = null;
     this.alternate = false;
-    this.auraAttack = 1;
-    this.auraSpeed = 1;
     this.applyStats(UNIT_STATS.troop);
     this.progress = 0;
     this.cooldown = 0;
@@ -332,14 +328,10 @@ class Unit {
     this.lineBonus = stats.lineBonus;
     this.fightsMelee = stats.fightsMelee;
     this.splash = stats.splash;
-    this.splashWholeLine = Boolean(stats.splashWholeLine);
     this.restoreRange = stats.restoreRange || 0;
     this.restoreRate = stats.restoreRate || 0;
     this.restoreHealth = Boolean(stats.restoreHealth);
     this.officerDamageMultiplier = stats.officerDamageMultiplier || 1;
-    this.buffRange = stats.buffRange || 0;
-    this.attackBuff = stats.attackBuff || 0;
-    this.speedBuff = stats.speedBuff || 0;
   }
 
   /**
@@ -1146,7 +1138,7 @@ class Unit {
 
   /**
    * HARD RULE — do not weaken: melee-locked units are never valid
-   * ranged targets (keeps are handled separately and may still fire).
+   * ranged targets for units. Keeps may still fire into melee.
    * Covers current contact, prior tick, and sticky lock after gaps.
    */
   isMeleeTargetLocked() {
@@ -1682,7 +1674,7 @@ class Unit {
    */
   marchSpeed(allies) {
     const scale = this.shotSlowScale();
-    const base = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
+    const base = this.speed * this.side.speedMultiplier * scale;
     if (this.order === "halt") {
       return 0;
     }
@@ -2307,13 +2299,6 @@ class Unit {
   }
 
   /**
-   * Dragoons and lancer variants.
-   */
-  isCavalry() {
-    return this.type === "dragoon" || this.variant === "lancer";
-  }
-
-  /**
    * True when this unit and ally may not occupy the same stretch.
    */
   blocksAlly(ally) {
@@ -2757,7 +2742,7 @@ class Unit {
       }
     }
     const scale = this.shotSlowScale();
-    const speed = this.speed * this.side.speedMultiplier * this.auraSpeed * scale;
+    const speed = this.speed * this.side.speedMultiplier * scale;
     const delta = this.alongDelta(speed, dt);
     const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
     if (nextProgress === this.progress) {
@@ -3213,7 +3198,6 @@ class Unit {
         size: this.projectileSize,
         color: this.projectileColor,
         splash: this.splash,
-        splashWholeLine: this.splashWholeLine,
         attackerSum: shot.attackerSum,
         shotSign: target.station && this.station ? Math.sign(target.station() - this.station()) || 1 : 1,
       },
@@ -3455,8 +3439,7 @@ class Troop extends Unit {
 }
 
 /**
- * Light infantry. Long range, light hits. While advancing they walk
- * through non-skirmish-like friendlies. Same click orders as a troop.
+ * Light infantry. Long range, light hits. Same click orders as a troop.
  */
 class Skirmisher extends Unit {
   constructor(id, side, lane, sublane) {
@@ -3468,8 +3451,7 @@ class Skirmisher extends Unit {
 
 /**
  * Mounted infantry. Weaker shots, harder melee, a wider flank bonus, and
- * twice the walk speed. Charge speed uses their own chargeSpeed (usually 1).
- * Their own order picks fallback, charge, or reform from nearby troops.
+ * twice the walk speed.
  */
 class Dragoon extends Unit {
   constructor(id, side, lane, sublane) {
@@ -3477,62 +3459,11 @@ class Dragoon extends Unit {
     this.type = "dragoon";
     this.applyStats(UNIT_STATS.dragoon);
   }
-
-  /**
-   * Alternate orders: no troop ahead stays on advance; no troop nearby
-   * falls back; an enemy nearby charges; a troop behind reforms.
-   */
-  supportOrder(allies, foes) {
-    const range = CONFIG.dragoonSupportRange;
-    if (this.kindAhead(allies, "troop")) return null;
-    if (!this.kindNear(allies, "troop", range)) return "fallback";
-    if (this.enemyNear(foes, range)) return "charge";
-    if (this.kindBehind(allies, "troop", range)) return "reform";
-    return null;
-  }
-
-  kindAhead(allies, type) {
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
-      if (ally.lane !== this.lane) continue;
-      if (this.alongSigned(ally) > 0) return true;
-    }
-    return false;
-  }
-
-  kindNear(allies, type, range) {
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
-      if (distance(this, ally) <= range) return true;
-    }
-    return false;
-  }
-
-  kindBehind(allies, type, range) {
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally.hp <= 0 || ally === this || ally.type !== type) continue;
-      if (this.alongSigned(ally) >= 0) continue;
-      if (distance(this, ally) <= range) return true;
-    }
-    return false;
-  }
-
-  enemyNear(foes, range) {
-    for (let i = 0; i < foes.length; i += 1) {
-      const foe = foes[i];
-      if (foe.hp <= 0) continue;
-      if (distance(this, foe) <= range) return true;
-    }
-    return false;
-  }
 }
 
 /**
  * Field gun. A hit can continue to two more bodies on the same row.
- * Charge is a push: no firing and no melee.
+ * Charging guns do not shoot; they still fight in melee.
  */
 class Cannon extends Unit {
   constructor(id, side, lane, sublane) {
@@ -3723,7 +3654,6 @@ class Howitzer extends Cannon {
           size: this.projectileSize,
           color: this.projectileColor,
           splash: 0,
-          splashWholeLine: false,
           attackerSum: shot.attackerSum,
           shotSign: aim.station ? (Math.sign(aim.station() - this.station()) || 1) : 1,
         },
@@ -3744,24 +3674,6 @@ class ColorGuard extends Officer {
     this.variant = "colorGuard";
     this.alternate = true;
     this.applyStats(UNIT_STATS.colorGuard);
-  }
-
-  /** Raise nearby allies' attack and walk auras (does not buff self). */
-  buffNearby(allies) {
-    if (!(this.buffRange > 0) || this.hp <= 0) return;
-    const attack = 1 + this.attackBuff;
-    const speed = 1 + this.speedBuff;
-    for (let i = 0; i < allies.length; i += 1) {
-      const ally = allies[i];
-      if (ally === this || ally.hp <= 0) continue;
-      if (distance(this, ally) > this.buffRange) continue;
-      if (attack > ally.auraAttack) ally.auraAttack = attack;
-      if (speed > ally.auraSpeed) ally.auraSpeed = speed;
-    }
-  }
-
-  update(dt, allies, enemies, enemySide, projectiles) {
-    super.update(dt, allies, enemies, enemySide, projectiles);
   }
 }
 
@@ -4064,7 +3976,7 @@ class Side {
 
   /**
    * Best enemy troop in cannon range under the top-lane grand strategy
-   * (keeps have no lane of their own). Units locked in melee are skipped.
+   * (keeps have no lane of their own). May fire into melee.
    * Officers are ignored while any other enemy is in cannon range.
    */
   capitalTarget(enemies, allies) {
@@ -4078,9 +3990,6 @@ class Side {
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
-        continue;
-      }
-      if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) {
         continue;
       }
       const d = other.pacesFromKeep(this.id);
@@ -4107,9 +4016,6 @@ class Side {
 
   /** Cannon-style shell at double cannon damage, with falloff and variance. */
   fireCapital(target, allies, projectiles) {
-    if (target && target.isMeleeTargetLocked && target.isMeleeTargetLocked()) {
-      return;
-    }
     const range = Math.max(Path.pacesFromPx(CONFIG.capitalCannonRange), 1);
     const along = target.pacesFromKeep ? target.pacesFromKeep(this.id) : range;
     const falloff = Math.max(CONFIG.minDamageFactor, 1 - along / range);
@@ -4534,8 +4440,6 @@ export class GameSim {
   updateSide(side, opponents, enemySide, dt) {
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
-      troop.auraAttack = 1;
-      troop.auraSpeed = 1;
       troop.reformHold = troop.hp > 0 && troop.reformShouldStop(side.troops);
     }
     for (let i = 0; i < side.troops.length; i += 1) {

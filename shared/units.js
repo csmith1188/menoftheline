@@ -23,10 +23,6 @@ const SHOT = {
   meleeReach: 30,
   radius: 10,
   fatigue: 100,
-  splashWholeLine: false,
-  attackBuff: 0,
-  speedBuff: 0,
-  buffRange: 0,
 };
 export const UNIT_STATS = {
   troop: {
@@ -80,7 +76,7 @@ export const UNIT_STATS = {
     flankMultiplier: 1.8,
     rangedCooldown: 1.5,
     meleeCooldown: 1.5,
-    speed: 15,
+    speed: 30,
     cost: 200,
     lineBonus: 0,
     fightsMelee: true,
@@ -211,12 +207,11 @@ export const UNIT_STATS = {
     lineBonus: 0,
     fightsMelee: true,
     splash: 0,
-    splashWholeLine: false,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
   },
-  /** Officer that also restores health. Does not raise attack or walk speed. */
+  /** Officer that also restores health. */
   colorGuard: {
     ...SHOT,
     hp: 50,
@@ -237,9 +232,6 @@ export const UNIT_STATS = {
     restoreRate: 4,
     restoreHealth: true,
     officerDamageMultiplier: 1,
-    buffRange: 0,
-    attackBuff: 0,
-    speedBuff: 0,
   },
 };
 export function unitStats(type) {

@@ -1153,22 +1153,6 @@ function overlapsOwnCapital(troop) {
   return distance(troop, capital) <= CONFIG.capitalRadius + troop.bodyRadius();
 }
 
-/** Color-guard attack/speed auras currently affecting this unit. */
-function auraBonuses(troop, allies) {
-  let attack = 1;
-  let speed = 1;
-  for (let i = 0; i < allies.length; i += 1) {
-    const ally = allies[i];
-    if (ally === troop || ally.hp <= 0) continue;
-    const stats = troopKindStats(ally);
-    if (!(stats.buffRange > 0)) continue;
-    if (distance(troop, ally) > stats.buffRange) continue;
-    if (stats.attackBuff > 0) attack = Math.max(attack, 1 + stats.attackBuff);
-    if (stats.speedBuff > 0) speed = Math.max(speed, 1 + stats.speedBuff);
-  }
-  return { attack, speed };
-}
-
 /**
  * "color" while a color guard is restoring this unit, "officer" for a
  * plain officer, or null when nobody nearby is restoring fatigue.
@@ -1249,10 +1233,6 @@ function activeBonuses(board, troop, allies) {
   //     labels.push(`Upgrade dmg ${multText(1 + CONFIG.damageUpgradeAmount * dmgRanks)}`);
   //   }
   // }
-
-  // const aura = auraBonuses(troop, allies);
-  // if (aura.attack > 1) labels.push(`Aura attack ${multText(aura.attack)}`);
-  // if (aura.speed > 1) labels.push(`Aura speed ${multText(aura.speed)}`);
 
   // if (shotSlowActive(troop) && stats.slowFactor && stats.slowFactor !== 1) {
   //   labels.push(`Slowed ${multText(stats.slowFactor)}`);

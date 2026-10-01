@@ -1,6 +1,6 @@
 import { CONFIG } from "../shared/config.js";
 import { Path } from "../shared/path.js";
-import { UNIT_STATS, UNIT_VARIANTS, unitStats } from "../shared/units.js";
+import { UNIT_STATS, UNIT_VARIANTS } from "../shared/units.js";
 
 const LANES = ["top", "bottom"];
 const TARGET_MODES = ["bastion", "attrition", "terror"];
@@ -642,9 +642,8 @@ export class BotController {
       this.desireOrder(sim, troop, "fallback");
       return;
     }
-    const buffRange = unitStats("officer").buffRange || CONFIG.dragoonSupportRange;
     const nearAlly = allies.some((a) => a !== troop && a.type !== "officer"
-      && dist(troop, a) <= buffRange);
+      && dist(troop, a) <= CONFIG.dragoonSupportRange);
     if (!nearAlly) {
       this.desireOrder(sim, troop, "fallback");
       return;

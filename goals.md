@@ -1,5 +1,4 @@
 # Bugs
-- Pushback on retreating/falling back units stacking and pinning
 
 # Ideas
 - officers make order sounds when near lines given orders
@@ -9,11 +8,12 @@
 - Reinforced Learning player
 - Game -> Client API
 - Site Services -> Client API (play without ever visiting site)
-
-# Feature
-- deeper cannon sounds
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories
+
+# Feature
+- Remove Grand Strategies?
+- Late game land?
 - Add more game metrics
     Each type of game played
     Average length of game
@@ -22,7 +22,6 @@
 
 # UI
 - 3d should always zoom in to fill screen with map
-- draw everything in canvas and take full screen
 
 # Roadmap
 - terrain:

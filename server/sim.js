@@ -5,11 +5,39 @@ import { Path, distance, touchesQuarterLine } from "../shared/path.js";
 /** Per-lane grand strategy modes (cycle order). */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
 
-/** hp% − fatigue%; Attrition maximizes, Terror minimizes. */
+/** hp% − fatigue%; Attrition maximizes, Terror minimizes. Keep uses HP only. */
 function targetVitality(unit) {
+  if (unit && unit.capitalHP !== undefined) {
+    const max = CONFIG.capitalHP;
+    return max > 0 ? Math.max(0, unit.capitalHP) / max : 0;
+  }
   const hpPct = unit.maxHp > 0 ? Math.max(0, unit.hp) / unit.maxHp : 0;
   const fatPct = unit.maxFatigue > 0 ? unit.fatigue / unit.maxFatigue : 0;
   return hpPct - fatPct;
+}
+
+/**
+ * True when other is a legal ranged aim. Keeps are always valid while
+ * standing (melee does not lock them). Units in melee are not.
+ */
+function isValidRangedTarget(other) {
+  if (!other) return false;
+  if (other.capitalHP !== undefined) return other.capitalHP > 0;
+  if (other.hp <= 0) return false;
+  if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) return false;
+  return true;
+}
+
+/**
+ * Distance used only when ranking targets. Keep counts as
+ * keepTargetDistanceOffsetPaces closer; actual shotPaces is unchanged.
+ */
+function targetPriorityPaces(shooter, other) {
+  const d = shooter.shotPaces(other);
+  if (other && other.capitalHP !== undefined) {
+    return Math.max(0, d - CONFIG.keepTargetDistanceOffsetPaces);
+  }
+  return d;
 }
 
 /**
@@ -152,7 +180,7 @@ class Projectile {
       return;
     }
     const next = this.nextBehind(from);
-    if (!next || (next.isMeleeTargetLocked && next.isMeleeTargetLocked())) {
+    if (!next || !isValidRangedTarget(next)) {
       this.alive = false;
       return;
     }
@@ -191,10 +219,7 @@ class Projectile {
       return;
     }
     if (this.target.capitalHP !== undefined) {
-      const hit = truncateDamage(Math.max(
-        0,
-        this.damage * (1 + (this.attackerSum || 0)) * (1 - this.target.armorReduction()),
-      ));
+      const hit = this.target.applyKeepDamage(this.damage, this.attackerSum);
       this.target.capitalHP -= hit;
       const keep = this.target.capital;
       this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
@@ -271,6 +296,12 @@ class Unit {
     this.pushbackNextEaseIndex = 0;
     /** Active eased pace: { from, to, elapsed, duration, fatigueOnBlock }. */
     this.pushbackMove = null;
+    /**
+     * Set when this unit walks or eases toward its keep this tick
+     * (retreat, fallback, charge reverse, peel, switch ease-back).
+     * Survives until the next update so mid-tick hits still see it.
+     */
+    this.movingBackward = false;
     this.switch = null;
     this.switchEscape = false;
     this.switchEaseDir = 0;
@@ -1139,7 +1170,8 @@ class Unit {
 
   /**
    * HARD RULE — do not weaken: melee-locked units are never valid
-   * ranged targets for units. Keeps may still fire into melee.
+   * ranged targets. The Keep is the sole exception (see isValidRangedTarget).
+   * Keeps may still fire into melee.
    * Covers current contact, prior tick, and sticky lock after gaps.
    */
   isMeleeTargetLocked() {
@@ -1742,16 +1774,6 @@ class Unit {
     return back + out;
   }
 
-  /** No living unrouted enemy remains in this lane, so the keep may be shot. */
-  laneClearForKeep() {
-    const foes = this.enemyTroops();
-    for (let i = 0; i < foes.length; i += 1) {
-      const foe = foes[i];
-      if (foe.hp > 0 && !foe.broken && foe.lane === this.lane) return false;
-    }
-    return true;
-  }
-
   /**
    * True when no living enemy stands in this lane from our keep out to
    * our fort. Keep health restore only runs while this is clear.
@@ -1772,7 +1794,7 @@ class Unit {
   inShotRange(other, rangePaces) {
     if (!other) return false;
     if (other.capitalHP !== undefined) {
-      if (other.capitalHP <= 0 || !this.laneClearForKeep()) return false;
+      if (other.capitalHP <= 0) return false;
       return this.shotPaces(other) <= rangePaces;
     }
     if (other.hp <= 0) return false;
@@ -1958,6 +1980,7 @@ class Unit {
    */
   marchAlong(dt, allies, enemies, dir, seekContact = false) {
     const sign = dir < 0 ? -1 : 1;
+    if (sign < 0) this.movingBackward = true;
     for (let i = 0; i < allies.length; i += 1) {
       if (this.isBlockedToward(allies[i], sign)) {
         return false;
@@ -2722,6 +2745,7 @@ class Unit {
    */
   easeAlong(dt, allies, enemies, dir, ignoreFriendlies, ignoreEnemies = false) {
     const sign = dir < 0 ? -1 : 1;
+    if (sign < 0) this.movingBackward = true;
     if (!ignoreFriendlies) {
       for (let i = 0; i < allies.length; i += 1) {
         if (this.isBlockedToward(allies[i], sign)) {
@@ -2966,8 +2990,9 @@ class Unit {
    * when the path back through our keep is under 200 paces and inside
    * maxRange. Officers are skipped while another unit type is in that
    * same range (except skirmishers/rifles, which use a fixed type
-   * priority instead of the lane strategy). The keep is a target only
-   * when it is the last unrouted enemy in this lane.
+   * priority instead of the lane strategy). The Keep competes using
+   * targetPriorityPaces (50 paces closer for ranking only) whenever it
+   * is within actual weapon range; melee does not lock the Keep.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
@@ -2985,8 +3010,7 @@ class Unit {
     let otherInRange = false;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
-      if (other.hp <= 0) continue;
-      if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) continue;
+      if (!isValidRangedTarget(other)) continue;
       if (!this.inShotRange(other, range)) continue;
       const d = this.shotPaces(other);
       if (other.type !== "officer") otherInRange = true;
@@ -3005,22 +3029,32 @@ class Unit {
         best = other;
       }
     }
-    if (!best && !otherInRange) best = bestOfficer;
-    if (!best && enemySide && this.inShotRange(enemySide, range)) return enemySide;
+    if (!best && !otherInRange) {
+      best = bestOfficer;
+      bestD = bestOfficerD;
+      bestVit = bestOfficerVit;
+    }
+    if (enemySide && this.inShotRange(enemySide, range)) {
+      const keepD = targetPriorityPaces(this, enemySide);
+      const keepVit = targetVitality(enemySide);
+      if (!best || isBetterTarget(mode, keepD, keepVit, bestD, bestVit)) {
+        return enemySide;
+      }
+    }
     return best;
   }
 
   /**
    * Skirmisher / Rifles: fixed type priority, closest within the best
-   * tier. Ignores Bastion / Attrition / Terror.
+   * tier. Ignores Bastion / Attrition / Terror. Keep wins only when its
+   * priority distance is closer than every valid unit.
    */
   skirmisherNearestTarget(enemies, range, enemySide) {
     const candidates = [];
     let closestDist = Infinity;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
-      if (other.hp <= 0) continue;
-      if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) continue;
+      if (!isValidRangedTarget(other)) continue;
       if (!this.inShotRange(other, range)) continue;
       const d = this.shotPaces(other);
       if (d < closestDist) closestDist = d;
@@ -3038,7 +3072,10 @@ class Unit {
         best = other;
       }
     }
-    if (!best && enemySide && this.inShotRange(enemySide, range)) return enemySide;
+    if (enemySide && this.inShotRange(enemySide, range)) {
+      const keepD = targetPriorityPaces(this, enemySide);
+      if (!best || keepD < closestDist) return enemySide;
+    }
     return best;
   }
 
@@ -3091,11 +3128,31 @@ class Unit {
   }
 
   /**
+   * True while this unit is withdrawing toward its keep: Retreat, Fall
+   * Back, or any tick that marched/eased backward (charge reverse, peel
+   * around a friendly, switch ease-back). Pushback is not applied then.
+   */
+  isWithdrawingBackward() {
+    if (this.order === "retreat" || this.order === "fallback") return true;
+    return Boolean(this.movingBackward);
+  }
+
+  /** Drop queued and in-flight pushback so absolute eases cannot pin a withdraw. */
+  clearPushback() {
+    this.pushbackCounter = 0;
+    this.pushbackQueue.length = 0;
+    this.pushbackMove = null;
+    this.pushbackNextEaseIndex = 0;
+  }
+
+  /**
    * Add pushback points. When the counter crosses pushbackPerPace, enqueue
-   * a pace. fatigueOnBlock is false for cannon self-recoil.
+   * a pace. fatigueOnBlock is false for cannon self-recoil. Skipped while
+   * the unit is moving backward.
    */
   applyPushback(amount, fatigueOnBlock) {
     if (!(amount > 0) || this.hp <= 0) return;
+    if (this.isWithdrawingBackward()) return;
     const taken = amount * (this.pushbackTakenFactor != null ? this.pushbackTakenFactor : 1);
     if (!(taken > 0)) return;
     const perPace = CONFIG.pushbackPerPace > 0 ? CONFIG.pushbackPerPace : 1;
@@ -3129,9 +3186,14 @@ class Unit {
   /**
    * Ease queued pushback paces toward own keep. Stacked paces ease
    * fast-to-slow by easeIndex. Blocked paces still consume the queue;
-   * fatigue applies unless this was cannon recoil.
+   * fatigue applies unless this was cannon recoil. While withdrawing
+   * backward, discard pending paces so they cannot overwrite march.
    */
   tickPushback(dt, allies) {
+    if (this.isWithdrawingBackward()) {
+      this.clearPushback();
+      return;
+    }
     if (this.pushbackMove) {
       const move = this.pushbackMove;
       move.elapsed += dt;
@@ -3309,20 +3371,17 @@ class Unit {
     }
     // HARD RULES — do not weaken:
     // 1) Melee-locked units never shoot (melee swings use strike === "melee").
-    // 2) Melee-locked units are never valid ranged targets.
+    // 2) Melee-locked units are never valid ranged targets (Keep excepted).
     if (strike !== "melee") {
       if (this.cannotFireRanged()) return;
-      if (target && target.isMeleeTargetLocked && target.isMeleeTargetLocked()) return;
+      if (target && !isValidRangedTarget(target)) return;
     }
     const shot = this.attackDamage(target, strike, allies);
     if (strike === "melee") {
       this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnMelee);
       this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
       if (target && target.capitalHP !== undefined) {
-        const hit = truncateDamage(Math.max(
-          0,
-          shot.raw * (1 + (shot.attackerSum || 0)) * (1 - target.armorReduction()),
-        ));
+        const hit = target.applyKeepDamage(shot.raw, shot.attackerSum);
         target.capitalHP -= hit;
         this.side.sim.spawnSplat(target.capital.x, target.capital.y, hit, "melee");
       } else if (target && target.takeDamage) {
@@ -3379,6 +3438,7 @@ class Unit {
       this.flash -= dt;
     }
 
+    this.movingBackward = false;
     this.tickFatigue(dt, enemies);
     this.releaseHeldOrder(enemies);
 
@@ -3740,14 +3800,15 @@ class Howitzer extends Cannon {
   /**
    * Closest valid target in each row of this lane. An officer is valid
    * when that row has no other target. Units in melee are skipped.
+   * The Keep competes only in the middle row (priority paces), so a
+   * volley hits it at most once.
    */
-  cannisterTargets(enemies, allies, maxRange) {
+  cannisterTargets(enemies, allies, maxRange, enemySide) {
     const best = {};
     const officer = {};
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
-      if (other.hp <= 0 || other.lane !== this.lane) continue;
-      if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) continue;
+      if (!isValidRangedTarget(other) || other.lane !== this.lane) continue;
       if (!this.inShotRange(other, maxRange)) continue;
       const d = this.shotPaces(other);
       const key = String(other.sublane);
@@ -3758,6 +3819,16 @@ class Howitzer extends Cannon {
       }
       const prev = best[key];
       if (!prev || d < prev.d) best[key] = { unit: other, d };
+    }
+    const middle = Math.floor(Path.sublaneCount(this.lane) / 2);
+    const midKey = String(middle);
+    if (enemySide && this.inShotRange(enemySide, maxRange)) {
+      const keepD = targetPriorityPaces(this, enemySide);
+      const rowPick = best[midKey] || officer[midKey];
+      if (!rowPick || keepD < rowPick.d) {
+        best[midKey] = { unit: enemySide, d: keepD };
+        delete officer[midKey];
+      }
     }
     const out = [];
     const rows = {};
@@ -3783,9 +3854,9 @@ class Howitzer extends Cannon {
       return;
     }
     // HARD RULES — same as Unit.fire: no ranged fire while melee-locked,
-    // and never aim at a melee-locked target.
+    // and never aim at a melee-locked unit (Keep excepted).
     if (this.cannotFireRanged()) return;
-    if (target && target.isMeleeTargetLocked && target.isMeleeTargetLocked()) {
+    if (target && !isValidRangedTarget(target)) {
       // Still may cannister other rows; only block the fallback single aim.
       target = null;
     }
@@ -3793,16 +3864,16 @@ class Howitzer extends Cannon {
     const enemies = this.enemyTroops();
     const enemySide = this.side === sim.player ? sim.enemy : sim.player;
     const range = this.shootRange(allies || this.side.troops, enemies, enemySide);
-    let targets = this.cannisterTargets(enemies, allies, range);
+    let targets = this.cannisterTargets(enemies, allies, range, enemySide);
     if (!targets.length) {
-      if (target && !(target.isMeleeTargetLocked && target.isMeleeTargetLocked())) {
+      if (target && isValidRangedTarget(target)) {
         targets = [target];
       } else {
         return;
       }
     }
-    // Final filter so a locked target never slips through.
-    targets = targets.filter((aim) => !(aim.isMeleeTargetLocked && aim.isMeleeTargetLocked()));
+    // Final filter so a locked unit never slips through (Keep stays valid).
+    targets = targets.filter((aim) => isValidRangedTarget(aim));
     if (!targets.length) return;
     this.side.sim.emitSound({
       type: "shoot",
@@ -3971,7 +4042,10 @@ class Side {
     return this.land >= this.upgradeCost(kind);
   }
 
-  /** Fraction of incoming damage removed by armor ranks (capped). */
+  /**
+   * Fraction of incoming damage removed by armor ranks (capped).
+   * Unit combat only — Keep hits must use applyKeepDamage instead.
+   */
   armorReduction() {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
@@ -3983,9 +4057,17 @@ class Side {
     return Math.max(0, amount * mult);
   }
 
-  /** Outgoing damage multiplier from damage ranks. */
+  /**
+   * Outgoing damage multiplier from damage ranks.
+   * Unit combat only — Keep gun fire must not use this.
+   */
   damageScale() {
     return 1 + CONFIG.damageUpgradeAmount * this.upgrades.damage;
+  }
+
+  /** Keep HP ignores town Defense; units still use armorReduction(). */
+  applyKeepDamage(raw, attackerSum) {
+    return truncateDamage(Math.max(0, raw * (1 + (attackerSum || 0))));
   }
 
   /** Gold per second paid to keep this side's living units. */
@@ -4190,13 +4272,16 @@ class Side {
     return best || bestOfficer;
   }
 
-  /** Cannon-style shell at double cannon damage, with falloff and variance. */
+  /**
+   * Keep gun shell with falloff and variance. Fixed damage — no town research.
+   * Uses cannon shooting pushback on units; the Keep itself never recoils
+   * and never takes pushback (hits use applyKeepDamage, not takeDamage).
+   */
   fireCapital(target, allies, projectiles) {
     const range = Math.max(Path.pacesFromPx(CONFIG.capitalCannonRange), 1);
     const along = target.pacesFromKeep ? target.pacesFromKeep(this.id) : range;
     const falloff = Math.max(CONFIG.minDamageFactor, 1 - along / range);
-    const attackerSum = (this.damageScale() - 1)
-      + (Math.random() * 2 - 1) * CONFIG.damageVariance;
+    const attackerSum = (Math.random() * 2 - 1) * CONFIG.damageVariance;
     const shell = UNIT_STATS.cannon;
     projectiles.push(new Projectile(
       this.capital.x,
@@ -4214,6 +4299,7 @@ class Side {
         splash: shell.splash,
         attackerSum,
         shotSign: this.id === "player" ? 1 : -1,
+        shootingPushback: shell.shootingPushback || 0,
       },
     ));
     this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "cannon", sideId: this.id });

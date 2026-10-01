@@ -119,6 +119,8 @@ export const CONFIG = {
   capitalCannonDamage: 30,
   /** Seconds between keep-gun shots. */
   capitalCannonAttackCooldown: 1,
+  /** Paces subtracted from Keep distance when ranking ranged targets only. */
+  keepTargetDistanceOffsetPaces: 50,
 
   // Combat rules (not per-unit stats)
 
@@ -159,7 +161,7 @@ export const CONFIG = {
   /** Fort center, in paces forward from each keep. */
   fortDistancePaces: 250,
   /** Officer and color-guard restore reach, in paces along the lane. */
-  officerRestorePaces: 50,
+  officerRestorePaces: 60,
   /** Keep restore bands, in paces from that side's keep. Inner band is the strongest. */
   keepAuraPaces: [40, 80, 120],
   /** Flat fatigue added when hit in melee or when making a melee attack. */

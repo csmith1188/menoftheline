@@ -368,10 +368,18 @@ const boardMethods = {
     this.cssScale = cssW / CONFIG.canvasWidth;
     const left = (availW - cssW) / 2;
     const top = (availH - cssH) / 2;
+    const laneTop = CONFIG.playerCapital.y - CONFIG.topLaneHeight / 2;
+    const laneLeft = CONFIG.playerCapital.x;
+    const laneWidth = CONFIG.enemyCapital.x - CONFIG.playerCapital.x;
     stage.style.setProperty("--board-left", `${left}px`);
     stage.style.setProperty("--board-top", `${top}px`);
     stage.style.setProperty("--board-width", `${cssW}px`);
     stage.style.setProperty("--board-height", `${cssH}px`);
+    // Training tutorial sits in the top-lane band; keep CSS px in sync with the board.
+    stage.style.setProperty("--top-lane-left", `${left + (laneLeft / CONFIG.canvasWidth) * cssW}px`);
+    stage.style.setProperty("--top-lane-top", `${top + (laneTop / CONFIG.canvasHeight) * cssH}px`);
+    stage.style.setProperty("--top-lane-width", `${(laneWidth / CONFIG.canvasWidth) * cssW}px`);
+    stage.style.setProperty("--top-lane-height", `${(CONFIG.topLaneHeight / CONFIG.canvasHeight) * cssH}px`);
   },
 
 

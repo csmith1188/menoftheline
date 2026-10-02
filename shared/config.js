@@ -207,34 +207,195 @@ export const CONFIG = {
   /** Each ahead trooper walks at this fraction of the next one behind. */
   reformSpeedFactor: 0.5,
 
-  // Bot
+  // Bot — decision timing
 
-  /** Bot dragoon support / threat radius for fallback, charge, and reform. */
-  dragoonSupportRange: 100,
+  /** Seconds between full bot reassessments, by difficulty. */
+  botThinkInterval: { simple: 1.25, hard: 0.5 },
   /** Seconds a bot unit must wait before it can change orders again. */
   botOrderCooldown: 2.5,
-  /** Bot lane share below this → Bastion (bar near bot keep). */
-  botShareBastion: 1 / 3,
-  /** Bot lane share above this → Terror. */
-  botShareTerror: 2 / 3,
-  /** Own keep HP fraction that triggers desperate defense. */
-  botDesperateKeepHp: 0.4,
-  /** Low vitality (hp% − fatigue%) triggers survival fallback/halt. */
-  botSurvivalVitality: 0.25,
-  /** Simple-mode per-lane composition weights. */
-  botSimpleRatio: {
-    troop: 5,
-    skirmisher: 2,
-    dragoon: 2,
-    officer: 1,
-    cannon: 1,
-  },
-  /** Hard mode: foe troop count that triggers cannon buys. */
-  botCannonCluster: 3,
-  /** Hard mode: ally count that warrants an officer. */
-  botOfficerAllyMin: 4,
   /** Max sim steps per wall tick when game speed is above 1×. */
   botSpeedStepCap: 4,
+
+  // Bot — lane posture and keep threat
+
+  /** Friendly/enemy combat value below this enters Defend. */
+  botDefendEnterRatio: 0.75,
+  /** Defend holds until the ratio climbs back above this. */
+  botDefendExitRatio: 0.95,
+  /** Friendly/enemy combat value above this can enter Attack. */
+  botAttackEnterRatio: 1.35,
+  /** Attack holds until the ratio falls below this. */
+  botAttackExitRatio: 1.15,
+  /** Lane share required before Attack, so an empty lane does not rush. */
+  botAttackShare: 0.55,
+  /** Proximity-weighted enemy value that makes a lane Defend / desperate. */
+  botKeepThreatDefend: 150,
+  /** Threat must fall under this before a lane leaves Defend. */
+  botKeepThreatClear: 80,
+  /** Keep-gun reach multiplier for threat. The rim of this band scores low. */
+  botKeepThreatReachScale: 1.15,
+  /** Own keep HP fraction that makes every lane desperate. */
+  botDesperateKeepHp: 0.4,
+
+  // Bot — local assessment
+
+  /** Paces around a unit that count as immediate contact. */
+  botContactPaces: 90,
+  /** Paces that count as nearby support (about one troop volley). */
+  botSupportPaces: 260,
+  /** Hard only: fraction of combat value removed at full fatigue. */
+  botFatigueWeight: 0.45,
+  /** Combat-value multiplier for a broken unit. Purchases still count it. */
+  botBrokenFactor: 0.15,
+  /** Vitality (hp% − fatigue%) that peels one body out. */
+  botSurvivalVitality: 0.25,
+  /** A vitality peel holds until vitality reaches this. */
+  botSurvivalClear: 0.4,
+  /** Hard contact-band weights. Support range uses 1 for every role. */
+  botRoleContact: {
+    troop: 1,
+    grenadier: 1.1,
+    skirmisher: 0.6,
+    rifle: 0.55,
+    dragoon: 1.25,
+    lancer: 1.35,
+    cannon: 0.4,
+    howitzer: 0.45,
+    officer: 0.25,
+    colorGuard: 0.25,
+  },
+
+  // Bot — composition
+
+  /** Desired share of army gold by base type. Must sum to 1. */
+  botComposition: {
+    troop: 0.42,
+    skirmisher: 0.18,
+    dragoon: 0.18,
+    cannon: 0.12,
+    officer: 0.10,
+  },
+  /**
+   * Until the army is worth this much gold, cannon demand is zero and that
+   * share goes to skirmishers and dragoons. Field guns wait for a formed army.
+   */
+  botCannonArmyValue: 900,
+  /** Fraction of the early cannon share that becomes skirmishers; the rest is dragoons. */
+  botEarlyCannonToSkirmisher: 0.55,
+  /** Largest add to one desired fraction before renormalizing. */
+  botCounterCap: 0.12,
+  /**
+   * Added to skirmishers when the enemy army is entirely cavalry.
+   * A smaller cavalry share adds proportionally, and never past botCounterCap.
+   */
+  botCounterCavalry: 0.12,
+  /**
+   * Added to cannons when the enemy army is entirely troops.
+   * A smaller troop share adds proportionally, and never past botCounterCap.
+   */
+  botCounterInfantry: 0.12,
+  /**
+   * Added to dragoons when the enemy army is entirely guns and officers.
+   * A smaller support share adds proportionally, and never past botCounterCap.
+   */
+  botCounterSupport: 0.12,
+  /** Added to officers once the friendly troop count fills a line. */
+  botCounterOfficer: 0.08,
+  /** Friendly troop bodies that start raising officer demand. */
+  botOfficerLineCount: 4,
+  /** Buy troops into a lane until it can hold a line. */
+  botMinTroopsBeforeSupport: 3,
+  /** Bodies kept on the top lane before any bottom-lane seeding. The top lane is the short path to the keep. */
+  botTopGarrison: 4,
+  /** Urgency of filling that garrison. Beats the bottom seed bonus. */
+  botTopGarrisonUrgency: 80,
+  /** Bottom units bought to start town income, then the bonus turns off. */
+  botBottomSeed: 2,
+  /** Simple cannon bump when the enemy army is mostly infantry. */
+  botSimpleCannonBump: 0.06,
+  /** Enemy troop gold share that triggers the simple cannon bump. */
+  botSimpleCannonTroopShare: 0.55,
+  /** Enemy troop share above this is a wall: do not buy lancers into it. */
+  botTroopWallShare: 0.45,
+
+  // Bot — lane urgency
+
+  /** Multiplier on proximity-weighted keep threat. */
+  botUrgencyThreat: 1,
+  /** Multiplier on enemy combat-value lead, in troop-costs. One troop beats lane stickiness. */
+  botUrgencyDisadvantage: 40,
+  /** Multiplier on how far lane share sits below one half. */
+  botUrgencyShare: 80,
+  /** Bonus for an unseeded bottom lane (land income). */
+  botUrgencyEconomy: 55,
+  /** Hard bonus for a town grab or a committed keep attack. */
+  botUrgencyOpportunity: 40,
+  /** Keep the previous buy lane unless another lane wins by this much. */
+  botLaneStickiness: 20,
+
+  // Bot — role positioning and hysteresis
+
+  /** How far ahead of friendly infantry a skirmisher tries to sit, in paces. */
+  botSkirmishOffset: 100,
+  /** Paces of slack around the skirmisher screen offset. */
+  botSkirmishBand: 25,
+  /** Local support ratio below this starts a retreat. */
+  botRetreatRatio: 0.7,
+  /** A retreat holds until the local ratio reaches this. */
+  botResumeRatio: 1,
+  /** Desperate lanes wait until the ratio is this bad before retreating. */
+  botRetreatRatioDesperate: 0.45,
+  /** Fraction of weapon range. Halt once the target is inside this. */
+  botCannonHaltBand: 0.85,
+  /** Fraction of weapon range. Advance again only once the target is beyond this. */
+  botCannonAdvanceBand: 1.15,
+  /** Leave cannon fallback only after the enemy is this many times contact range away. */
+  botCannonFallbackClear: 1.35,
+  /** Officer stands this many paces behind the front rank. */
+  botOfficerStandoff: 30,
+  /** Hard infantry charges only inside contact and above this local ratio. */
+  botInfantryChargeRatio: 1.6,
+
+  // Bot — cavalry charge score (Hard)
+
+  /** Score required to start a charge. */
+  botChargeScore: 1,
+  /** A charge holds until the score falls under this. */
+  botChargeAbort: 0.4,
+  /** Isolated cannon or officer. */
+  botChargeSupportBonus: 1.2,
+  /** Target under half hit points. */
+  botChargeWeakBonus: 0.6,
+  /** Target already falling back or retreating. */
+  botChargeRetreatBonus: 0.5,
+  /** No enemy troop inside support of the target. */
+  botChargeIsolatedBonus: 0.8,
+  /** Enemy troop mass in contact outweighs friendly support. */
+  botChargeBlobPenalty: 2.5,
+
+  // Bot — economy
+
+  /** Gold kept back when buying a bank so one troop can still be bought. */
+  botBankReserve: 100,
+  /** Income at or under tax plus this still buys a bank. */
+  botTaxMargin: 0.01,
+  /** Hard skips a town while a composition deficit is larger than this. */
+  botUpgradeDeficitSkip: 0.18,
+  /** Army gold required before a second support unit can be a color guard. */
+  botColorGuardMinValue: 800,
+  /** Enemy rows in the buy lane before a cannon buy becomes a howitzer. */
+  botHowitzerMinRows: 3,
+
+  // Bot — keep attack
+
+  /** Local friendly/enemy value required to commit to the enemy keep. */
+  botKeepCommitRatio: 1.4,
+  /** Commitment holds until the ratio falls under this. */
+  botKeepAbortRatio: 0.9,
+  /** Friendly combat value that must sit near the enemy keep. */
+  botKeepCommitValue: 400,
+  /** Simple commit: friendly front progress along the lane (0–1). */
+  botKeepCommitProgress: 0.72,
 
   // Checkpoints
 

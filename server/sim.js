@@ -4780,7 +4780,7 @@ export class GameSim {
       if (troop.hp <= 0 || troop.lane !== lane) {
         continue;
       }
-      total += side.unitCost(troop.type);
+      total += side.unitCost(troop.variant || troop.type);
     }
     return total;
   }

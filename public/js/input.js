@@ -624,24 +624,17 @@ const pointerMethods = {
   },
 
   /**
-   * Pointer travel minus how far the unit moved since press. Holding still
-   * while the unit walks counts as leaving it; tracking the unit does not
-   * count as a swipe.
+   * Pointer travel from the press point. Unit motion is ignored so holding
+   * still on a walker does not become charge or fallback.
    */
-  dragPullFromUnit(drag, point, troop) {
-    const unitDx = troop.x - (drag.ux == null ? troop.x : drag.ux);
-    const unitDy = troop.y - (drag.uy == null ? troop.y : drag.uy);
-    const ptrDx = point.x - drag.x;
-    const ptrDy = point.y - drag.y;
-    return Math.hypot(ptrDx - unitDx, ptrDy - unitDy);
+  dragPullFromUnit(drag, point, _troop) {
+    return Math.hypot(point.x - drag.x, point.y - drag.y);
   },
 
   /** Which neighboring row a short across-swipe is heading toward. */
   nudgeDir(troop, drag, to) {
-    const unitDx = troop.x - (drag.ux == null ? troop.x : drag.ux);
-    const unitDy = troop.y - (drag.uy == null ? troop.y : drag.uy);
-    const dx = (to.x - drag.x) - unitDx;
-    const dy = (to.y - drag.y) - unitDy;
+    const dx = to.x - drag.x;
+    const dy = to.y - drag.y;
     const len = Math.hypot(dx, dy) || 1;
     const reach = Math.max(len, 36);
     const probe = {
@@ -654,15 +647,13 @@ const pointerMethods = {
 
   /**
    * Classify a drag as a row change, a forward speed-up, or a speed-down.
-   * Motion is relative to the unit so tracking a walker is not a swipe.
+   * Motion is from the initial press so a held finger on a walker is idle.
    * Along-the-path wins over a slight sideways drift.
    */
   dragIntent(troop, drag, to) {
     const tan = Path.tangentAt(Path.waypoints(troop.side.id, troop.lane, troop.sublane), troop.progress);
-    const unitDx = troop.x - (drag.ux == null ? troop.x : drag.ux);
-    const unitDy = troop.y - (drag.uy == null ? troop.y : drag.uy);
-    const dx = (to.x - drag.x) - unitDx;
-    const dy = (to.y - drag.y) - unitDy;
+    const dx = to.x - drag.x;
+    const dy = to.y - drag.y;
     const along = dx * tan.x + dy * tan.y;
     const across = dx * -tan.y + dy * tan.x;
     const row = Path.closestSublane(troop.side.id, troop.lane, troop.progress, to);

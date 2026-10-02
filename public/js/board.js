@@ -625,6 +625,22 @@ export const boardStateMethods = {
     };
   },
 
+  /**
+   * Project a world point into telescope view space (before southpaw).
+   * Inverse of telescopeWorld without the southpaw mirror.
+   */
+  telescopeView(world) {
+    const cam = this.telescopeCamera();
+    const wx = world.x - cam.x;
+    const wy = world.y - cam.y;
+    const cos = Math.cos(cam.angle);
+    const sin = Math.sin(cam.angle);
+    return {
+      x: CONFIG.canvasWidth / 2 + cam.scale * (wx * cos + wy * sin),
+      y: CONFIG.canvasHeight / 2 + cam.scale * (-wx * sin + wy * cos),
+    };
+  },
+
   laneLength(lane) {
     return Path.length(Path.centerline(lane));
   },

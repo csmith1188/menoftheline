@@ -25,6 +25,7 @@
 
 # Roadmap
 - terrain:
+    - Blocked LOS creates fog of war in that lane (server/client comms about unit position)
     - hills -> neutral forts
     - woods -> block LoS unless inside, cover and slow
     - river -> allow infantry, blocks horse and gun

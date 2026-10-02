@@ -45,7 +45,13 @@ export function buildUnitHints(board, troop) {
   if (!troop) return null;
   const ax = troop.x;
   const ay = troop.y;
-  const radius = (troop.bodyRadius ? troop.bodyRadius() : 14) + 36 * CONFIG.uiScale;
+  // Keep on-screen padding past the body the same when zoomed: only the
+  // decorative offset shrinks with telescope scale, not the body radius.
+  const zoom = board.telescope
+    ? board.telescopeScale(board.telescope.lane)
+    : 1;
+  const pad = (36 * CONFIG.uiScale) / zoom;
+  const radius = (troop.bodyRadius ? troop.bodyRadius() : 14) + pad;
   const tan = Path.tangentAt(
     Path.waypoints(troop.side.id, troop.lane, troop.sublane),
     troop.progress || 0,
@@ -69,9 +75,10 @@ export function buildUnitHints(board, troop) {
 
   const click = troop.order === "halt" ? "Advance" : "Halt";
   const corner = cornerOffset(board, radius, true, ax, ay);
-  const stack = 12 * CONFIG.uiScale;
-  pushLabel(labels, click, ax + corner.x - 40, ay + corner.y - stack, "click");
-  pushLabel(labels, "Solo", ax + corner.x - 40, ay + corner.y + stack, "solo");
+  const stack = (12 * CONFIG.uiScale) / zoom;
+  const nudge = 40 / zoom;
+  pushLabel(labels, click, ax + corner.x - nudge, ay + corner.y - stack, "click");
+  pushLabel(labels, "Solo", ax + corner.x - nudge, ay + corner.y + stack, "solo");
   return { labels, active: "click", kind: "unit" };
 }
 
@@ -171,10 +178,8 @@ function unitActiveId(board) {
   if (intent.kind === "fallback") return "fallback";
   if ((intent.kind === "lane" || intent.kind === "nudge")
       && pulled >= board.laneDragMin()) {
-    const unitDx = troop.x - (drag.ux == null ? troop.x : drag.ux);
-    const unitDy = troop.y - (drag.uy == null ? troop.y : drag.uy);
-    const dx = (point.x - drag.x) - unitDx;
-    const dy = (point.y - drag.y) - unitDy;
+    const dx = point.x - drag.x;
+    const dy = point.y - drag.y;
     const tan = Path.tangentAt(
       Path.waypoints(troop.side.id, troop.lane, troop.sublane),
       troop.progress || 0,

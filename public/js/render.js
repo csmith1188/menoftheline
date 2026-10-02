@@ -564,13 +564,13 @@ const boardMethods = {
       ctx.fillStyle = CONFIG.colors.bg;
       ctx.fillRect(cam.x - 4000, cam.y - 4000, 8000, 8000);
       this.drawBattlefield(ctx);
-      this.drawGestureHints(ctx);
       ctx.restore();
       applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
       this.player.drawBanks(ctx);
       this.enemy.drawBanks(ctx);
       this.drawScoreboard(ctx);
-      this.drawUpgradeReadouts(ctx);
+      // Hints in view space so font/pill size stay screen-scaled.
+      this.drawGestureHints(ctx);
       this.drawTelescopeHud(ctx);
       return;
     }
@@ -722,6 +722,7 @@ const boardMethods = {
     const padX = 7 * CONFIG.uiScale;
     const padY = 4 * CONFIG.uiScale;
     const radius = 3 * CONFIG.uiScale;
+    const zoomed = Boolean(this.telescope);
     ctx.save();
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -732,8 +733,14 @@ const boardMethods = {
       const tw = ctx.measureText(label.text).width;
       const twHalf = tw / 2 + padX;
       const thHalf = 7 * CONFIG.uiScale + padY;
-      const x = label.x;
-      const y = label.y;
+      let x = label.x;
+      let y = label.y;
+      // Unit hints are world-space; project so pills stay screen-sized when zoomed.
+      if (zoomed && hints.kind === "unit") {
+        const view = this.telescopeView({ x, y });
+        x = view.x;
+        y = view.y;
+      }
       ctx.beginPath();
       ctx.moveTo(x - twHalf + radius, y - thHalf);
       ctx.arcTo(x + twHalf, y - thHalf, x + twHalf, y + thHalf, radius);

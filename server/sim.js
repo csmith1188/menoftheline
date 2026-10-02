@@ -3186,6 +3186,31 @@ class Unit {
   }
 
   /**
+   * True when a pushback step cannot finish: already blocked behind, or the
+   * destination would enter / deepen into a collidable ally (same clamp as
+   * march). Checking the destination matters — a unit sitting just outside
+   * the block gap can owe a full pace that lands inside it.
+   */
+  pushbackStepBlocked(progress, allies) {
+    if (this.pushbackBlocked(allies)) return true;
+    if (progress == null || !allies) return false;
+    const clamped = this.clampProgressFromCollidableAlly(progress, allies);
+    return clamped == null || clamped !== progress;
+  }
+
+  /** Spend a blocked pushback pace: optional fatigue, then clear the ease. */
+  consumeBlockedPushbackPace(fatigueOnBlock) {
+    if (fatigueOnBlock) {
+      this.fatigue = Math.min(
+        this.maxFatigue,
+        this.fatigue + CONFIG.fatiguePerPace,
+      );
+    }
+    this.pushbackMove = null;
+    this.resetPushbackEaseIfIdle();
+  }
+
+  /**
    * Ease queued pushback paces toward own keep. Stacked paces ease
    * fast-to-slow by easeIndex. Blocked paces still consume the queue;
    * fatigue applies unless this was cannon recoil. While withdrawing
@@ -3203,17 +3228,12 @@ class Unit {
       // Ease-out: start fast, settle slow.
       const eased = 1 - (1 - t) * (1 - t);
       const next = move.from + (move.to - move.from) * eased;
-      if (this.pushbackBlocked(allies)) {
+      // Block on current contact or if this ease would enter an ally.
+      if (this.pushbackStepBlocked(next, allies)
+        || this.pushbackStepBlocked(move.to, allies)) {
         this.progress = move.from;
         this.syncPosition();
-        if (move.fatigueOnBlock) {
-          this.fatigue = Math.min(
-            this.maxFatigue,
-            this.fatigue + CONFIG.fatiguePerPace,
-          );
-        }
-        this.pushbackMove = null;
-        this.resetPushbackEaseIfIdle();
+        this.consumeBlockedPushbackPace(move.fatigueOnBlock);
         return;
       }
       this.progress = Math.max(0, Math.min(1, next));
@@ -3229,17 +3249,13 @@ class Unit {
 
     while (this.pushbackQueue.length > 0 && !this.pushbackMove) {
       const pace = this.pushbackQueue.shift();
-      if (this.pushbackBlocked(allies)) {
-        if (pace.fatigueOnBlock) {
-          this.fatigue = Math.min(
-            this.maxFatigue,
-            this.fatigue + CONFIG.fatiguePerPace,
-          );
-        }
-        this.resetPushbackEaseIfIdle();
+      const delta = this.pushbackPaceDelta();
+      const to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
+      // Already touching behind, or this pace would land inside a friendly.
+      if (this.pushbackStepBlocked(to, allies)) {
+        this.consumeBlockedPushbackPace(pace.fatigueOnBlock);
         continue;
       }
-      const delta = this.pushbackPaceDelta();
       if (!(delta > 0) || this.progress <= 0) {
         if (pace.fatigueOnBlock && this.progress <= 0) {
           this.fatigue = Math.min(
@@ -3251,7 +3267,6 @@ class Unit {
         continue;
       }
       const from = this.progress;
-      const to = Math.max(0, from - delta);
       const duration = CONFIG.pushbackEaseMin
         + CONFIG.pushbackEaseStep * (pace.easeIndex || 0);
       if (!(duration > 0.001)) {
@@ -3365,12 +3380,11 @@ class Unit {
   /**
    * Strike a target. Melee lands instantly (splat + sound, no shell).
    * Ranged fire launches a projectile that travels to the aim.
+   * Friendly overlap does not cancel the strike — Halt is expected to keep
+   * shooting while colliding, and mayShoot already short-circuits march.
    */
   fire(target, allies, projectiles, kind) {
     const strike = kind || "shoot";
-    if (allies && this.collidingAlly(allies)) {
-      return;
-    }
     // HARD RULES — do not weaken:
     // 1) Melee-locked units never shoot (melee swings use strike === "melee").
     // 2) Melee-locked units are never valid ranged targets (Keep excepted).
@@ -3850,9 +3864,6 @@ class Howitzer extends Cannon {
     const strike = kind || "shoot";
     if (strike === "melee") {
       super.fire(target, allies, projectiles, kind);
-      return;
-    }
-    if (allies && this.collidingAlly(allies)) {
       return;
     }
     // HARD RULES — same as Unit.fire: no ranged fire while melee-locked,

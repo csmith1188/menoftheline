@@ -149,5 +149,23 @@ export function drawDebugRanges(ctx, board) {
       ctx.lineCap = mark.box ? "butt" : "round";
       ctx.stroke();
     }
+    // Pointer hit rings (body + unitReach) so touch targets can be tuned.
+    const reach = board.uiMetrics ? board.uiMetrics().unitReach : 0;
+    const sides = [board.player, board.enemy];
+    for (let s = 0; s < sides.length; s += 1) {
+      const side = sides[s];
+      if (!side) continue;
+      for (let i = 0; i < side.troops.length; i += 1) {
+        const troop = side.troops[i];
+        if (troop.hp <= 0) continue;
+        const r = (troop.bodyRadius ? troop.bodyRadius() : 10) + reach;
+        ctx.beginPath();
+        ctx.arc(troop.x, troop.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = side.id === "player" ? "#7ec8ff" : "#ff9a8a";
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
   ctx.restore();
 }

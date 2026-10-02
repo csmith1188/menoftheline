@@ -1,4 +1,4 @@
-import { CONFIG } from "../shared/config.js";
+import { CONFIG, pointerHitReach } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
 import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
 
@@ -230,6 +230,13 @@ export const boardStateMethods = {
     const bank = (coarse
       ? Math.min(46, Math.max(CONFIG.bankButtonSize, tap * 0.65))
       : CONFIG.bankButtonSize) * grow;
+    const zoom = this.telescope ? this.telescopeScale(this.telescope.lane) : 1;
+    const reachOpts = {
+      cssScale: scale,
+      zoom,
+      coarse,
+      telescope: Boolean(this.telescope),
+    };
     return {
       buyW,
       buyH,
@@ -237,8 +244,8 @@ export const boardStateMethods = {
       bank,
       bankGap: (coarse ? 8 : CONFIG.bankButtonGap) * grow,
       hitPad: Math.max(6, (CONFIG.touchTargetPx / scale - Math.min(buyH, bank)) / 2),
-      unitReach: Math.max(10, 24 / scale),
-      townReach: Math.max(12, 24 / scale),
+      unitReach: pointerHitReach({ ...reachOpts, kind: "unit" }),
+      townReach: pointerHitReach({ ...reachOpts, kind: "town" }),
       dragMin: Math.max(CONFIG.laneDragMin, 20 / scale),
     };
   },

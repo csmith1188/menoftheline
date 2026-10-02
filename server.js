@@ -90,6 +90,10 @@ app.use((req, res, next) => {
 });
 app.use("/shared", express.static(path.join(root, "shared")));
 app.use("/vendor/three", express.static(path.join(root, "node_modules", "three")));
+app.get("/manifest.webmanifest", (req, res) => {
+  res.type("application/manifest+json");
+  res.sendFile(path.join(root, "public", "manifest.webmanifest"));
+});
 app.use(express.static(path.join(root, "public")));
 
 function adminId() {

@@ -6,11 +6,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "debug": "nodemon scripts/debug-server.js",
-<<<<<<< HEAD
-    "test": "node --test test/assess.test.js test/controller.test.js test/economy.test.js test/keep.test.js test/tactics.test.js test/uiMetrics.test.js"
-=======
-    "test": "node --test test/assess.test.js test/controller.test.js test/economy.test.js test/keep.test.js test/pushback.test.js test/tactics.test.js"
->>>>>>> origin/main
+    "test": "node --test test/assess.test.js test/controller.test.js test/economy.test.js test/keep.test.js test/pushback.test.js test/tactics.test.js test/uiMetrics.test.js"
   },
   "dependencies": {
     "connect-sqlite3": "^0.9.15",

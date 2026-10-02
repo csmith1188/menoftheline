@@ -462,6 +462,28 @@ export const CONFIG = {
   },
 };
 
+/**
+ * World-space pad past a unit/town body for pointer hits.
+ * `zoom` is telescope camera scale (1 in overview). Keeps the on-screen
+ * ring stable when zoomed so lane pans are not stolen by oversized taps.
+ */
+export function pointerHitReach({
+  cssScale = 1,
+  zoom = 1,
+  coarse = false,
+  telescope = false,
+  kind = "unit",
+} = {}) {
+  const screen = Math.max(1e-3, (cssScale || 1) * (zoom || 1));
+  let padCss = 24;
+  if (telescope) {
+    const factor = kind === "unit" && coarse ? 0.28 : 0.4;
+    padCss = Math.max(8, CONFIG.touchTargetPx * factor);
+  }
+  const floor = kind === "town" ? 6 : 4;
+  return Math.max(floor, padCss / screen);
+}
+
 /** Keep the full damage calc, then chop to two decimal places for HP. */
 export function truncateDamage(amount) {
   return Math.trunc(amount * 100) / 100;

@@ -1,4 +1,4 @@
-import { CONFIG } from "../shared/config.js";
+import { CONFIG, pointerHitReach } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
 import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
 
@@ -230,18 +230,13 @@ export const boardStateMethods = {
     const bank = (coarse
       ? Math.min(46, Math.max(CONFIG.bankButtonSize, tap * 0.65))
       : CONFIG.bankButtonSize) * grow;
-    // Unit/town reach is world space. Divide by telescope zoom so the
-    // on-screen ring stays ~constant; otherwise zoomed troops steal pans.
     const zoom = this.telescope ? this.telescopeScale(this.telescope.lane) : 1;
-    const screen = Math.max(1e-3, scale * zoom);
-    // Overview keeps a generous ring (units are tiny). Zoomed view uses a
-    // tighter ring so fingers can slide the lane between / beside troops.
-    const unitPadCss = this.telescope
-      ? Math.max(8, CONFIG.touchTargetPx * (coarse ? 0.28 : 0.4))
-      : 24;
-    const townPadCss = this.telescope
-      ? Math.max(8, CONFIG.touchTargetPx * 0.4)
-      : 24;
+    const reachOpts = {
+      cssScale: scale,
+      zoom,
+      coarse,
+      telescope: Boolean(this.telescope),
+    };
     return {
       buyW,
       buyH,
@@ -249,8 +244,8 @@ export const boardStateMethods = {
       bank,
       bankGap: (coarse ? 8 : CONFIG.bankButtonGap) * grow,
       hitPad: Math.max(6, (CONFIG.touchTargetPx / scale - Math.min(buyH, bank)) / 2),
-      unitReach: Math.max(4, unitPadCss / screen),
-      townReach: Math.max(6, townPadCss / screen),
+      unitReach: pointerHitReach({ ...reachOpts, kind: "unit" }),
+      townReach: pointerHitReach({ ...reachOpts, kind: "town" }),
       dragMin: Math.max(CONFIG.laneDragMin, 20 / scale),
     };
   },

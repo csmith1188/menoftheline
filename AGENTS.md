@@ -1,0 +1,114 @@
+# AGENTS.md — Men of the Line
+
+Index for agents. Read this first, then open only the files listed for your task.
+
+## What this is
+
+Real-time 1v1 lane-pusher (keeps, top/bottom lanes, gold/land economy, orders, shooting/melee).  
+Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the server; clients render snapshots and emit commands.
+
+## Run
+
+| Command | Purpose |
+|---------|---------|
+| `npm start` | Production-ish server (`server.js`) |
+| `npm run dev` | Nodemon on `server.js` |
+| `npm run debug` | Same server with `DEBUG_RANGES=1` overlays |
+| `npm test` | Node built-in test runner (`test/*.test.js`) |
+
+Env template: `.env.template`. Local data/DB under `data/`. Auth/tickets integrate with Formbar (`server/formbar.js`).
+
+## Layout (start here)
+
+```
+server.js              HTTP + sessions + OAuth + Socket.IO + wiki/admin routes
+server/
+  room.js              GameRoom: seats, ticks, command queue → sim, emit "state"
+  sim.js               GameSim + Unit classes + combat/economy rules (large)
+  matchmaking.js       Queues, ranked/listed/bot/training rooms
+  bot.js               Re-exports BotController
+  bot/                 AI: controller, assess, tactics, formations, economy, commands
+  training.js          Training-mode rule tweaks
+  trainingBot.js       Scripted training opponent
+  db.js                SQLite accounts, tickets, wiki, suggestions, games
+  rating.js            MMR/Elo
+  news.js              Landing news from data/news.json
+  wiki-render.js       Markdown → HTML for wiki
+  wiki-diff.js         Revision diffs
+  formbar.js           External auth/pay socket
+  load-env.js          dotenv load (imported first by server.js)
+shared/                Authoritative tunables + geometry used by server, client, tests
+  config.js            CONFIG numbers (board, economy, combat, UI colors, …)
+  units.js             UNIT_STATS, variants, labels, BUY_UNITS, cost helpers
+  path.js              Path / lanes / progress / quarter-line helpers
+  unitInfo.js          Player-facing unit copy + derived info panels
+public/js/             Browser match client (ES modules, imports ../shared/)
+  main.js              2D match bootstrap: socket, lobby, menus
+  main3d.js / scene3d.js   3D match client
+  board.js             Hit-testing, HUD geometry, buy UI helpers
+  render.js            Canvas draw + applySnapshot
+  input.js             Pointer → command payloads
+  rules.js             In-match how-to diagrams (reads live CONFIG/UNIT_STATS)
+  unitInfo.js          In-match unit info overlay (uses shared/unitInfo.js)
+  tooltips.js, tutorial.js, audio.js, buyArt.js, suggestion.js, debugRanges.js
+public/css/            game.css, landing.css
+views/                 EJS shells (landing, play, wiki, admin, scores, …)
+wikidocs/              Canonical player-facing rules markdown (wiki source content)
+test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
+scripts/debug-server.js  Sets DEBUG_RANGES then imports server.js
+goals.md               Backlog / roadmap (not docs)
+data/                  Runtime DB, news.json (do not commit secrets)
+```
+
+## Task router
+
+| If you need to… | Open first | Then usually |
+|-----------------|------------|--------------|
+| Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
+| Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
+| Movement / lanes / progress / LoS geometry | `shared/path.js` | `server/sim.js`, `public/js/board.js` + `render.js` |
+| Combat, orders, fatigue, pushback, keeps, towns | `server/sim.js` (`GameSim`, `Unit`, `applyCommand`) | `test/*.test.js`, matching `wikidocs/*.md` |
+| Player commands (buy, order, bank, upgrade, …) | `GameSim.applyCommand` in `server/sim.js` | `server/room.js` (queue), `public/js/input.js` (emit), bot `server/bot/commands.js` / `economy.js` |
+| Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |
+| Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
+| Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
+| Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
+| 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
+| 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
+| In-match rules diagrams | `public/js/rules.js` | Must stay consistent with `shared/` + `wikidocs/` |
+| Player docs | `wikidocs/` (index: `rules.md`) | Live wiki is DB-backed via `server/db.js`; keep markdown in sync when rules change |
+| Product ideas / unfinished work | `goals.md` | — |
+
+### Command / socket cheat sheet
+
+- Client → server: `command` (payload to `sim.applyCommand`), also `leave`, `concede`, `tooltips`, `botSettings`, `debugPlay`.
+- Server → client: `state` (public snapshot), `lobby`, `go-home`, `replaced`.
+- Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`.
+
+### Shared code rule
+
+Tunables and unit definitions live in `shared/`. Server and `public/js/` both import them. Prefer changing shared values over duplicating constants in client or bot code.
+
+## Conventions
+
+- ESM (`"type": "module"`); Node tests via `node --test`.
+- Prefer editing existing modules over new folders.
+- `server/sim.js` is large — search by class/method (`Unit`, `GameSim`, `applyCommand`, unit subclasses) before reading top-to-bottom.
+- Tests spawn through `test/helpers.js` (`makeSim`, `spawn`, `stepBot`) so buy/path behavior stays real.
+- Do not commit `.env` or `data/*.sqlite`.
+
+## After you add a feature or change behavior
+
+Work top-to-bottom; skip rows that do not apply.
+
+1. **Shared source of truth** — Update `shared/config.js` and/or `shared/units.js` (and `shared/path.js` / `shared/unitInfo.js` if geometry or player copy changed).
+2. **Sim / authority** — Update `server/sim.js` (and `server/room.js` / `server/matchmaking.js` only if lifecycle or networking changed).
+3. **Bot** — Teach or retune AI in `server/bot/*` if the change affects buy/order/economy decisions.
+4. **Client** — Update `public/js/input.js` for new commands; `board.js` / `render.js` (and `scene3d.js` if 3D) for UI/state display; `main.js` / `main3d.js` only for wiring.
+5. **In-match guide** — Refresh diagrams/text in `public/js/rules.js` when player-visible rules or numbers change.
+6. **Wiki markdown** — Update the matching file(s) under `wikidocs/` (start from `wikidocs/rules.md` links). Especially: `units.md`, `economy.md`, `orders.md`, `shooting.md`, `melee.md`, `damage.md`, `fatigue.md`, `map.md`, `lines.md`, `towns.md`.
+7. **Site chrome** — Touch `views/*.ejs` / `public/css/*` only if landing, lobby, wiki UI, or admin surfaces need the change.
+8. **Tests** — Add or extend coverage under `test/` (use `test/helpers.js`). Register new files in the `test` script in `package.json`.
+9. **Verify** — Run `npm test`. Manually smoke the affected mode (`npm run dev` or `npm run debug`) if UI or networking changed.
+10. **Backlog** — Clear or adjust the relevant item in `goals.md` if the work came from there.
+11. **This index** — If you added a module, command type, or major folder responsibility, update the Layout / Task router sections above.

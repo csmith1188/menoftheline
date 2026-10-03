@@ -1,5 +1,4 @@
 # Bugs
-- reforming can cause units to leave their row and even get behind the other reforming units. they should not leave their row. only move forward or back as needed to square up
 
 # Ideas
 - Total line bonus based on how perfect your line is

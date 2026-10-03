@@ -3768,6 +3768,8 @@ class Unit {
       if (laneMove === "waiting" || this.reformHold) {
         return;
       }
+      // Stay on this row. Square by walking forward only; never sidestep
+      // or ease onto another row when a friendly blocks ahead.
       let reformBlocked = false;
       for (let i = 0; i < allies.length; i += 1) {
         if (this.isBlockedBy(allies[i])) {
@@ -3776,7 +3778,6 @@ class Unit {
         }
       }
       if (reformBlocked) {
-        this.pursueSublaneChange(dt, allies, enemies);
         return;
       }
       const reformSpeed = this.marchSpeed(allies);

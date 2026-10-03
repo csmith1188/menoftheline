@@ -299,8 +299,11 @@ class Unit {
      * Set when this unit walks or eases toward its keep this tick
      * (retreat, fallback, charge reverse, peel, switch ease-back).
      * Survives until the next update so mid-tick hits still see it.
+     * Only set when that backward step actually moves.
      */
     this.movingBackward = false;
+    /** True after one pushback pace is resolved this sim step. */
+    this.pushbackAppliedThisTick = false;
     this.switch = null;
     this.switchEscape = false;
     this.switchEaseDir = 0;
@@ -2097,7 +2100,6 @@ class Unit {
    */
   marchAlong(dt, allies, enemies, dir, seekContact = false) {
     const sign = dir < 0 ? -1 : 1;
-    if (sign < 0) this.movingBackward = true;
     for (let i = 0; i < allies.length; i += 1) {
       if (this.isBlockedToward(allies[i], sign)) {
         return false;
@@ -2120,6 +2122,7 @@ class Unit {
         if (allyClamped === this.progress) return false;
         this.progress = allyClamped;
         this.syncPosition();
+        if (sign < 0) this.movingBackward = true;
         return true;
       }
       const clamped = this.clampProgressFromSameRowEnemy(
@@ -2132,11 +2135,13 @@ class Unit {
       if (clamped === this.progress) return false;
       this.progress = clamped;
       this.syncPosition();
+      if (sign < 0) this.movingBackward = true;
       return true;
     }
 
     this.progress = nextProgress;
     this.syncPosition();
+    if (sign < 0) this.movingBackward = true;
     this.endRetreatAtLaneEnd();
     return true;
   }
@@ -2862,7 +2867,6 @@ class Unit {
    */
   easeAlong(dt, allies, enemies, dir, ignoreFriendlies, ignoreEnemies = false) {
     const sign = dir < 0 ? -1 : 1;
-    if (sign < 0) this.movingBackward = true;
     if (!ignoreFriendlies) {
       for (let i = 0; i < allies.length; i += 1) {
         if (this.isBlockedToward(allies[i], sign)) {
@@ -2890,10 +2894,12 @@ class Unit {
       if (clamped == null || clamped === this.progress) return false;
       this.progress = clamped;
       this.syncPosition();
+      if (sign < 0) this.movingBackward = true;
       return true;
     }
     this.progress = nextProgress;
     this.syncPosition();
+    if (sign < 0) this.movingBackward = true;
     return true;
   }
 
@@ -3240,6 +3246,8 @@ class Unit {
     this.fatigue = Math.min(this.maxFatigue, this.fatigue + fatigueGain);
     if (pushAmount > 0) {
       this.applyPushback(pushAmount, true);
+      // Resolve one pace with the hit so the shove is not deferred a step.
+      if (this.side) this.tickPushback(0, this.side.troops);
     }
     this.tryBreak();
   }
@@ -3331,9 +3339,11 @@ class Unit {
       this.clearPushback();
       return;
     }
+    if (this.pushbackAppliedThisTick) return;
     if (this.pushbackQueue.length === 0) return;
 
     const pace = this.pushbackQueue.shift();
+    this.pushbackAppliedThisTick = true;
     const delta = this.pushbackPaceDelta();
     const to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
     // Already touching behind, or this pace would land inside a friendly.
@@ -4567,12 +4577,21 @@ export class GameSim {
   /** Movement, capture, guns, and the capital win check. */
   finishStep(dt) {
     if (this.winner) return;
+    this.clearPushbackTickFlags(this.player);
+    this.clearPushbackTickFlags(this.enemy);
     this.updateSide(this.player, this.enemy.troops, this.enemy, dt);
     this.updateSide(this.enemy, this.player.troops, this.player, dt);
     this.player.updateGuns(dt, this.enemy.troops, this.player.troops, this.projectiles);
     this.enemy.updateGuns(dt, this.player.troops, this.enemy.troops, this.projectiles);
     this.updateProjectiles(dt);
     this.checkWinner();
+  }
+
+  /** Allow one pushback pace per unit per sim step. */
+  clearPushbackTickFlags(side) {
+    for (let i = 0; i < side.troops.length; i += 1) {
+      side.troops[i].pushbackAppliedThisTick = false;
+    }
   }
 
   checkWinner() {

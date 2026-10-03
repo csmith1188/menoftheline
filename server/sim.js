@@ -72,6 +72,38 @@ function skirmisherTargetTier(type, dist, closestDist) {
 }
 
 /**
+ * Among the primary pick and other same-priority units In Line with it
+ * (same lane), prefer the row nearest the shooter, then closer shot
+ * paces. Keeps and cross-lane primaries are unchanged. Disabled when
+ * CONFIG.preferNearestRowAmongAlignedTargets is false.
+ */
+function preferNearestRowAmongAligned(shooter, primary, eligible) {
+  if (!CONFIG.preferNearestRowAmongAlignedTargets) return primary;
+  if (!primary || primary.capitalHP !== undefined) return primary;
+  if (!shooter || primary.lane !== shooter.lane) return primary;
+  if (!eligible || !eligible.length) return primary;
+
+  let best = primary;
+  let bestRowGap = Math.abs(shooter.sublane - primary.sublane);
+  let bestD = shooter.shotPaces(primary);
+
+  for (let i = 0; i < eligible.length; i += 1) {
+    const other = eligible[i];
+    if (!other || other === primary || other.capitalHP !== undefined) continue;
+    if (other.lane !== primary.lane) continue;
+    if (!primary.withinLine(other)) continue;
+    const rowGap = Math.abs(shooter.sublane - other.sublane);
+    const d = shooter.shotPaces(other);
+    if (rowGap < bestRowGap || (rowGap === bestRowGap && d < bestD)) {
+      best = other;
+      bestRowGap = rowGap;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/**
  * Shot fired by a troop or cannon. Travels over intervening units and
  * only collides with its chosen target (or the target keep). A shell
  * already in flight still hits if that target later enters melee.
@@ -3115,7 +3147,10 @@ class Unit {
    * same range (except skirmishers/rifles, which use a fixed type
    * priority). The Keep competes using targetPriorityPaces (50 paces
    * closer for ranking only) whenever it is within actual weapon range;
-   * melee does not lock the Keep.
+   * melee does not lock the Keep. When
+   * preferNearestRowAmongAlignedTargets is on, a closest pick that
+   * shares an In Line station with other eligible units yields to the
+   * one on the nearest row to this shooter.
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
@@ -3131,6 +3166,8 @@ class Unit {
     let bestOfficerD = Infinity;
     let bestOfficerVit = 0;
     let otherInRange = false;
+    const nonOfficers = [];
+    const officers = [];
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (!isValidRangedTarget(other)) continue;
@@ -3139,6 +3176,7 @@ class Unit {
       if (other.type !== "officer") otherInRange = true;
       const vit = targetVitality(other);
       if (other.type === "officer") {
+        officers.push(other);
         if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
           bestOfficerVit = vit;
@@ -3146,16 +3184,19 @@ class Unit {
         }
         continue;
       }
+      nonOfficers.push(other);
       if (!best || isBetterTarget(mode, d, vit, bestD, bestVit)) {
         bestD = d;
         bestVit = vit;
         best = other;
       }
     }
+    let pool = nonOfficers;
     if (!best && !otherInRange) {
       best = bestOfficer;
       bestD = bestOfficerD;
       bestVit = bestOfficerVit;
+      pool = officers;
     }
     if (enemySide && this.inShotRange(enemySide, range)) {
       const keepD = targetPriorityPaces(this, enemySide);
@@ -3164,13 +3205,16 @@ class Unit {
         return enemySide;
       }
     }
-    return best;
+    if (!best) return null;
+    return preferNearestRowAmongAligned(this, best, pool);
   }
 
   /**
    * Skirmisher / Rifles: fixed type priority, closest within the best
    * tier (not closest-eligible Bastion). Keep wins only when its
-   * priority distance is closer than every valid unit.
+   * priority distance is closer than every valid unit. When
+   * preferNearestRowAmongAlignedTargets is on, that closest tier pick
+   * yields to a same-tier unit In Line with it on a nearer row.
    */
   skirmisherNearestTarget(enemies, range, enemySide) {
     const candidates = [];
@@ -3199,7 +3243,15 @@ class Unit {
       const keepD = targetPriorityPaces(this, enemySide);
       if (!best || keepD < closestDist) return enemySide;
     }
-    return best;
+    if (!best) return null;
+    const pool = [];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const { other, d } = candidates[i];
+      if (skirmisherTargetTier(other.type, d, closestDist) === bestTier) {
+        pool.push(other);
+      }
+    }
+    return preferNearestRowAmongAligned(this, best, pool);
   }
 
   /**

@@ -925,6 +925,7 @@ const howtoPages = [
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
           "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+          "Among same-priority targets In Line across rows, aim at the nearer row (then closer).",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
         ],

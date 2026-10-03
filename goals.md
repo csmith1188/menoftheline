@@ -1,6 +1,8 @@
 # Bugs
+- reforming can cause units to leave their row and even get behind the other reforming units. they should not leave their row. only move forward or back as needed to square up
 
 # Ideas
+- Total line bonus based on how perfect your line is
 - fort melee bonus if enemy is not also in it
 - officers make order sounds when near lines given orders
 - Click, drag, long press (or rmb drag) to set a target

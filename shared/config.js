@@ -121,6 +121,14 @@ export const CONFIG = {
   capitalCannonAttackCooldown: 1,
   /** Paces subtracted from Keep distance when ranking ranged targets only. */
   keepTargetDistanceOffsetPaces: 50,
+  /**
+   * When true, after picking the closest eligible target (or best
+   * Skirmisher/Rifles tier), if other eligible targets share an In Line
+   * station with that pick, aim at the one whose row is closest to the
+   * shooter. Equal row distance breaks by closer shot paces. Spreads
+   * volleys across a facing line instead of stacking on one body.
+   */
+  preferNearestRowAmongAlignedTargets: true,
 
   // Combat rules (not per-unit stats)
 

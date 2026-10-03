@@ -90,7 +90,7 @@ export const UNIT_STATS = {
   cannon: {
     ...SHOT,
     hp: 100,
-    rangedDamage: 60,
+    rangedDamage: 120,
     meleeDamage: 10,
     range: 300,
     engageRange: 0.5,

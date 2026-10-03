@@ -13,7 +13,7 @@ The Bottom lane is drawn as an arc so the lanes can meet at both keeps. Units on
 
 Distances along a lane are measured from a unit's center. Each figure below is a **reach from that center**. Two units match when those reaches **overlap** (so centers may be up to twice the reach apart):
 
-- **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot.
+- **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot, and for Troop order passing.
 - **In Line:** 8 paces either side. [[Lines]] form inside this reach.
 - **Footprint:** 12 paces either side. Footprints that meet are touching. Friendly blocking and fort cover use this reach.
 - **Melee reach:** footprint plus 6 paces of slack either side. Same-row or adjacent-row contact inside this reach is [[Melee]]. Chargers stop just outside the hard footprint and lock in that slack ring.

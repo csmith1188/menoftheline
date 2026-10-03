@@ -733,22 +733,14 @@ function drawHowtoUnits(ctx, w, h) {
     drawUnit(ctx, chargeFoe);
   });
 
-  const solo = placeX("player", 2, 500, "troop", "reform");
-  const mates = [
-    placeX("player", 1, 500, "troop"),
-    placeX("player", 3, 500, "troop"),
-  ];
-  vignette(ctx, panels[3], around([solo, ...mates], 70, 36), "Long-press / right-click · solo unit only", () => {
+  const halted = placeX("player", 1, 520, "troop", "halt");
+  const walker = placeX("player", 2, 470, "troop");
+  vignette(ctx, panels[3], around([halted, walker], 70, 40), "Walk into Perfect Line · order passing", (frame) => {
     drawGround(ctx);
-    for (let i = 0; i < mates.length; i += 1) drawUnit(ctx, mates[i]);
-    ctx.save();
-    ctx.strokeStyle = CONFIG.colors.gold;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(solo.x, solo.y, 24, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-    drawUnit(ctx, solo);
+    drawUnit(ctx, halted);
+    drawUnit(ctx, walker);
+    worldArrow(ctx, walker.x + 10, walker.y, halted.x - 14, walker.y, CONFIG.colors.halt);
+    zoomInk(ctx, frame, "Halt", halted.x, halted.y - 28, CONFIG.colors.halt, 12);
   });
 }
 
@@ -918,6 +910,7 @@ const howtoPages = [
           "Swipe forward to Charge.",
           "Swipe back to Fall Back.",
           "Long press or right-click a single unit to issue orders to only that unit (ignore lines).",
+          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
         ],
       },
     ],

@@ -10,7 +10,7 @@ import {
 /** Short real-life role + tactical purpose for each spawn key. */
 export const UNIT_SUMMARIES = {
   troop:
-    "Line infantry — the backbone of the army. Hold formation and trade fire with weight of numbers.",
+    "Line infantry — the backbone of the army. Hold formation, trade fire with weight of numbers, and dress onto Halt or Reform by walking into Perfect Line.",
   skirmisher:
     "Light infantry that fights in open order. Harass, screen, and pick at the enemy from flexible positions.",
   dragoon:
@@ -205,6 +205,11 @@ export function unitAbilityLines(type) {
   if (stats.lineBonus > 0) {
     lines.push(
       `Line shooting bonus: +${pct(stats.lineBonus)} per other eligible troop in the line (not vs Skirmishers/Rifles).`,
+    );
+  }
+  if (base === "troop") {
+    lines.push(
+      "Order passing: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them lets that Troop walk past without re-inheriting.",
     );
   }
   if (type === "grenadier") {

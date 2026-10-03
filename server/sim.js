@@ -328,6 +328,17 @@ class Unit {
      * halt/reform/advance from adjacent line-mates.
      */
     this.ignoreLineOrders = false;
+    /**
+     * Prior tick: already Perfect Line with a Halt/Reform troop next door.
+     * Order passing only fires on the transition into that alignment.
+     */
+    this.wasOrderPassParallel = false;
+    /**
+     * Set when Advance is issued while already In Line with a Halt/Reform
+     * troop ahead on an adjacent row. Blocks order passing until that
+     * In Line contact ends, so a slightly-behind unit can walk past.
+     */
+    this.suppressOrderPass = false;
     this.applyPath();
     const spawn = Path.pointAt(this.points, 0);
     this.x = spawn.x;
@@ -444,6 +455,11 @@ class Unit {
     for (let i = 0; i < group.length; i += 1) {
       group[i].commitOrder(next, enemies);
       group[i].ignoreLineOrders = lock;
+      if (next === null) {
+        group[i].refreshOrderPassSuppress(allies);
+      } else {
+        group[i].suppressOrderPass = false;
+      }
     }
   }
 
@@ -456,6 +472,11 @@ class Unit {
     this.order = next;
     this.reformNeedsAlign = next === "reform";
     if (next !== "reform") this.priorOrder = null;
+    if (next === null && this.side) {
+      this.refreshOrderPassSuppress(this.side.troops);
+    } else {
+      this.suppressOrderPass = false;
+    }
   }
 
   /**
@@ -1015,13 +1036,97 @@ class Unit {
   }
 
   /**
-   * Order absorb-by-lining-up is disabled. Orders spread only when the
-   * player/bot issues one to a combat line, or when Reform's initial
-   * seek recruits a column.
+   * Adjacent Halt/Reform troop ahead or level within the given station
+   * window. Used by order passing (Perfect Line) and Advance suppress (In Line).
    */
-  tryJoinAhead(_allies) {}
+  orderPassCandidate(allies, kind) {
+    const slack = this.stationSlack(kind);
+    for (let i = 0; i < allies.length; i += 1) {
+      const ally = allies[i];
+      if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
+        continue;
+      }
+      if (ally.type !== "troop" || !this.adjacentRow(ally)) {
+        continue;
+      }
+      if (ally.order !== "halt" && ally.order !== "reform") {
+        continue;
+      }
+      if (Math.abs(this.station() - ally.station()) > slack) {
+        continue;
+      }
+      // Must be walking up to them (or already level), not copying from behind.
+      if (this.alongSigned(ally) < -this.stationSlack("parallel")) {
+        continue;
+      }
+      return ally;
+    }
+    return null;
+  }
 
-  /** See tryJoinAhead: no mid-walk reform absorb. */
+  /** Adjacent Halt/Reform troop this unit is already Perfect Line with. */
+  orderPassNeighbor(allies) {
+    return this.orderPassCandidate(allies, "parallel");
+  }
+
+  /**
+   * Adjacent Halt/Reform troop this unit is already In Line with and not
+   * past. Advance issued in this state suppresses order passing so the
+   * unit can walk through Perfect Line and past the line.
+   */
+  orderPassInLineNeighbor(allies) {
+    return this.orderPassCandidate(allies, "line");
+  }
+
+  /** Latch or clear suppress when this unit is put on Advance. */
+  refreshOrderPassSuppress(allies) {
+    this.suppressOrderPass = Boolean(this.orderPassInLineNeighbor(allies));
+  }
+
+  /**
+   * Order passing for troops only. An Advancing troop that newly enters
+   * Perfect Line with a Halted or Reforming troop on an adjacent row
+   * takes that order on itself alone. Already-aligned units that are
+   * given a new order do not immediately re-inherit. Advance issued while
+   * already In Line behind a Halt/Reform mate suppresses passing until
+   * that In Line contact ends, so the unit can walk past. Reform movement
+   * does not absorb mid-manoeuvre.
+   */
+  tryJoinAhead(allies) {
+    if (this.type !== "troop" || this.broken) {
+      return;
+    }
+    if (this.suppressOrderPass && !this.orderPassInLineNeighbor(allies)) {
+      this.suppressOrderPass = false;
+    }
+    const passer = this.orderPassNeighbor(allies);
+    const nowParallel = Boolean(passer);
+    const entered = nowParallel && !this.wasOrderPassParallel;
+    this.wasOrderPassParallel = nowParallel;
+    // Track alignment even while Halted/Reforming so a later Advance does
+    // not look like a fresh walk-up into line.
+    if (!entered || !passer) {
+      return;
+    }
+    // Advance only. Reform movement must not absorb mid-manoeuvre.
+    if (this.order != null) {
+      return;
+    }
+    // Issued Advance while already In Line behind them — keep going past.
+    if (this.suppressOrderPass) {
+      return;
+    }
+    if (this.isInMelee(this.enemyTroops())) {
+      return;
+    }
+    this.order = passer.order;
+    this.reformNeedsAlign = passer.order === "reform";
+    if (passer.order !== "reform") {
+      this.priorOrder = null;
+    }
+  }
+
+  /** Mid-walk reform absorb from behind stays off; Perfect Line uses tryJoinAhead. */
   takeReformFromBehind(_allies) {}
 
   /**
@@ -3582,6 +3687,8 @@ class Unit {
       return;
     }
 
+    this.tryJoinAhead(allies);
+
     // In melee a unit holds still, unless retreating or sliding a
     // non-adjacent escape. Retreat keeps its order and its movement;
     // melee swings and contact distance do not stop it.
@@ -3721,6 +3828,7 @@ class Unit {
     }
     this.progress = clamped;
     this.syncPosition();
+    this.tryJoinAhead(allies);
   }
 
 }

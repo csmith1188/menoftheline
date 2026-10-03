@@ -16,6 +16,6 @@ jobs:
     runs-on: [self-hosted, Windows]
     steps:
       - name: Forward event to local branch sync
-        working-directory: C:\Users\Samisu\Documents\GitHub\menoftheline
+        working-directory: working-directory: C:\Users\Samisu\Documents\GitHub\cursor-helper
         shell: cmd
         run: node src\cli.js

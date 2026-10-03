@@ -962,7 +962,7 @@ const howtoPages = [
           "Units already moving back (Retreat, Fall Back, charge reverse, peel) ignore pushback.",
           "Guns recoil themselves when they fire. The Keep gun pushes units but never recoils or gets pushed.",
           "Grenadiers take half of all incoming pushback.",
-          "Stacked paces ease through fast at first, then slower.",
+          "Stacked paces apply one instant step per tick.",
         ],
       },
     ],

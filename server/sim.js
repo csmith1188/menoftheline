@@ -293,11 +293,8 @@ class Unit {
     this.reformNeedsAlign = false;
     this.squared = false;
     this.pushbackCounter = 0;
-    /** Queued paces: { fatigueOnBlock, easeIndex }. */
+    /** Queued paces: { fatigueOnBlock }. Applied one instant pace per tick. */
     this.pushbackQueue = [];
-    this.pushbackNextEaseIndex = 0;
-    /** Active eased pace: { from, to, elapsed, duration, fatigueOnBlock }. */
-    this.pushbackMove = null;
     /**
      * Set when this unit walks or eases toward its keep this tick
      * (retreat, fallback, charge reverse, peel, switch ease-back).
@@ -3257,12 +3254,10 @@ class Unit {
     return Boolean(this.movingBackward);
   }
 
-  /** Drop queued and in-flight pushback so absolute eases cannot pin a withdraw. */
+  /** Drop queued pushback so pending paces cannot pin a withdraw. */
   clearPushback() {
     this.pushbackCounter = 0;
     this.pushbackQueue.length = 0;
-    this.pushbackMove = null;
-    this.pushbackNextEaseIndex = 0;
   }
 
   /**
@@ -3281,9 +3276,7 @@ class Unit {
       this.pushbackCounter -= perPace;
       this.pushbackQueue.push({
         fatigueOnBlock: Boolean(fatigueOnBlock),
-        easeIndex: this.pushbackNextEaseIndex,
       });
-      this.pushbackNextEaseIndex += 1;
     }
   }
 
@@ -3316,7 +3309,7 @@ class Unit {
     return clamped == null || clamped !== progress;
   }
 
-  /** Spend a blocked pushback pace: optional fatigue, then clear the ease. */
+  /** Spend a blocked pushback pace: optional fatigue. */
   consumeBlockedPushbackPace(fatigueOnBlock) {
     if (fatigueOnBlock) {
       this.fatigue = Math.min(
@@ -3324,89 +3317,41 @@ class Unit {
         this.fatigue + CONFIG.fatiguePerPace,
       );
     }
-    this.pushbackMove = null;
-    this.resetPushbackEaseIfIdle();
   }
 
   /**
-   * Ease queued pushback paces toward own keep. Stacked paces ease
-   * fast-to-slow by easeIndex. Blocked paces still consume the queue;
-   * fatigue applies unless this was cannon recoil. While withdrawing
-   * backward, discard pending paces so they cannot overwrite march.
+   * Apply at most one queued pushback pace toward own keep this tick.
+   * Steps are instant so stacked paces resolve one collision check at a
+   * time. Blocked paces still consume the queue; fatigue applies unless
+   * this was cannon recoil. While withdrawing backward, discard pending
+   * paces so they cannot overwrite march.
    */
-  tickPushback(dt, allies) {
+  tickPushback(_dt, allies) {
     if (this.isWithdrawingBackward()) {
       this.clearPushback();
       return;
     }
-    if (this.pushbackMove) {
-      const move = this.pushbackMove;
-      move.elapsed += dt;
-      const t = move.duration > 0 ? Math.min(1, move.elapsed / move.duration) : 1;
-      // Ease-out: start fast, settle slow.
-      const eased = 1 - (1 - t) * (1 - t);
-      const next = move.from + (move.to - move.from) * eased;
-      // Block on current contact or if this ease would enter an ally.
-      if (this.pushbackStepBlocked(next, allies)
-        || this.pushbackStepBlocked(move.to, allies)) {
-        this.progress = move.from;
-        this.syncPosition();
-        this.consumeBlockedPushbackPace(move.fatigueOnBlock);
-        return;
-      }
-      this.progress = Math.max(0, Math.min(1, next));
-      this.syncPosition();
-      if (t >= 1) {
-        this.progress = Math.max(0, move.to);
-        this.syncPosition();
-        this.pushbackMove = null;
-        this.resetPushbackEaseIfIdle();
+    if (this.pushbackQueue.length === 0) return;
+
+    const pace = this.pushbackQueue.shift();
+    const delta = this.pushbackPaceDelta();
+    const to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
+    // Already touching behind, or this pace would land inside a friendly.
+    if (this.pushbackStepBlocked(to, allies)) {
+      this.consumeBlockedPushbackPace(pace.fatigueOnBlock);
+      return;
+    }
+    if (!(delta > 0) || this.progress <= 0) {
+      if (pace.fatigueOnBlock && this.progress <= 0) {
+        this.fatigue = Math.min(
+          this.maxFatigue,
+          this.fatigue + CONFIG.fatiguePerPace,
+        );
       }
       return;
     }
-
-    while (this.pushbackQueue.length > 0 && !this.pushbackMove) {
-      const pace = this.pushbackQueue.shift();
-      const delta = this.pushbackPaceDelta();
-      const to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
-      // Already touching behind, or this pace would land inside a friendly.
-      if (this.pushbackStepBlocked(to, allies)) {
-        this.consumeBlockedPushbackPace(pace.fatigueOnBlock);
-        continue;
-      }
-      if (!(delta > 0) || this.progress <= 0) {
-        if (pace.fatigueOnBlock && this.progress <= 0) {
-          this.fatigue = Math.min(
-            this.maxFatigue,
-            this.fatigue + CONFIG.fatiguePerPace,
-          );
-        }
-        this.resetPushbackEaseIfIdle();
-        continue;
-      }
-      const from = this.progress;
-      const duration = CONFIG.pushbackEaseMin
-        + CONFIG.pushbackEaseStep * (pace.easeIndex || 0);
-      if (!(duration > 0.001)) {
-        this.progress = to;
-        this.syncPosition();
-        this.resetPushbackEaseIfIdle();
-        continue;
-      }
-      this.pushbackMove = {
-        from,
-        to,
-        elapsed: 0,
-        duration,
-        fatigueOnBlock: pace.fatigueOnBlock,
-      };
-    }
-  }
-
-  resetPushbackEaseIfIdle() {
-    if (!this.pushbackMove && this.pushbackQueue.length === 0) {
-      this.pushbackNextEaseIndex = 0;
-    }
+    this.progress = to;
+    this.syncPosition();
   }
 
   /**
@@ -3618,7 +3563,7 @@ class Unit {
   }
 
   /**
-   * Orders, shooting, melee, and marching for one step. Pushback eases in
+   * Orders, shooting, melee, and marching for one step. Pushback applies in
    * update()'s finally so every early return still resolves paces.
    */
   updateActions(dt, allies, enemies, enemySide, projectiles) {

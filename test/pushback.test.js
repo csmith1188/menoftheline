@@ -12,9 +12,10 @@ function stackJustClear(front, rear, pacesOutside = 0.5) {
   rear.syncPosition();
 }
 
+/** Drain queued pushback one instant pace per call. */
 function finishPushback(unit, allies, steps = 40) {
-  for (let i = 0; i < steps; i += 1) {
-    unit.tickPushback(0.05, allies);
+  for (let i = 0; i < steps && unit.pushbackQueue.length > 0; i += 1) {
+    unit.tickPushback(0, allies);
   }
 }
 
@@ -79,6 +80,27 @@ describe("pushback vs friendly ranks", () => {
     front.fire(foe, allies, projectiles, "shoot");
     rear.fire(foe, allies, projectiles, "shoot");
     assert.equal(projectiles.length, 2);
+  });
+
+  it("applies stacked paces one instant step at a time", () => {
+    const sim = makeSim();
+    const unit = spawn(sim, "player", "troop", "top", {
+      progress: 0.5,
+      sublane: 2,
+      order: "halt",
+    });
+    const pace = unit.pushbackPaceDelta();
+    const start = unit.progress;
+    unit.applyPushback(CONFIG.pushbackPerPace * 2, true);
+    assert.equal(unit.pushbackQueue.length, 2);
+
+    unit.tickPushback(0, []);
+    assert.equal(unit.pushbackQueue.length, 1);
+    assert.ok(Math.abs(unit.progress - (start - pace)) < 1e-9);
+
+    unit.tickPushback(0, []);
+    assert.equal(unit.pushbackQueue.length, 0);
+    assert.ok(Math.abs(unit.progress - (start - 2 * pace)) < 1e-9);
   });
 
   it("still allows shooting if ranks are already overlapping", () => {

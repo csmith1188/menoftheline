@@ -181,10 +181,6 @@ export const CONFIG = {
   pushbackPerPace: 1.5,
   /** Fatigue added when a melee/hit pushback pace is blocked behind. */
   fatiguePerPace: 1,
-  /** Seconds to ease the first queued pushback pace (near-instant). */
-  pushbackEaseMin: 0.05,
-  /** Extra seconds of ease duration per later queued pace. */
-  pushbackEaseStep: 0.1,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
   /** Incoming damage removed while overlapping your fort in this lane. */

@@ -18,7 +18,7 @@ export const UNIT_SUMMARIES = {
   cannon:
     "Field artillery that shoots a solid iron ball that bounces through lines of enemies.",
   officer:
-    "A Major keeps battalions toeghether by keeping discipline.",
+    "A Major keeps battalions together by keeping discipline.",
   grenadier:
     "Elite heavy infantry. Hold the line under pressure and shrug off pushback.",
   rifle:

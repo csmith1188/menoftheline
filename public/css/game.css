@@ -48,6 +48,11 @@ body {
   --board-top: 0px;
   --board-width: 100%;
   --board-height: 100%;
+  /* Fallback: between keeps (capital ± radius+8) on the 960×620 board. */
+  --top-lane-left: 11.875%;
+  --top-lane-top: 15.16%;
+  --top-lane-width: 76.25%;
+  --top-lane-height: 18.06%;
 }
 
 #board {
@@ -78,20 +83,28 @@ body {
 }
 
 .tutorial {
+  /* Scale type from the top-lane band so the panel stays inside it on phones. */
+  --tutorial-size: clamp(10px, calc(var(--top-lane-height, 112px) * 0.155), 18px);
   position: absolute;
   z-index: 3;
-  left: calc(var(--board-left) + var(--board-width) * 0.12);
-  top: calc(var(--board-top) + var(--board-height) * 0.15);
-  width: calc(var(--board-width) * 0.76);
-  max-width: 420px;
+  left: var(--top-lane-left, calc(var(--board-left) + var(--board-width) * 0.11875));
+  top: var(--top-lane-top, calc(var(--board-top) + var(--board-height) * 0.1516));
+  width: var(--top-lane-width, calc(var(--board-width) * 0.7625));
+  max-width: none;
+  height: var(--top-lane-height, calc(var(--board-height) * 0.1806));
+  max-height: var(--top-lane-height, calc(var(--board-height) * 0.1806));
   box-sizing: border-box;
-  padding: 12px 14px;
+  padding: calc(var(--tutorial-size) * 0.35) calc(var(--tutorial-size) * 0.55);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(var(--tutorial-size) * 0.22);
   background: rgba(18, 24, 32, 0.92);
   border: 1px solid color-mix(in srgb, #c9b27a 55%, transparent);
   color: #e8dfc8;
+  font-size: var(--tutorial-size);
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   pointer-events: auto;
 }
 
@@ -101,38 +114,47 @@ body {
 
 .tutorial-title {
   margin: 0;
-  font-size: 1rem;
+  flex: 0 0 auto;
+  font-size: 1em;
+  line-height: 1.2;
   letter-spacing: 0.04em;
   color: #e6d4a8;
 }
 
 .tutorial-body {
   margin: 0;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  flex: 1 1 auto;
+  min-height: 0;
+  font-size: 0.9em;
+  line-height: 1.25;
   color: #d2cbb8;
+  overflow: auto;
 }
 
 .tutorial-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 0.4em;
+  margin-top: 0;
+  flex: 0 0 auto;
 }
 
 .tutorial-nav .action {
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 6px 12px;
-  font-size: 0.85rem;
+  min-height: 0;
+  min-width: 0;
+  height: auto;
+  padding: 0.25em 0.65em;
+  font-size: 0.85em;
+  line-height: 1.2;
 }
 
 .tutorial-step {
   margin: 0;
   flex: 1 1 auto;
   text-align: center;
-  font-size: 0.8rem;
+  font-size: 0.8em;
   letter-spacing: 0.06em;
   color: #a89f88;
 }
@@ -200,23 +222,26 @@ body {
 
 .menu {
   position: absolute;
-  inset: 0;
+  left: var(--board-left, 0px);
+  top: var(--board-top, 0px);
+  width: var(--board-width, 100%);
+  height: var(--board-height, 100%);
+  right: auto;
+  bottom: auto;
   z-index: 6;
-  width: auto;
-  height: auto;
   max-width: none;
   margin: 0;
   padding:
-    max(12px, env(safe-area-inset-top, 0px))
-    max(12px, env(safe-area-inset-right, 0px))
-    max(12px, env(safe-area-inset-bottom, 0px))
-    max(12px, env(safe-area-inset-left, 0px));
+    max(8px, env(safe-area-inset-top, 0px))
+    max(8px, env(safe-area-inset-right, 0px))
+    max(8px, env(safe-area-inset-bottom, 0px))
+    max(8px, env(safe-area-inset-left, 0px));
   background: rgba(18, 24, 33, 0.96);
   border: 0;
   color: var(--text);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
@@ -448,19 +473,9 @@ body {
   flex: 1 1 7rem;
 }
 
-@media (max-width: 640px), (max-height: 420px) {
+@media (max-width: 640px), (max-height: 480px) {
   .menu-grid {
     grid-template-columns: 1fr;
-  }
-
-  .training-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (orientation: landscape) and (max-height: 420px) {
-  .menu {
-    padding: 8px max(8px, env(safe-area-inset-right, 0px)) 8px max(8px, env(safe-area-inset-left, 0px));
     gap: 6px;
   }
 
@@ -477,13 +492,141 @@ body {
     gap: 4px;
   }
 
+  .menu .label {
+    font-size: 0.65rem;
+  }
+
+  .menu .value {
+    font-size: 0.85rem;
+  }
+
   .menu .action {
     min-height: 34px;
     padding: 4px 10px;
+    font-size: 0.9rem;
+  }
+
+  .sound {
+    padding: 6px 8px;
+    gap: 4px;
+  }
+
+  .sound-head {
+    font-size: 0.85rem;
+  }
+
+  .training-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .training-row {
+    font-size: 0.75rem;
+  }
+
+  .training-row select {
+    padding: 3px 5px;
+  }
+
+  .rules {
+    padding: 6px;
+  }
+
+  .rules-card {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .rules-head h2 {
+    font-size: 1rem;
+  }
+
+  .rules-head .action,
+  .rules-nav .action {
+    min-height: 34px;
+    padding: 4px 10px;
+    font-size: 0.85rem;
+  }
+
+  .rules-copy p,
+  .rules-copy li {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    margin-bottom: 6px;
+  }
+
+  #rules-art {
+    height: min(160px, 32dvh);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 420px) {
+  .menu {
+    padding: 4px max(6px, env(safe-area-inset-right, 0px)) 4px max(6px, env(safe-area-inset-left, 0px));
+    gap: 4px;
+  }
+
+  .menu-head {
+    padding-right: 48px;
+  }
+
+  .menu-head h2 {
+    font-size: 0.9rem;
+  }
+
+  .menu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px;
+  }
+
+  .menu-block {
+    padding: 4px 6px;
+    gap: 3px;
+  }
+
+  .menu .label {
+    font-size: 0.6rem;
+  }
+
+  .menu .value {
+    font-size: 0.78rem;
+    line-height: 1.2;
+  }
+
+  .menu .value + .label {
+    margin-top: 2px;
+  }
+
+  .menu .action {
+    min-height: 28px;
+    padding: 2px 8px;
+    font-size: 0.8rem;
+  }
+
+  .sound {
+    padding: 4px 6px;
+    gap: 3px;
+  }
+
+  .sound-head {
+    font-size: 0.78rem;
+  }
+
+  .sound-mute {
+    min-height: 22px;
+    padding: 0 6px;
+    font-size: 0.65rem;
   }
 
   .training-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .training-row {
+    font-size: 0.7rem;
+  }
+
+  .confirm p {
+    font-size: 0.8rem;
   }
 }
 
@@ -526,12 +669,17 @@ body {
 
 .rules {
   position: absolute;
-  inset: 0;
+  left: var(--board-left, 0px);
+  top: var(--board-top, 0px);
+  width: var(--board-width, 100%);
+  height: var(--board-height, 100%);
+  right: auto;
+  bottom: auto;
   z-index: 8;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 12px;
+  padding: 8px;
   background: rgba(12, 16, 22, 0.84);
   touch-action: pan-y;
   overscroll-behavior: contain;
@@ -591,6 +739,12 @@ body {
   .rules-card {
     height: 100%;
     overflow: hidden;
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .rules-head h2 {
+    font-size: 0.95rem;
   }
 
   .rules-body {
@@ -600,12 +754,47 @@ body {
     overflow: auto;
   }
 
+  .rules-copy p,
+  .rules-copy li {
+    font-size: clamp(0.65rem, 2.6vh, 0.85rem);
+    line-height: 1.3;
+    margin-bottom: 4px;
+  }
+
+  .rules-head .action,
+  .rules-nav .action {
+    min-height: 28px;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+  }
+
   #rules-art {
     float: left;
-    width: 48%;
-    max-width: 48%;
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 13.5rem);
-    margin: 0 12px 8px 0;
+    width: 42%;
+    max-width: 42%;
+    height: auto;
+    max-height: calc(100% - 0.5rem);
+    margin: 0 10px 6px 0;
+  }
+
+  .rules-nav {
+    gap: 4px;
+  }
+
+  .rules-dot {
+    width: 22px;
+    height: 22px;
+  }
+
+  .rules-dot::after {
+    left: 7px;
+    top: 7px;
+    width: 8px;
+    height: 8px;
+  }
+
+  #rules-page {
+    font-size: 0.7rem;
   }
 }
 

@@ -250,10 +250,11 @@ class HitSplat {
     this.alive = true;
   }
 
-  /** Yellow for shots, red for melee, green for healing. */
+  /** Yellow for shots, red for melee, green for healing, blue for halt fatigue. */
   fillColor() {
     if (this.kind === "melee") return CONFIG.colors.splatMelee;
     if (this.kind === "heal") return CONFIG.colors.splatHeal;
+    if (this.kind === "fatigue") return CONFIG.colors.splatFatigue;
     return CONFIG.colors.splatShoot;
   }
 
@@ -1624,8 +1625,9 @@ class Unit {
    * lane, then switch to fallback. Otherwise halt recovers at idle rate,
    * and own capital recovers faster. Overlapping the keep also restores
    * health at that same recovery rate when no enemy stands behind either
-   * of this side's forts. A broken unit rallies once fatigue is at or
-   * below half its current hp.
+   * of this side's forts. Halt fatigue recovery queues a blue + splat.
+   * Keep health restore queues a green + splat. A broken unit rallies
+   * once fatigue is at or below half its current hp.
    */
   tickFatigue(dt, enemies) {
     this.endRetreatAtLaneEnd();
@@ -1641,10 +1643,21 @@ class Unit {
       const recovered = CONFIG.fatigueRecoverRate * dt;
       this.fatigue = Math.max(0, this.fatigue - recovered);
       if (this.hp > 0 && this.overlapsOwnCapital() && this.fortsClearOfEnemies()) {
-        this.hp = Math.min(this.maxHp, this.hp + recovered);
+        const sim = this.side && this.side.sim;
+        if (sim) {
+          const gained = sim.applyHeal(this, recovered);
+          if (gained > 0) sim.registerRestore(this, "heal", gained);
+        } else {
+          this.hp = Math.min(this.maxHp, this.hp + recovered);
+        }
       }
     } else if (this.order === "halt") {
+      const before = this.fatigue;
       this.fatigue = Math.max(0, this.fatigue - CONFIG.fatigueIdleRate * dt);
+      const eased = before - this.fatigue;
+      if (eased > 0 && this.side && this.side.sim) {
+        this.side.sim.registerRestore(this, "fatigue", eased);
+      }
     }
     if (this.broken) {
       if (this.order === "retreat" && this.fatigue >= this.maxFatigue) {
@@ -3338,10 +3351,43 @@ class Unit {
   }
 
   /**
+   * True while a living Color Guard on this side restores this unit
+   * (same lane, within officer restore paces). Negates missing-health
+   * damage loss.
+   */
+  inColorGuardAura(allies) {
+    const group = allies || (this.side ? this.side.troops : []);
+    const per = Path.stationPerPace(this.lane);
+    if (!(per > 0)) return false;
+    for (let i = 0; i < group.length; i += 1) {
+      const source = group[i];
+      if (source === this || source.hp <= 0) continue;
+      if (source.variant !== "colorGuard") continue;
+      if (source.lane !== this.lane) continue;
+      const gap = Math.abs(source.station() - this.station()) / per;
+      if (gap <= CONFIG.officerRestorePaces) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Damage multiplier from remaining health. Missing health cuts damage
+   * at half that fraction (50% health → 75% damage). Color Guard aura
+   * holds the unit at full output.
+   */
+  healthDamageFactor(allies) {
+    if (this.inColorGuardAura(allies)) return 1;
+    const max = this.maxHp || 1;
+    const hpPct = Math.max(0, Math.min(1, this.hp / max));
+    const ratio = CONFIG.missingHealthDamageRatio;
+    return 1 - (1 - hpPct) * ratio;
+  }
+
+  /**
    * Attacker percents added together: variance, charge, flank, line,
-   * damage upgrade, and the officer-damage bonus. Troop line bonus does
-   * not apply when shooting skirmishers/rifles. Defense is applied
-   * separately on impact as multipliers. Not yet truncated.
+   * damage upgrade, missing-health loss, and the officer-damage bonus.
+   * Troop line bonus does not apply when shooting skirmishers/rifles.
+   * Defense is applied separately on impact as multipliers. Not yet truncated.
    */
   attackerPercents(target, kind, allies) {
     const strike = kind || "shoot";
@@ -3355,6 +3401,7 @@ class Unit {
     }
     if (this.side) sum += this.side.damageScale() - 1;
     if (target.type === "officer") sum += (this.officerDamageMultiplier || 1) - 1;
+    sum += this.healthDamageFactor(allies) - 1;
     return sum;
   }
 
@@ -3743,11 +3790,6 @@ class Officer extends Unit {
   }
 
   /**
-   * Lower fatigue on nearby teammates. Ahead of an ally doubles the rate.
-   * A color guard also restores that much health.
-   * Does not restore this officer.
-   */
-  /**
    * Restore is applied once per side in GameSim.applySupport so officer,
    * color guard, and keep effects stack without double-counting.
    */
@@ -3755,8 +3797,8 @@ class Officer extends Unit {
   }
 
   /**
-   * The same restore step is also health. The green + is spawned from
-   * GameSim.applyHeal so officer, color guard, and keep heals share one bank.
+   * Health restore goes through GameSim.applyHeal; green + signs are
+   * queued from applySupport / keep overlap via registerRestore.
    */
   restoreHealthTo(ally, amount) {
     if (!this.side || !this.side.sim) return;
@@ -3925,8 +3967,9 @@ class Howitzer extends Cannon {
 }
 
 /**
- * Officer alternate: fatigue restore also heals the same amount.
- * Friends behind this color are restored twice as fast.
+ * Officer alternate: same fatigue and health restore as an Officer.
+ * Friends in its aura ignore missing-health damage loss. Ahead doubles
+ * the restore rate.
  */
 class ColorGuard extends Officer {
   constructor(id, side, lane, sublane) {
@@ -4678,14 +4721,15 @@ export class GameSim {
 
   /**
    * Strongest officer, strongest color guard, and the keep band.
-   * They stack with each other. A second officer or color guard does not.
-   * Double rate when the source is ahead of the unit. The keep band does not.
+   * Officers and color guards each restore fatigue and health. They stack
+   * with each other; a second of the same kind does not. Double rate when
+   * the source is ahead of the unit. The keep band does not double.
    * Keep health restore only applies when no enemy stands behind either of
    * this side's forts; keep fatigue restore still runs.
    */
   applySupport(side, dt) {
     const troops = side.troops;
-    const guardBase = UNIT_STATS.colorGuard.restoreRate || 1;
+    const keepBase = CONFIG.keepRestoreBase || 4;
     for (let i = 0; i < troops.length; i += 1) {
       const unit = troops[i];
       if (unit.hp <= 0) continue;
@@ -4701,18 +4745,28 @@ export class GameSim {
         if (gap > CONFIG.officerRestorePaces) continue;
         const ahead = unit.alongSigned(source) > 0;
         const rate = (source.restoreRate || 1) * (ahead ? 2 : 1);
-        if (source.restoreHealth) {
+        if (source.variant === "colorGuard") {
           if (rate > bestGuard) bestGuard = rate;
         } else if (rate > bestOfficer) {
           bestOfficer = rate;
         }
       }
-      const keepRate = guardBase * this.keepAuraMultiplier(unit);
+      const keepRate = keepBase * this.keepAuraMultiplier(unit);
       const fatigue = (bestOfficer + bestGuard + keepRate) * dt;
       if (fatigue > 0) unit.fatigue = Math.max(0, unit.fatigue - fatigue);
       const keepHeal = unit.fortsClearOfEnemies() ? keepRate : 0;
-      const heal = (bestGuard + keepHeal) * dt;
-      if (heal > 0) this.applyHeal(unit, heal);
+      if (bestOfficer > 0) {
+        const gained = this.applyHeal(unit, bestOfficer * dt);
+        if (gained > 0) this.registerRestore(unit, "heal", gained);
+      }
+      if (bestGuard > 0) {
+        const gained = this.applyHeal(unit, bestGuard * dt);
+        if (gained > 0) this.registerRestore(unit, "heal", gained);
+      }
+      if (keepHeal > 0) {
+        const gained = this.applyHeal(unit, keepHeal * dt);
+        if (gained > 0) this.registerRestore(unit, "heal", gained);
+      }
     }
   }
 
@@ -4734,6 +4788,7 @@ export class GameSim {
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
       if (troop.hp <= 0) continue;
+      this.flushRestoreVisuals(troop);
       if (troop.lane === "bottom") {
         for (let c = 0; c < this.checkpoints.length; c += 1) {
           if (this.checkpoints[c].tryCapture(troop)) {
@@ -4746,20 +4801,48 @@ export class GameSim {
   }
 
   /**
-   * Restore health. Fractional points sit on the unit until a whole
-   * point lands, then a green + splat rises.
+   * Queue a restore + source for this tick. Blue = halt fatigue, green =
+   * health. Splat rate depends on how many sources are active.
+   */
+  registerRestore(unit, kind, amount) {
+    if (!unit || !(amount > 0)) return;
+    if (!unit.restoreSources) unit.restoreSources = [];
+    unit.restoreSources.push(kind);
+    unit.restoreAmount = (unit.restoreAmount || 0) + amount;
+  }
+
+  /**
+   * Spend the restore bank into alternating + splats.
+   * 1 source → quarter the old rate (threshold 4).
+   * 2 sources → half rate, alternating.
+   * 3+ sources → full rate, alternating.
+   */
+  flushRestoreVisuals(unit) {
+    const sources = unit.restoreSources;
+    const amount = unit.restoreAmount || 0;
+    unit.restoreSources = null;
+    unit.restoreAmount = 0;
+    if (!sources || !sources.length || !(amount > 0)) return;
+    unit.restoreBank = (unit.restoreBank || 0) + amount;
+    const n = sources.length;
+    const threshold = n >= 3 ? 1 : n === 2 ? 2 : 4;
+    while (unit.restoreBank >= threshold) {
+      unit.restoreBank -= threshold;
+      const kind = sources[(unit.restoreCycle || 0) % n];
+      unit.restoreCycle = (unit.restoreCycle || 0) + 1;
+      this.spawnSplat(unit.x, unit.y, threshold, kind === "fatigue" ? "fatigue" : "heal");
+    }
+  }
+
+  /**
+   * Restore health. Returns the amount actually gained. Callers register
+   * green + sources; this does not spawn splats on its own.
    */
   applyHeal(unit, amount) {
-    if (!unit || !(amount > 0) || unit.hp >= unit.maxHp) return;
+    if (!unit || !(amount > 0) || unit.hp >= unit.maxHp) return 0;
     const before = unit.hp;
     unit.hp = Math.min(unit.maxHp, unit.hp + amount);
-    const gained = unit.hp - before;
-    if (!(gained > 0)) return;
-    unit.healBank = (unit.healBank || 0) + gained;
-    if (unit.healBank < 1) return;
-    const shown = Math.floor(unit.healBank);
-    unit.healBank -= shown;
-    this.spawnSplat(unit.x, unit.y, shown, "heal");
+    return unit.hp - before;
   }
 
   /** Create a floating damage number at a world point. */

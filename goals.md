@@ -2,7 +2,7 @@
 
 # Ideas
 - officers make order sounds when near lines given orders
-- column. faster move in matching in line in same row.
+- column. faster move in matching in line in same row. might be too much micro?
 - change auto-orders, in python
 - Click, drag, long press (or rmb drag) to set a target
 - Reinforced Learning player
@@ -22,6 +22,8 @@
 
 # UI
 - 3d should always zoom in to fill screen with map
+
+# Units
 
 # Roadmap
 - terrain:

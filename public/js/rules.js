@@ -778,6 +778,41 @@ function drawHowtoPushback(ctx, w, h) {
   });
 }
 
+function drawHowtoRestore(ctx, w, h) {
+  clear(ctx, w, h);
+  const panels = cells(w, h, 2, 1);
+
+  const hurt = placeX("player", 2, 420, "troop", "halt");
+  hurt.hp = unitStats("troop").hp * 0.5;
+  hurt.fatigue = 40;
+  const foe = placeX("enemy", 2, 560, "troop");
+  vignette(ctx, panels[0], around([hurt, foe], 90, 50), "Half health · −25% damage", (frame) => {
+    drawGround(ctx);
+    drawUnit(ctx, hurt);
+    drawUnit(ctx, foe);
+    drawShot(ctx, (hurt.x + foe.x) / 2, hurt.y - 12);
+    zoomInk(ctx, frame, "−25%", (hurt.x + foe.x) / 2, hurt.y - 36, CONFIG.colors.splatMelee, 12);
+    zoomInk(ctx, frame, "+", hurt.x, hurt.y - 40, CONFIG.colors.splatFatigue, 16);
+  });
+
+  const guard = placeX("player", 2, 400, "officer");
+  guard.variant = "colorGuard";
+  guard.alternate = true;
+  const rallied = placeX("player", 2, 480, "troop", "halt");
+  rallied.hp = unitStats("troop").hp * 0.5;
+  const target = placeX("enemy", 2, 600, "troop");
+  vignette(ctx, panels[1], around([guard, rallied, target], 100, 50), "Color Guard · full damage", (frame) => {
+    drawGround(ctx);
+    drawUnit(ctx, guard);
+    drawUnit(ctx, rallied);
+    drawUnit(ctx, target);
+    drawShot(ctx, (rallied.x + target.x) / 2, rallied.y - 12);
+    zoomInk(ctx, frame, "full", (rallied.x + target.x) / 2, rallied.y - 36, CONFIG.colors.gold, 12);
+    zoomInk(ctx, frame, "+", rallied.x - 10, rallied.y - 40, CONFIG.colors.splatHeal, 16);
+    zoomInk(ctx, frame, "+", rallied.x + 12, rallied.y - 40, CONFIG.colors.splatFatigue, 16);
+  });
+}
+
 function drawHowtoSkirmishers(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 1);
@@ -903,6 +938,23 @@ const howtoPages = [
       },
     ],
     draw: drawHowtoSkirmishers,
+  },
+  {
+    title: "Wounds & Restore",
+    artHeight: 230,
+    blocks: [
+      {
+        kind: "ul",
+        items: [
+          "Missing health cuts damage at half that fraction (50% health → 25% less damage).",
+          "Officers and Color Guards each restore fatigue and health nearby (doubled when ahead).",
+          "Color Guard aura negates missing-health damage loss for friends.",
+          "Blue + while Halt recovers fatigue. Green + while health is restored from Officers, Color Guards, or keeps.",
+          "One restore source: + at quarter rate. Two: alternate at half rate. Three or more: alternate at full rate.",
+        ],
+      },
+    ],
+    draw: drawHowtoRestore,
   },
   {
     title: "Pushback",

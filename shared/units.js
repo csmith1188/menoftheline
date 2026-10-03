@@ -124,7 +124,8 @@ export const UNIT_STATS = {
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
-    restoreRate: 4,
+    restoreRate: 2,
+    restoreHealth: true,
     officerDamageMultiplier: 1,
   },
   // Alternates (same base type in play; white square behind the icon)
@@ -217,7 +218,10 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
   },
-  /** Officer that also restores health. */
+  /**
+   * Officer alternate: same fatigue/health restore as an Officer (half the
+   * old Color Guard rate). Friends in its aura ignore missing-health damage loss.
+   */
   colorGuard: {
     ...SHOT,
     hp: 50,
@@ -235,7 +239,7 @@ export const UNIT_STATS = {
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
-    restoreRate: 4,
+    restoreRate: 2,
     restoreHealth: true,
     officerDamageMultiplier: 1,
   },

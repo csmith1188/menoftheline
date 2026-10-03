@@ -18,7 +18,7 @@ export const UNIT_SUMMARIES = {
   cannon:
     "Field artillery that shoots a solid iron ball that bounces through lines of enemies.",
   officer:
-    "A Major keeps battalions together by keeping discipline.",
+    "A Major keeps battalions together — restoring fatigue and casualties nearby.",
   grenadier:
     "Elite heavy infantry. Hold the line under pressure and shrug off pushback.",
   rifle:
@@ -28,7 +28,7 @@ export const UNIT_SUMMARIES = {
   howitzer:
     "Loaded with cannister shot that blasts lines of soldiers who get too close.",
   colorGuard:
-    "Flag-bearers who rally the wounded as well as the weary. Keep a battered line on its feet.",
+    "Flag-bearers who restore the line like an Officer, and hold wounded friends at full damage in their aura.",
 };
 
 /** Base buy type for art (alternates share the base SVG). */
@@ -249,16 +249,14 @@ export function unitAbilityLines(type) {
   if (base === "officer" && (stats.restoreRange > 0 || stats.restoreRate > 0)) {
     const paces = CONFIG.officerRestorePaces;
     const rate = stats.restoreRate || 1;
-    if (stats.restoreHealth) {
-      lines.push(
-        `Restores fatigue and health to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
-      );
+    lines.push(
+      `Restores fatigue and health to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
+    );
+    if (type === "colorGuard") {
+      lines.push("Friends in this aura ignore damage loss from missing health.");
       lines.push("Does not stack with another Color Guard; stacks with one Officer.");
     } else {
-      lines.push(
-        `Restores fatigue to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
-      );
-      lines.push("A second Officer does not add more; only the stronger restore applies.");
+      lines.push("A second Officer does not add more; only the stronger restore applies. Stacks with one Color Guard.");
     }
   }
   if (base === "officer") {

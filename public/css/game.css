@@ -48,9 +48,10 @@ body {
   --board-top: 0px;
   --board-width: 100%;
   --board-height: 100%;
-  --top-lane-left: 7.5%;
+  /* Fallback: between keeps (capital ± radius+8) on the 960×620 board. */
+  --top-lane-left: 11.875%;
   --top-lane-top: 15.16%;
-  --top-lane-width: 85%;
+  --top-lane-width: 76.25%;
   --top-lane-height: 18.06%;
 }
 
@@ -83,20 +84,20 @@ body {
 
 .tutorial {
   /* Scale type from the top-lane band so the panel stays inside it on phones. */
-  --tutorial-size: clamp(8px, calc(var(--top-lane-height, 112px) * 0.12), 15px);
+  --tutorial-size: clamp(10px, calc(var(--top-lane-height, 112px) * 0.155), 18px);
   position: absolute;
   z-index: 3;
-  left: var(--top-lane-left, calc(var(--board-left) + var(--board-width) * 0.075));
+  left: var(--top-lane-left, calc(var(--board-left) + var(--board-width) * 0.11875));
   top: var(--top-lane-top, calc(var(--board-top) + var(--board-height) * 0.1516));
-  width: var(--top-lane-width, calc(var(--board-width) * 0.85));
+  width: var(--top-lane-width, calc(var(--board-width) * 0.7625));
   max-width: none;
   height: var(--top-lane-height, calc(var(--board-height) * 0.1806));
   max-height: var(--top-lane-height, calc(var(--board-height) * 0.1806));
   box-sizing: border-box;
-  padding: calc(var(--tutorial-size) * 0.45) calc(var(--tutorial-size) * 0.7);
+  padding: calc(var(--tutorial-size) * 0.35) calc(var(--tutorial-size) * 0.55);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--tutorial-size) * 0.3);
+  gap: calc(var(--tutorial-size) * 0.22);
   background: rgba(18, 24, 32, 0.92);
   border: 1px solid color-mix(in srgb, #c9b27a 55%, transparent);
   color: #e8dfc8;

@@ -2,7 +2,7 @@
 
 Each unit has its own health, ranges, damage, speeds, and pushback. Each type has an alternate that counts as the same type for forming a line, with its own name, numbers, and ability. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
 
-- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
+- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. Advancing Troops that newly walk into Perfect Line with a Halted or Reforming Troop on an adjacent row take that Halt or Reform on themselves alone (order passing). See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
 
 - **Grenadiers:** are tougher and take half pushback from shooting and melee. See [[Melee]] and [[Shooting]].
 
@@ -16,9 +16,9 @@ Each unit has its own health, ranges, damage, speeds, and pushback. Each type ha
 
 - **Howitzers:** Instead fire at one target in every row of their lane. The keep counts as being only in the middle row, so a volley hits it at most once. They also recoil when they fire. See [[Shooting]].
 
-- **Officer:** Troops, Dragoons, Guns, and Officers avoid shooting Officers while another unit type is in range. An Officer restores fatigue to friends within 50 paces on every row of its lane. The restore is doubled for friends behind the Officer. A second Officer does not add more; only the stronger restore applies. See [[Shooting]] and [[Fatigue and Breaking]].
+- **Officer:** Troops, Dragoons, Guns, and Officers avoid shooting Officers while another unit type is in range. An Officer restores fatigue and health to friends within 60 paces on every row of its lane. The restore is doubled for friends behind the Officer. A second Officer does not add more; only the stronger restore applies. One Officer and one Color Guard do stack. See [[Shooting]], [[Fatigue and Breaking]], and [[Damage]].
 
-- **Color Guard:** An Officer that also restores health in that same area, doubled the same way. Color Guards do not stack with each other. One Officer and one Color Guard do stack. See [[Fatigue and Breaking]].
+- **Color Guard:** Restores fatigue and health the same way an Officer does (same rate, same reach, doubled when ahead). Color Guards do not stack with each other. Friends inside a Color Guard's restore aura ignore damage loss from missing health. See [[Fatigue and Breaking]] and [[Damage]].
 
 - **Keep:** Each player starts with a keep. It does not move, take orders, or get built. It sits at the end of every row of both lanes. Its combat is fixed: town research does not change its gun damage, fire rate, or hit points, and Defense ranks do not reduce damage it takes. It shoots, and it can shoot a unit that is in melee. Its gun applies Field Gun shooting pushback to units it hits; the Keep itself never recoils and never takes pushback. Ranged units may shoot the keep even while friendlies are meleeing it. If your keep is destroyed, you lose. See [[The Map]], [[Shooting]], [[Melee]], and [[Towns]].
 

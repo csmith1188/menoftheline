@@ -10,7 +10,7 @@ import {
 /** Short real-life role + tactical purpose for each spawn key. */
 export const UNIT_SUMMARIES = {
   troop:
-    "Line infantry — the backbone of the army. Hold formation and trade fire with weight of numbers.",
+    "Line infantry — the backbone of the army. Hold formation, trade fire with weight of numbers, and dress onto Halt or Reform by walking into Perfect Line.",
   skirmisher:
     "Light infantry that fights in open order. Harass, screen, and pick at the enemy from flexible positions.",
   dragoon:
@@ -18,7 +18,7 @@ export const UNIT_SUMMARIES = {
   cannon:
     "Field artillery that shoots a solid iron ball that bounces through lines of enemies.",
   officer:
-    "A Major keeps battalions toeghether by keeping discipline.",
+    "A Major keeps battalions together — restoring fatigue and casualties nearby.",
   grenadier:
     "Elite heavy infantry. Hold the line under pressure and shrug off pushback.",
   rifle:
@@ -28,7 +28,7 @@ export const UNIT_SUMMARIES = {
   howitzer:
     "Loaded with cannister shot that blasts lines of soldiers who get too close.",
   colorGuard:
-    "Flag-bearers who rally the wounded as well as the weary. Keep a battered line on its feet.",
+    "Flag-bearers who restore the line like an Officer, and hold wounded friends at full damage in their aura.",
 };
 
 /** Base buy type for art (alternates share the base SVG). */
@@ -207,6 +207,11 @@ export function unitAbilityLines(type) {
       `Line shooting bonus: +${pct(stats.lineBonus)} per other eligible troop in the line (not vs Skirmishers/Rifles).`,
     );
   }
+  if (base === "troop") {
+    lines.push(
+      "Order passing: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them lets that Troop walk past without re-inheriting.",
+    );
+  }
   if (type === "grenadier") {
     lines.push("Takes half pushback from shooting and melee.");
   }
@@ -249,16 +254,14 @@ export function unitAbilityLines(type) {
   if (base === "officer" && (stats.restoreRange > 0 || stats.restoreRate > 0)) {
     const paces = CONFIG.officerRestorePaces;
     const rate = stats.restoreRate || 1;
-    if (stats.restoreHealth) {
-      lines.push(
-        `Restores fatigue and health to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
-      );
+    lines.push(
+      `Restores fatigue and health to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
+    );
+    if (type === "colorGuard") {
+      lines.push("Friends in this aura ignore damage loss from missing health.");
       lines.push("Does not stack with another Color Guard; stacks with one Officer.");
     } else {
-      lines.push(
-        `Restores fatigue to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
-      );
-      lines.push("A second Officer does not add more; only the stronger restore applies.");
+      lines.push("A second Officer does not add more; only the stronger restore applies. Stacks with one Color Guard.");
     }
   }
   if (base === "officer") {

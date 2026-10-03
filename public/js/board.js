@@ -1182,7 +1182,7 @@ function overlapsOwnCapital(troop) {
 
 /**
  * "color" while a color guard is restoring this unit, "officer" for a
- * plain officer, or null when nobody nearby is restoring fatigue.
+ * plain officer, or null when nobody nearby is restoring.
  */
 function underOfficerRestore(troop, allies) {
   let found = null;
@@ -1192,7 +1192,7 @@ function underOfficerRestore(troop, allies) {
     const stats = troopKindStats(ally);
     if (!(stats.restoreRate > 0) || !(stats.restoreRange > 0)) continue;
     if (distance(troop, ally) > stats.restoreRange) continue;
-    if (stats.restoreHealth) return "color";
+    if (ally.variant === "colorGuard") return "color";
     found = "officer";
   }
   return found;
@@ -1272,19 +1272,20 @@ function activeBonuses(board, troop, allies) {
   // }
 
   const restore = underOfficerRestore(troop, allies);
-  // if (troop.broken) {
-  //   labels.push("Rallying");
-  // } else if (troop.order === "charge" || troop.order === "retreat"
-  //     || inMeleeContact(troop, enemies)) {
-  //   labels.push("Fatigue rising");
-  // } else
+  const maxHp = troop.maxHP ? troop.maxHP() : troopKindStats(troop).hp;
+  const hpPct = maxHp > 0 ? Math.max(0, Math.min(1, troop.hp / maxHp)) : 1;
   if (restore === "color") {
     labels.push("Color restore");
-  } else if (restore === "officer") {
+  } else if (hpPct < 1) {
+    const loss = Math.round((1 - hpPct) * CONFIG.missingHealthDamageRatio * 100);
+    if (loss > 0) labels.push(`Wounded −${loss}% dmg`);
+  }
+  if (restore === "officer") {
     labels.push("Officer restore");
-  } else if (inCapitalRange(troop)) {
+  }
+  if (restore !== "color" && restore !== "officer" && inCapitalRange(troop)) {
     labels.push("Recovering");
-  } else if (troop.order === "halt") {
+  } else if (restore !== "color" && restore !== "officer" && troop.order === "halt") {
     labels.push("Recovering");
   }
 

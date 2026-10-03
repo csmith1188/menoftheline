@@ -30,13 +30,15 @@ function drawSplat(ctx, splat) {
   const fade = Math.max(0, 1 - splat.age / CONFIG.splatLife);
   const shown = Math.round(splat.amount * 10) / 10;
   const num = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
-  // const text = splat.kind === "heal" ? `+${num}` : num;
-  const text = splat.kind === "heal" ? `+` : num;
+  const restore = splat.kind === "heal" || splat.kind === "fatigue";
+  const text = restore ? `+` : num;
   const fill = splat.kind === "melee"
     ? CONFIG.colors.splatMelee
     : splat.kind === "heal"
       ? CONFIG.colors.splatHeal
-      : CONFIG.colors.splatShoot;
+      : splat.kind === "fatigue"
+        ? CONFIG.colors.splatFatigue
+        : CONFIG.colors.splatShoot;
   ctx.save();
   ctx.globalAlpha = fade;
   ctx.font = "bold 14px Trebuchet MS, sans-serif";

@@ -1,0 +1,21 @@
+name: Cursor Branch Sync
+
+on:
+  create:
+  delete:
+  push:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sync:
+    runs-on: [self-hosted, Windows]
+    steps:
+      - name: Forward event to local branch sync
+        working-directory: C:\Users\Samisu\Documents\GitHub\cursor-helper
+        shell: cmd
+        run: node src\cli.js

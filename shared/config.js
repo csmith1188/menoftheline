@@ -162,8 +162,19 @@ export const CONFIG = {
   fortDistancePaces: 250,
   /** Officer and color-guard restore reach, in paces along the lane. */
   officerRestorePaces: 60,
+  /**
+   * Keep aura restore uses this base rate × band multiplier (3 / 2 / 1).
+   * Kept separate from Officer/Color Guard restoreRate so keep strength
+   * does not change when those units are balanced.
+   */
+  keepRestoreBase: 4,
   /** Keep restore bands, in paces from that side's keep. Inner band is the strongest. */
   keepAuraPaces: [40, 80, 120],
+  /**
+   * Missing-health damage loss: each 2% of health missing costs 1% damage.
+   * At 50% health, damage is reduced by 25%. Color Guard aura negates this.
+   */
+  missingHealthDamageRatio: 0.5,
   /** Flat fatigue added when hit in melee or when making a melee attack. */
   fatigueOnMelee: 2,
   /** Pushback counter points needed to force one pace back. */
@@ -449,8 +460,10 @@ export const CONFIG = {
     splatShoot: "#ffe27a",
     /** Damage number for a melee hit. */
     splatMelee: "#ff5a4a",
-    /** Heal number for a color-guard restore. */
+    /** Heal + for health restore (keeps / officers / color guard). */
     splatHeal: "#9ee07a",
+    /** Fatigue + while recovering from Halt. */
+    splatFatigue: "#7ec8ff",
     /** Unit fatigue bar fill. */
     fatigue: "#5b9fd4",
     /** Outline behind a damage number. */

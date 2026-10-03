@@ -1,9 +1,8 @@
 # Bugs
 
 # Ideas
+- fort melee bonus if enemy is not also in it
 - officers make order sounds when near lines given orders
-- column. faster move in matching in line in same row.
-- change auto-orders, in python
 - Click, drag, long press (or rmb drag) to set a target
 - Reinforced Learning player
 - Game -> Client API
@@ -12,6 +11,11 @@
 - Wiki Categories
 
 # Feature
+- no long press. click to select.
+- select lines by dragging across the lane in a line
+- select columns by dragging across a row in a line
+- telescope mode: swipe on the green field to pan. tap to zoom out. swiping no longer switches lanes
+
 - ~~Remove Grand Strategies?~~ (disabled; Bastion default; restore in another mode)
 - Late game land?
 - Add more game metrics
@@ -19,9 +23,12 @@
     Average length of game
     Tickets spent
 - Music
+- Game mode to play by programming each unit and keep's orders
 
 # UI
 - 3d should always zoom in to fill screen with map
+
+# Units
 
 # Roadmap
 - terrain:
@@ -31,6 +38,7 @@
     - river -> allow infantry, blocks horse and gun
     - peaks -> block los unless inside, slow infantry, blocks horse and gun
     - bridge -> cannot switch lanes
+    - fort blocks los
 - Bottom Lane Units
     - Militiamen
         - Cheap troop for spam with poor endurance and discipline

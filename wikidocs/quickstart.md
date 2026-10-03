@@ -22,5 +22,6 @@
 - Swipe forward to Charge
 - Swipe back to Fall Back
 - Long press or right-click a single unit to issue orders to only that unit (ignore lines)
+- Advancing Troops that walk into Perfect Line with a Halted or Reforming Troop next door take that order alone. See [[Orders]].
 
 What each order does is on [[Orders]].

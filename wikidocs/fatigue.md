@@ -6,9 +6,11 @@ Every unit starts with an empty fatigue bar that fills at 100.
 - Being hit in melee adds 2 fatigue.
 - Being shot adds 4 fatigue. See [[Shooting]].
 - Charging, Retreating, or standing in melee adds fatigue over time. See [[Orders]].
-- Halting removes fatigue over time.
+- Halting removes fatigue over time. Blue + signs rise while Halt recovers fatigue.
 - When a pushback pace cannot move the unit back because a friendly blocks it, that pace still counts and adds fatigue (guns ignore fatigue on blocked recoil). See [[Melee]] and [[Shooting]].
-- Your keep restores fatigue while you are in range. It also restores health, but only while no enemy stands behind either of your forts. Officers and the keep's restore are on [[Units]].
+- Your keep restores fatigue while you are in range. It also restores health, but only while no enemy stands behind either of your forts. Green + signs rise while health is restored. Officers, Color Guards, and the keep's restore are on [[Units]].
+
+**Restore + signs.** Health restore shows green +. Halt fatigue restore shows blue +. With one restore source active, + signs appear at a quarter of the old heal rate. With two sources, they alternate at half rate. With three or more, they alternate at full rate (for example blue/green, green/green, or blue/green/green).
 
 When a unit is hit, roll from 1 to 100. If the roll is less than its fatigue percent minus its remaining health percent, it becomes Broken.
 

@@ -29,7 +29,7 @@ export const TUTORIAL_STEPS = [
   {
     id: "advance",
     title: "Advance",
-    body: "Click a unit that is stopped (halted or reformed) to Advance. Units will stop to shoot anything within half their range.",
+    body: "Click a unit that is stopped (halted or reformed) to Advance. Units will stop to shoot anything within half their range. Advancing Troops that walk into Perfect Line with a Halted or Reforming Troop next door take that order alone.",
   },
   {
     id: "town",

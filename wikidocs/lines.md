@@ -6,3 +6,5 @@ When you select a unit, it looks in adjacent rows for units of the same type tha
 If two units in the same adjacent row both qualify, the one whose center is closer is the one in the line.
 
 An order given to a unit is also given to the rest of its line. See [[Orders]]. The unit you touched is the selected unit. The others are subselected. A long press selects only that unit. Later orders stay on it alone until you give an order to a different unit. See [[Giving Orders]].
+
+Troop order passing is separate: an Advancing Troop that newly enters Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them does not re-inherit at Perfect Line, so that Troop can walk past. It does not hand the order down the combat line. Perfect Line is on [[The Map]]. Order passing is on [[Orders]].

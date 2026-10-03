@@ -369,8 +369,11 @@ const boardMethods = {
     const left = (availW - cssW) / 2;
     const top = (availH - cssH) / 2;
     const laneTop = CONFIG.playerCapital.y - CONFIG.topLaneHeight / 2;
-    const laneLeft = CONFIG.playerCapital.x;
-    const laneWidth = CONFIG.enemyCapital.x - CONFIG.playerCapital.x;
+    // Inset past each keep so the tutorial sits in the gap between capitals.
+    const keepClear = CONFIG.capitalRadius + 8;
+    const laneLeft = CONFIG.playerCapital.x + keepClear;
+    const laneRight = CONFIG.enemyCapital.x - keepClear;
+    const laneWidth = Math.max(0, laneRight - laneLeft);
     stage.style.setProperty("--board-left", `${left}px`);
     stage.style.setProperty("--board-top", `${top}px`);
     stage.style.setProperty("--board-width", `${cssW}px`);

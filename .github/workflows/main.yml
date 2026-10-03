@@ -5,10 +5,10 @@ on:
   delete:
   push:
   pull_request:
-    types: [closed]
+    types: [opened, ready_for_review, reopened, closed]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 
 jobs:

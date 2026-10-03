@@ -137,7 +137,7 @@ export const CONFIG = {
    * Fatigue lost per second while halted (outside own keep range).
    * Charge or melee contact uses fatigueCombatRate to gain instead.
    */
-  fatigueIdleRate: 1,
+  fatigueIdleRate: 2,
   /** Fatigue per second while charging or in melee contact (not stacked). */
   fatigueCombatRate: 4,
   /** Flat fatigue added when hit by a ranged shot. */
@@ -178,9 +178,9 @@ export const CONFIG = {
   /** Flat fatigue added when hit in melee or when making a melee attack. */
   fatigueOnMelee: 2,
   /** Pushback counter points needed to force one pace back. */
-  pushbackPerPace: 1.5,
+  pushbackPerPace: 2,
   /** Fatigue added when a melee/hit pushback pace is blocked behind. */
-  fatiguePerPace: 1,
+  fatiguePerPace: 0.5,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
   /** Incoming damage removed while overlapping your fort in this lane. */

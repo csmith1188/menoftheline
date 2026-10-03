@@ -16,7 +16,7 @@ import { CONFIG } from "./config.js";
  */
 const SHOT = {
   shootingPushback: 1,
-  meleePushback: 1,
+  meleePushback: 2,
   pushbackTakenFactor: 1,
   chargeMultiplier: 1.2,
   projectileSize: 4,
@@ -195,7 +195,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
-    meleePushback: 2,
+    meleePushback: 4,
   },
   /** Cannon: shorter reach, cannister — one shell per in-range row, no splash. */
   howitzer: {

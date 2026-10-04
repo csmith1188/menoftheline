@@ -66,7 +66,7 @@ export async function initDb() {
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     tooltips INTEGER NOT NULL DEFAULT 1,
-    bgm_volume INTEGER NOT NULL DEFAULT 100,
+    bgm_volume INTEGER NOT NULL DEFAULT 50,
     created_at INTEGER NOT NULL
   )`);
   await run(`CREATE TABLE IF NOT EXISTS accounts (
@@ -78,7 +78,7 @@ export async function initDb() {
     wins INTEGER NOT NULL DEFAULT 0,
     losses INTEGER NOT NULL DEFAULT 0,
     tooltips INTEGER NOT NULL DEFAULT 1,
-    bgm_volume INTEGER NOT NULL DEFAULT 100,
+    bgm_volume INTEGER NOT NULL DEFAULT 50,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -146,14 +146,14 @@ export async function initDb() {
     await run("ALTER TABLE accounts ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
   }
   if (!accountCols.some((col) => col.name === "bgm_volume")) {
-    await run("ALTER TABLE accounts ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 100");
+    await run("ALTER TABLE accounts ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 50");
   }
   const userCols = await all("PRAGMA table_info(users)");
   if (!userCols.some((col) => col.name === "tooltips")) {
     await run("ALTER TABLE users ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
   }
   if (!userCols.some((col) => col.name === "bgm_volume")) {
-    await run("ALTER TABLE users ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 100");
+    await run("ALTER TABLE users ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 50");
   }
   await seedWikiHome();
 }
@@ -363,14 +363,14 @@ export function tooltipsEnabled(row) {
   return Number(row.tooltips) !== 0;
 }
 
-/** Clamp a music slider percent (0–50) for storage. */
+/** Clamp a music slider percent (0–100) for storage. */
 export function clampBgmVolumePercent(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 50;
-  return Math.max(0, Math.min(50, Math.round(n)));
+  return Math.max(0, Math.min(100, Math.round(n)));
 }
 
-/** Music slider percent (0–50) stored on an account or guest row. */
+/** Music slider percent (0–100) stored on an account or guest row. Default 50. */
 export function bgmVolumePercent(row) {
   if (!row || row.bgm_volume == null) return 50;
   return clampBgmVolumePercent(row.bgm_volume);

@@ -90,6 +90,10 @@ function readStoredVolume() {
   }
 }
 
+const BGM_DEFAULT_VOLUME = 0.5;
+/** Wait after match start so the BGM download does not collide with the first state flood. */
+const BGM_START_DELAY_MS = 800;
+
 function readStoredBgmVolume() {
   const rawDefault = typeof document !== "undefined" && document.body
     ? document.body.dataset.bgmVolumeDefault
@@ -100,10 +104,10 @@ function readStoredBgmVolume() {
   }
   try {
     const raw = localStorage.getItem(BGM_VOLUME_KEY);
-    if (raw == null) return 1;
+    if (raw == null) return BGM_DEFAULT_VOLUME;
     return clampVolume(raw);
   } catch (err) {
-    return 1;
+    return BGM_DEFAULT_VOLUME;
   }
 }
 
@@ -280,16 +284,24 @@ const MatchBgm = {
   el: null,
   volume: readStoredBgmVolume(),
   wanted: false,
+  startTimer: null,
 
   applyGain() {
     if (this.el) this.el.volume = this.volume * BGM_MAX_GAIN;
+  },
+
+  clearStartTimer() {
+    if (this.startTimer == null) return;
+    clearTimeout(this.startTimer);
+    this.startTimer = null;
   },
 
   ensure() {
     if (this.el) return this.el;
     const el = new Audio();
     el.loop = true;
-    el.preload = "auto";
+    // Avoid preload=auto: that eagerly pulls multi-MB audio over the game host.
+    el.preload = "metadata";
     el.src = pickBgmSrc();
     this.el = el;
     this.applyGain();
@@ -304,12 +316,11 @@ const MatchBgm = {
     } catch (err) {
       // Storage can be blocked; the in-memory level still applies this session.
     }
-    if (this.wanted && this.volume > 0) this.start();
+    if (this.wanted && this.volume > 0) this.playNow();
     else if (this.wanted && this.volume <= 0 && this.el) this.el.pause();
   },
 
-  start() {
-    this.wanted = true;
+  playNow() {
     const el = this.ensure();
     this.applyGain();
     if (this.volume <= 0) {
@@ -321,7 +332,23 @@ const MatchBgm = {
     if (play && typeof play.catch === "function") play.catch(() => {});
   },
 
+  /** Arm playback; actual start is deferred so match-start sockets stay snappy. */
+  start() {
+    if (this.wanted && (this.startTimer != null || (this.el && !this.el.paused))) {
+      this.wanted = true;
+      return;
+    }
+    this.wanted = true;
+    this.clearStartTimer();
+    this.startTimer = setTimeout(() => {
+      this.startTimer = null;
+      if (!this.wanted) return;
+      this.playNow();
+    }, BGM_START_DELAY_MS);
+  },
+
   stop() {
+    this.clearStartTimer();
     if (!this.wanted && (!this.el || this.el.paused)) {
       this.wanted = false;
       return;
@@ -334,10 +361,8 @@ const MatchBgm = {
 
   unlock() {
     if (!this.wanted || this.volume <= 0) return;
-    const el = this.ensure();
-    if (!el.paused) return;
-    const play = el.play();
-    if (play && typeof play.catch === "function") play.catch(() => {});
+    if (this.startTimer != null) return;
+    this.playNow();
   },
 };
 
@@ -360,10 +385,6 @@ export function getBgmVolume() {
 
 export function setBgmVolume(value) {
   MatchBgm.setVolume(value);
-}
-
-export function preloadMatchBgm() {
-  MatchBgm.ensure();
 }
 
 export function startMatchBgm() {

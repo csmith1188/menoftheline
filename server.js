@@ -97,6 +97,11 @@ app.get("/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json");
   res.sendFile(path.join(root, "public", "manifest.webmanifest"));
 });
+// Long-cache match music so return visits skip the multi-MB download on the game host.
+app.use("/bgm", express.static(path.join(root, "public", "bgm"), {
+  maxAge: "7d",
+  fallthrough: false,
+}));
 app.use(express.static(path.join(root, "public")));
 
 function adminId() {
@@ -818,7 +823,7 @@ app.get("/play", async (req, res, next) => {
     res.render(use3d ? "play3d" : "index", {
       debugRanges: process.env.DEBUG_RANGES === "1",
       tooltipsDefault: player.tooltips !== false,
-      bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 100,
+      bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 50,
     });
   } catch (err) {
     next(err);

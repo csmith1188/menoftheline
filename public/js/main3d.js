@@ -16,7 +16,6 @@ import {
   playSounds,
   setBgmVolume,
   setSoundVolume,
-  preloadMatchBgm,
   startMatchBgm,
   stopMatchBgm,
   unlockAudio,
@@ -132,7 +131,8 @@ terrainLabelsBtn.addEventListener("click", () => {
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
-let bgmBeforeMute = getBgmVolume() > 0 ? getBgmVolume() : 1;
+let bgmBeforeMute = getBgmVolume() > 0 ? getBgmVolume() : 0.5;
+let lastBgmStatus = null;
 let syncingBotUi = false;
 /** Sim side for debug bot games only; null uses seat for multiplayer mirror. */
 let controlSide = null;
@@ -156,11 +156,11 @@ function syncBgmUi() {
 }
 
 function syncMatchBgm() {
-  if (board.status === "playing") startMatchBgm();
-  else {
-    stopMatchBgm();
-    if (board.status === "countdown") preloadMatchBgm();
-  }
+  const status = board.status;
+  if (status === lastBgmStatus) return;
+  lastBgmStatus = status;
+  if (status === "playing") startMatchBgm();
+  else stopMatchBgm();
 }
 
 function applyBotSettingsUi(settings) {
@@ -234,7 +234,7 @@ bgmMute.addEventListener("click", () => {
     bgmBeforeMute = getBgmVolume();
     setBgmVolume(0);
   } else {
-    setBgmVolume(bgmBeforeMute > 0 ? bgmBeforeMute : 1);
+    setBgmVolume(bgmBeforeMute > 0 ? bgmBeforeMute : 0.5);
   }
   syncBgmUi();
   persistBgmVolume();
@@ -477,6 +477,7 @@ socket.on("state", (snap) => {
 socket.on("replaced", () => {
   replaced = true;
   stopMatchBgm();
+  lastBgmStatus = null;
   lobbyMessage = "This match is open in another tab.";
   lobby.classList.remove("hidden");
   lobbyLeave.classList.remove("hidden");
@@ -496,6 +497,7 @@ socket.on("go-home", () => {
 socket.on("disconnect", () => {
   if (replaced || leaving) return;
   stopMatchBgm();
+  lastBgmStatus = null;
   lobbyMessage = "Connection lost. Reload to rejoin.";
   lobby.classList.remove("hidden");
   lobbyLeave.classList.remove("hidden");

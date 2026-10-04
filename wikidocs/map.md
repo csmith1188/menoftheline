@@ -40,13 +40,13 @@ Matches use a named map preset (default map below). Terrain footprints sit on sp
 
 **Woods** (🌲). Hide units inside unless you also have a unit in that woods. A unit inside can see into and past the woods. Units in woods have cover. All units move slower in woods.
 
-**River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter.
+**River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter. Broken artillery steps onto a clear adjacent row (the bridge row when present) to keep withdrawing.
 
-**Peaks** (🗻). Block LOS. Slow infantry; cavalry and artillery cannot enter.
+**Peaks** (🗻). Block LOS. Slow infantry; cavalry and artillery cannot enter. Broken cavalry and artillery step to a clear adjacent row to keep withdrawing around the peak.
 
 **Bridge** (🌉). Normal movement; does not block LOS (cosmetic pathing on that row).
 
-**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Enemies you are in melee with are always shown. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Reveal and hide update each tick.
+**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Shots from a hidden enemy still appear in flight. Enemies you are in melee with are always shown. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Reveal and hide update each tick.
 
 **Cresting a segment.** Once any of your units on that lane is past the centerline of the terrain that closes off a gap (and not yet into the footprint of the terrain on the far side of that gap), you can see into that open segment on every row of the lane — not only the row your unit stands on. Example: a unit on the outer bottom row just past a forest toward the river can see the inner-row gap between the peak and the next forest, but not the earlier outer-row gap between the two forests behind it.
 

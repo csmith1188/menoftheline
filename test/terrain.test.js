@@ -14,6 +14,7 @@ import {
   moveSpeedFactor,
   onTerrain,
   openSegmentAt,
+  playerPacesOf,
   shootRangeFactor,
   terrainCover,
   unitsInMeleeContact,
@@ -57,7 +58,7 @@ describe("terrain map preset", () => {
     const hillNw = features.find((f) => f.id === "hill-top-nw");
     assert.ok(hillNw);
     assert.deepEqual(hillNw.sublanes, [0, 1]);
-    assert.equal(hillNw.centerPaces, (CONFIG.topLanePaces * 2) / 5);
+    assert.equal(hillNw.centerPaces, (CONFIG.topLanePaces * 1) / 3);
   });
 });
 
@@ -293,6 +294,31 @@ describe("fog snapshot", () => {
     assert.ok(foggedFeatureIds("player", troopsBySide(sim)).length > 0);
   });
 
+  it("still shows projectiles fired by a fogged enemy attacker", () => {
+    const sim = makeTerrainSim();
+    const woods = featureById("woods-bottom-outer-a").centerPaces;
+    const hidden = spawn(sim, "enemy", "troop", "bottom", {
+      progress: progressFromPlayerPaces("enemy", "bottom", woods),
+      sublane: 0,
+    });
+    hidden.progress = progressFromPlayerPaces("enemy", "bottom", woods);
+    hidden.syncPosition();
+    const target = spawn(sim, "player", "troop", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", woods - 80),
+      sublane: 0,
+    });
+    target.progress = progressFromPlayerPaces("player", "bottom", woods - 80);
+    target.syncPosition();
+
+    assert.equal(isEnemyVisible("player", hidden, troopsBySide(sim)), false);
+    hidden.fire(target, sim.enemy.troops, sim.projectiles, "shoot");
+    assert.ok(sim.projectiles.length >= 1);
+
+    const fogged = sim.snapshot({ forSideId: "player" });
+    assert.equal(fogged.sides.enemy.troops.length, 0);
+    assert.ok(fogged.projectiles.length >= 1);
+  });
+
   it("reveals an enemy standing on a hill footprint when LOS reaches it", () => {
     const sim = makeTerrainSim();
     const hill = featureById("hill-top-nw").centerPaces;
@@ -401,5 +427,80 @@ describe("fog snapshot", () => {
     assert.ok(acrossRiver);
     assert.ok(acrossRiver.minPaces < river.centerPaces);
     assert.ok(acrossRiver.maxPaces > river.centerPaces);
+  });
+});
+
+function stepSim(sim, dt = 1 / 30) {
+  sim.beginStep(dt);
+  sim.finishStep(dt);
+}
+
+describe("broken terrain bypass", () => {
+  it("routes a broken dragoon around a peak onto another row", () => {
+    const sim = makeTerrainSim();
+    const peak = featureById("peak-bottom-inner-a");
+    const half = fortFootprintPaces();
+    // Far side of the peak (toward the enemy keep), retreating home.
+    const startPaces = peak.centerPaces + half + 8;
+    const horse = spawn(sim, "player", "dragoon", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", startPaces),
+      sublane: 2,
+    });
+    horse.progress = progressFromPlayerPaces("player", "bottom", startPaces);
+    horse.syncPosition();
+    horse.breakUnit();
+    assert.equal(horse.broken, true);
+    assert.equal(horse.order, "retreat");
+
+    const startProgress = horse.progress;
+    let changedRow = false;
+    for (let i = 0; i < 180; i += 1) {
+      stepSim(sim);
+      if (horse.sublane !== 2) {
+        changedRow = true;
+        break;
+      }
+      // Must not stay pinned forever at the peak edge.
+      if (i > 60 && horse.progress >= startProgress - 1e-6) break;
+    }
+    assert.equal(changedRow, true, "broken dragoon should leave the peak row");
+    assert.ok(horse.progress < startProgress, "should keep withdrawing after the sidestep");
+  });
+
+  it("routes a broken cannon onto the bridge row past a river", () => {
+    const sim = makeTerrainSim();
+    const river = featureById("river-bottom-outer");
+    const half = fortFootprintPaces();
+    const startPaces = river.centerPaces + half + 8;
+    const gun = spawn(sim, "player", "cannon", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", startPaces),
+      sublane: 0,
+    });
+    gun.progress = progressFromPlayerPaces("player", "bottom", startPaces);
+    gun.syncPosition();
+    gun.breakUnit();
+
+    const startProgress = gun.progress;
+    let onBridge = false;
+    for (let i = 0; i < 240; i += 1) {
+      stepSim(sim);
+      if (gun.sublane === 1) {
+        onBridge = true;
+        break;
+      }
+      if (i > 90 && gun.progress >= startProgress - 1e-6) break;
+    }
+    assert.equal(onBridge, true, "broken cannon should move to the bridge row");
+    // Continue until it has withdrawn past the river center toward its keep.
+    for (let i = 0; i < 240; i += 1) {
+      stepSim(sim);
+      const paces = playerPacesOf(gun);
+      if (paces < river.centerPaces - half) break;
+    }
+    const paces = playerPacesOf(gun);
+    assert.ok(
+      paces < river.centerPaces - half,
+      "cannon should withdraw past the river via the bridge",
+    );
   });
 });

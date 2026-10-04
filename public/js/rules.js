@@ -916,7 +916,7 @@ const howtoPages = [
           "Swipe forward to Charge.",
           "Swipe back to Fall Back.",
           "Long press or right-click a single unit to issue orders to only that unit (ignore lines).",
-          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
+          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
         ],
       },
     ],
@@ -931,7 +931,7 @@ const howtoPages = [
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
           "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
-          "Among same-priority targets In Line across rows, aim at the nearer row (then closer).",
+          "Among same-priority targets In Line across rows, aim at the nearer row (then closer). The keep counts as your row.",
           "Troop line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",

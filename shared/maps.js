@@ -70,14 +70,14 @@ const DEFAULT_LAYOUT = [
     kind: "hill",
     lane: "top",
     sublanes: [0, 1],
-    centerPaces: (CONFIG.topLanePaces * 2) / 5,
+    centerPaces: (CONFIG.topLanePaces * 1) / 3,
   }),
   feature({
     id: "hill-top-se",
     kind: "hill",
     lane: "top",
     sublanes: [3, 4],
-    centerPaces: (CONFIG.topLanePaces * 3) / 5,
+    centerPaces: (CONFIG.topLanePaces * 2) / 3,
   }),
 
   // Bottom — left of center

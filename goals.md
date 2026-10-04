@@ -1,21 +1,20 @@
 # Bugs
 
 # Ideas
-- ~~Total line bonus based on how perfect your line is~~
-- fort melee bonus if enemy is not also in it
 - officers make order sounds when near lines given orders
-- Click, drag, long press (or rmb drag) to set a target
 - Reinforced Learning player
 - Game -> Client API
 - Site Services -> Client API (play without ever visiting site)
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories
+- Line select. Probably won't do because micro feels kinda good
+    - could make columns good (move faster in column) and in turn, field guns
+    - no long press. click to select.
+    - select lines by dragging across the lane in a line
+    - select columns by dragging across a row in a line
+    - telescope mode: swipe on the green field to pan. tap to zoom out. swiping no longer switches lanes
 
 # Feature
-- no long press. click to select.
-- select lines by dragging across the lane in a line
-- select columns by dragging across a row in a line
-- telescope mode: swipe on the green field to pan. tap to zoom out. swiping no longer switches lanes
 
 - ~~Remove Grand Strategies?~~ (disabled; Bastion default; restore in another mode)
 - Late game land?
@@ -32,14 +31,6 @@
 # Units
 
 # Roadmap
-- ~~terrain:~~ (shipped: named map presets, LOS/fog, hills/woods/river/peaks/bridge/fort; bridge is cosmetic — not lane-lock)
-    - Blocked LOS creates fog of war in that lane (server/client comms about unit position)
-    - hills -> neutral forts
-    - woods -> hide inside unless you occupy; cover and slow; see past when inside
-    - river -> infantry half / cavalry quarter / artillery blocked
-    - peaks -> block LOS; slow infantry; block horse and gun
-    - bridge -> cosmetic (normal move, no LOS block)
-    - fort blocks LOS to enemy only
 - Bottom Lane Units
     - Militiamen
         - Cheap troop for spam with poor endurance and discipline

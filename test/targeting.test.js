@@ -137,6 +137,42 @@ describe("preferNearestRowAmongAlignedTargets", () => {
     const aim = skirm.nearestTarget(sim.enemy.troops, skirm.shootRange(), sim.player.troops, sim.enemy);
     assert.equal(aim, nearRow);
   });
+
+  it("keep counts as the shooter's row so own-row preference cannot bury keep priority", () => {
+    CONFIG[flag] = true;
+    const sim = makeSim();
+    // On the enemy fort so keep LOS is clear; keep is 200 paces (priority 150).
+    const troop = spawn(sim, "player", "troop", "top", {
+      progress: 0.8,
+      sublane: 2,
+      order: "halt",
+    });
+    // Slightly closer than keep priority, other row.
+    const farRow = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.055,
+      sublane: 0,
+      order: "halt",
+    });
+    // Own row, In Line, but farther than keep priority.
+    const ownRow = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.045,
+      sublane: 2,
+      order: "halt",
+    });
+    assert.ok(farRow.withinLine(ownRow));
+    assert.ok(troop.inShotRange(sim.enemy, troop.shootRange()));
+    const keepPri = troop.shotPaces(sim.enemy) - CONFIG.keepTargetDistanceOffsetPaces;
+    assert.ok(troop.shotPaces(farRow) < keepPri);
+    assert.ok(keepPri < troop.shotPaces(ownRow));
+
+    const aim = troop.nearestTarget(
+      sim.enemy.troops,
+      troop.shootRange(),
+      sim.player.troops,
+      sim.enemy,
+    );
+    assert.equal(aim, sim.enemy);
+  });
 });
 
 describe("melee flank target preference", () => {

@@ -172,7 +172,7 @@ export const CONFIG = {
   /** Cross-lane shots must also be shorter than this path back through your keep. */
   crossLaneMaxPaces: 200,
   /** Fort center, in paces forward from each keep. */
-  fortDistancePaces: 250,
+  fortDistancePaces: 200,
   /** Officer and color-guard restore reach, in paces along the lane. */
   officerRestorePaces: 60,
   /**

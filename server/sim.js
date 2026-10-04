@@ -91,10 +91,12 @@ function skirmisherTargetTier(type, dist, closestDist) {
 /**
  * Among the primary pick and other same-priority units In Line with it
  * (same lane), prefer the row nearest the shooter, then closer shot
- * paces. Keeps and cross-lane primaries are unchanged. Disabled when
+ * paces. The Keep always counts as the shooter's row (priority paces)
+ * when any In Line alternative exists, so row preference cannot bury
+ * a closer keep. Cross-lane primaries are unchanged. Disabled when
  * CONFIG.preferNearestRowAmongAlignedTargets is false.
  */
-function preferNearestRowAmongAligned(shooter, primary, eligible) {
+function preferNearestRowAmongAligned(shooter, primary, eligible, keepSide) {
   if (!CONFIG.preferNearestRowAmongAlignedTargets) return primary;
   if (!primary || primary.capitalHP !== undefined) return primary;
   if (!shooter || primary.lane !== shooter.lane) return primary;
@@ -103,18 +105,27 @@ function preferNearestRowAmongAligned(shooter, primary, eligible) {
   let best = primary;
   let bestRowGap = Math.abs(shooter.sublane - primary.sublane);
   let bestD = shooter.shotPaces(primary);
+  let hasAligned = false;
 
   for (let i = 0; i < eligible.length; i += 1) {
     const other = eligible[i];
     if (!other || other === primary || other.capitalHP !== undefined) continue;
     if (other.lane !== primary.lane) continue;
     if (!primary.withinLine(other)) continue;
+    hasAligned = true;
     const rowGap = Math.abs(shooter.sublane - other.sublane);
     const d = shooter.shotPaces(other);
     if (rowGap < bestRowGap || (rowGap === bestRowGap && d < bestD)) {
       best = other;
       bestRowGap = rowGap;
       bestD = d;
+    }
+  }
+  // Keep sits on every row; for this shooter it is always own-row.
+  if (hasAligned && keepSide) {
+    const keepD = targetPriorityPaces(shooter, keepSide);
+    if (0 < bestRowGap || (bestRowGap === 0 && keepD < bestD)) {
+      return keepSide;
     }
   }
   return best;
@@ -405,9 +416,10 @@ class Unit {
      */
     this.wasOrderPassParallel = false;
     /**
-     * Set when Advance is issued while already In Line with a Halt/Reform
-     * troop ahead on an adjacent row. Blocks order passing until that
-     * In Line contact ends, so a slightly-behind unit can walk past.
+     * Set when a solo (long-press) Advance is issued while already In Line
+     * with a Halt/Reform troop ahead on an adjacent row. Blocks order
+     * passing until that In Line contact ends, so that unit can walk past.
+     * Line Advances do not set this — they still order-pass at Perfect Line.
      */
     this.suppressOrderPass = false;
     this.applyPath();
@@ -525,7 +537,8 @@ class Unit {
     for (let i = 0; i < group.length; i += 1) {
       group[i].commitOrder(next, enemies);
       group[i].ignoreLineOrders = lock;
-      if (next === null) {
+      // Walk-past suppress only for solo/long-press Advance, not line Advance.
+      if (next === null && forceSolo) {
         group[i].refreshOrderPassSuppress(allies);
       } else {
         group[i].suppressOrderPass = false;
@@ -542,7 +555,7 @@ class Unit {
     this.order = next;
     this.reformNeedsAlign = next === "reform";
     if (next !== "reform") this.priorOrder = null;
-    if (next === null && this.side) {
+    if (next === null && this.side && this.ignoreLineOrders) {
       this.refreshOrderPassSuppress(this.side.troops);
     } else {
       this.suppressOrderPass = false;
@@ -1170,14 +1183,14 @@ class Unit {
 
   /**
    * Adjacent Halt/Reform troop this unit is already In Line with and not
-   * past. Advance issued in this state suppresses order passing so the
-   * unit can walk through Perfect Line and past the line.
+   * past. Solo/long-press Advance issued in this state suppresses order
+   * passing so the unit can walk through Perfect Line and past the line.
    */
   orderPassInLineNeighbor(allies) {
     return this.orderPassCandidate(allies, "line");
   }
 
-  /** Latch or clear suppress when this unit is put on Advance. */
+  /** Latch or clear suppress when this unit is put on solo Advance. */
   refreshOrderPassSuppress(allies) {
     this.suppressOrderPass = Boolean(this.orderPassInLineNeighbor(allies));
   }
@@ -1186,10 +1199,11 @@ class Unit {
    * Order passing for troops only. An Advancing troop that newly enters
    * Perfect Line with a Halted or Reforming troop on an adjacent row
    * takes that order on itself alone. Already-aligned units that are
-   * given a new order do not immediately re-inherit. Advance issued while
-   * already In Line behind a Halt/Reform mate suppresses passing until
-   * that In Line contact ends, so the unit can walk past. Reform movement
-   * does not absorb mid-manoeuvre.
+   * given a new order do not immediately re-inherit. A solo/long-press
+   * Advance issued while already In Line behind a Halt/Reform mate
+   * suppresses passing until that In Line contact ends, so that unit can
+   * walk past. Line Advances do not suppress. Reform movement does not
+   * absorb mid-manoeuvre.
    */
   tryJoinAhead(allies) {
     if (this.type !== "troop" || this.broken) {
@@ -1950,6 +1964,71 @@ class Unit {
     const to = playerPacesFromProgress(this.side.id, this.lane, nextProgress);
     const clamped = clampPaceMove(type, this.lane, this.sublane, from, to, this.mapId());
     return progressFromPlayerPaces(this.side.id, this.lane, clamped);
+  }
+
+  /**
+   * True when a small step in dir (±1 along progress) is stopped only by
+   * impassable terrain on this row (not the lane end).
+   */
+  terrainBlocksDir(dir) {
+    const sign = dir < 0 ? -1 : 1;
+    const next = Math.max(0, Math.min(1, this.progress + sign * 0.02));
+    if (next === this.progress) return false;
+    return this.clampTerrainProgress(next) === this.progress;
+  }
+
+  /**
+   * Row that lets this unit keep withdrawing (dir −1) / advancing (dir +1)
+   * past impassable terrain on the current row. Prefers nearest clear rows
+   * that can still move in that direction from this station.
+   */
+  pickTerrainBypassSublane(dir, enemies) {
+    if (!this.side || !this.lane) return null;
+    const sign = dir < 0 ? -1 : 1;
+    const type = this.variant || this.type;
+    const mapId = this.mapId();
+    const from = playerPacesFromProgress(this.side.id, this.lane, this.progress);
+    const probe = Math.max(0, Math.min(1, this.progress + sign * 0.2));
+    const toProbe = playerPacesFromProgress(this.side.id, this.lane, probe);
+    const count = Path.sublaneCount(this.lane);
+    let best = null;
+    let bestClear = -1;
+    let bestDist = Infinity;
+    for (let s = 0; s < count; s += 1) {
+      if (s === this.sublane) continue;
+      if (!canOccupy(type, this.lane, s, from, mapId)) continue;
+      const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, s), this.progress);
+      if (this.overlapsEnemyAt(dest.x, dest.y, enemies, s)) continue;
+      const clampedPaces = clampPaceMove(type, this.lane, s, from, toProbe, mapId);
+      const clearProgress = progressFromPlayerPaces(this.side.id, this.lane, clampedPaces);
+      const clear = Math.abs(clearProgress - this.progress);
+      if (!(clear > 1e-9)) continue;
+      const dist = Math.abs(s - this.sublane);
+      // Multi-row goals need an occupyable adjacent step toward them.
+      if (dist > 1) {
+        const next = this.sublane + Math.sign(s - this.sublane);
+        if (!canOccupy(type, this.lane, next, from, mapId)) continue;
+      }
+      if (clear > bestClear || (clear === bestClear && dist < bestDist)) {
+        bestClear = clear;
+        bestDist = dist;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * When withdrawing into impassable terrain, step toward a clear row
+   * (cavalry around peaks, guns onto the bridge, etc.).
+   */
+  tryWithdrawAroundTerrain(dt, allies, enemies) {
+    if (!this.terrainBlocksDir(-1)) return false;
+    const goal = this.pickTerrainBypassSublane(-1, enemies);
+    if (goal == null) return false;
+    if (!this.stepTowardSublane(goal, allies, enemies)) return false;
+    this.strafe(dt, enemies, allies);
+    return true;
   }
 
   /**
@@ -3275,7 +3354,7 @@ class Unit {
    * melee does not lock the Keep. When
    * preferNearestRowAmongAlignedTargets is on, a closest pick that
    * shares an In Line station with other eligible units yields to the
-   * one on the nearest row to this shooter.
+   * one on the nearest row to this shooter (Keep counts as this row).
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
@@ -3323,15 +3402,17 @@ class Unit {
       bestVit = bestOfficerVit;
       pool = officers;
     }
+    let keepCandidate = null;
     if (enemySide && this.inShotRange(enemySide, range)) {
       const keepD = targetPriorityPaces(this, enemySide);
       const keepVit = targetVitality(enemySide);
       if (!best || isBetterTarget(mode, keepD, keepVit, bestD, bestVit)) {
         return enemySide;
       }
+      keepCandidate = enemySide;
     }
     if (!best) return null;
-    return preferNearestRowAmongAligned(this, best, pool);
+    return preferNearestRowAmongAligned(this, best, pool, keepCandidate);
   }
 
   /**
@@ -3339,7 +3420,8 @@ class Unit {
    * tier (not closest-eligible Bastion). Keep wins only when its
    * priority distance is closer than every valid unit. When
    * preferNearestRowAmongAlignedTargets is on, that closest tier pick
-   * yields to a same-tier unit In Line with it on a nearer row.
+   * yields to a same-tier unit In Line with it on a nearer row; the
+   * Keep still counts as this shooter's row in that choice.
    */
   skirmisherNearestTarget(enemies, range, enemySide) {
     const candidates = [];
@@ -3364,9 +3446,11 @@ class Unit {
         best = other;
       }
     }
+    let keepCandidate = null;
     if (enemySide && this.inShotRange(enemySide, range)) {
       const keepD = targetPriorityPaces(this, enemySide);
       if (!best || keepD < closestDist) return enemySide;
+      keepCandidate = enemySide;
     }
     if (!best) return null;
     const pool = [];
@@ -3376,7 +3460,7 @@ class Unit {
         pool.push(other);
       }
     }
-    return preferNearestRowAmongAligned(this, best, pool);
+    return preferNearestRowAmongAligned(this, best, pool, keepCandidate);
   }
 
   /**
@@ -3836,7 +3920,10 @@ class Unit {
       if (this.resolveAllyCollision(dt, allies, enemies)) {
         return;
       }
-      this.marchAlong(dt, allies, enemies, -1);
+      // Rout around impassable terrain (peaks, rivers) by changing rows.
+      if (!this.marchAlong(dt, allies, enemies, -1)) {
+        this.tryWithdrawAroundTerrain(dt, allies, enemies);
+      }
       return;
     }
 
@@ -4880,14 +4967,11 @@ export class GameSim {
     const projectiles = this.projectiles.filter((shot) => {
       if (!forSideId) return true;
       const target = shot.target;
+      // Hide shells aimed at fogged enemies so flight paths do not reveal them.
+      // Keep shells from fogged attackers — fire still shows even when the unit does not.
       if (target && target.hp !== undefined && target.side && target.side.id !== forSideId) {
         if (!visibleEnemyIds.has(target.id)) return false;
       }
-      if (shot.attacker && shot.attacker.hp !== undefined
-        && shot.attacker.side && shot.attacker.side.id !== forSideId) {
-        if (!visibleEnemyIds.has(shot.attacker.id)) return false;
-      }
-      // Enemy-fired shell with no unit attacker id (keep): allow.
       return true;
     }).map((shot) => ({
       x: shot.x,

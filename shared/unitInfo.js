@@ -207,7 +207,7 @@ export function unitAbilityLines(type) {
       `Line shooting bonus: +${pct(CONFIG.troopLineBonus)} per other eligible troop in the line, scaled by how Perfect you are with adjacent-row neighbors (not vs Skirmishers/Rifles).`,
     );
     lines.push(
-      "Order passing: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them lets that Troop walk past without re-inheriting.",
+      "Order passing: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them lets that Troop walk past without re-inheriting.",
     );
   }
   if (type === "grenadier") {

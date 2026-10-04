@@ -15,7 +15,7 @@ Which range an order uses is on [[Orders]].
 
 Each unit shoots the closest eligible target (the keep uses its 50-pace priority distance when choosing). Skirmishers and Rifles use their own type priority instead. See [[Units]].
 
-When that closest eligible target (or the best Skirmisher/Rifles priority pick) is [[The Map|In Line]] with other eligible targets in other rows, the shooter aims at the one of those whose row is closest to its own. If two share that nearest row, the closer one wins. Facing lines therefore tend to trade fire across rows instead of stacking every shot onto one body.
+When that closest eligible target (or the best Skirmisher/Rifles priority pick) is [[The Map|In Line]] with other eligible targets in other rows, the shooter aims at the one of those whose row is closest to its own. If two share that nearest row, the closer one wins. The keep always counts as being in the shooter's row (still using its 50-pace priority distance), so row preference cannot bury a keep that would win on that ranking. Facing lines therefore tend to trade fire across rows instead of stacking every shot onto one body.
 
 Troops, Dragoons, Guns, and Officers will not shoot an Officer while another unit type is inside the range their current order uses. Skirmishers and Rifles may shoot Officers and pick targets in this order: cavalry if it is the closest target, then other Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops. A Howitzer picks the closest valid target in each row of its own lane, and will shoot an Officer in a row that has no other valid target. The keep competes only in the middle row (using that same 50-pace priority), so a Howitzer volley hits it at most once. See [[Units]].
 

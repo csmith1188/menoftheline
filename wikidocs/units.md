@@ -2,7 +2,7 @@
 
 Each unit has its own health, ranges, damage, speeds, and pushback. Each type has an alternate that counts as the same type for forming a line, with its own name, numbers, and ability. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
 
-- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. Four eligible troops are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. Advancing Troops that newly walk into Perfect Line with a Halted or Reforming Troop on an adjacent row take that Halt or Reform on themselves alone (order passing). See [[Shooting]], [[Melee]], [[Orders]], and [[Damage]].
+- **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. That total is then scaled by how Perfect the shooter is with its immediate adjacent-row neighbors in the line: full bonus in Perfect Line, nearly none at the edge of In Line, linear between (average of those neighbor overlaps). Four eligible troops in a Perfect Line are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. Advancing Troops that newly walk into Perfect Line with a Halted or Reforming Troop on an adjacent row take that Halt or Reform on themselves alone (order passing). See [[Shooting]], [[Melee]], [[Orders]], [[Lines]], [[The Map]], and [[Damage]].
 
 - **Grenadiers:** are tougher and take half pushback from shooting and melee. See [[Melee]] and [[Shooting]].
 

@@ -1011,6 +1011,33 @@ function lineSlack(troop) {
   return Path.stationSlack(troop.lane, "line", radius);
 }
 
+function perfectSlack(troop) {
+  return Path.stationSlack(troop.lane, "parallel");
+}
+
+/** 1 at Perfect Line, 0 at the In Line edge, linear between. */
+function lineOverlapRatio(a, b) {
+  const gap = Math.abs(troopStation(a) - troopStation(b));
+  const perfect = perfectSlack(a);
+  const inLine = lineSlack(a);
+  if (gap <= perfect) return 1;
+  if (gap >= inLine || !(inLine > perfect)) return 0;
+  return 1 - (gap - perfect) / (inLine - perfect);
+}
+
+/** Average Perfect→In Line quality vs adjacent-row members of this line. */
+function lineNeighborQuality(troop, line) {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    const mate = line[i];
+    if (mate === troop || Math.abs(troop.sublane - mate.sublane) !== 1) continue;
+    sum += lineOverlapRatio(troop, mate);
+    n += 1;
+  }
+  return n > 0 ? sum / n : 0;
+}
+
 function lineIsPerfect(group) {
   if (!group || group.length < 2) return true;
   const slack = Path.stationSlack(group[0].lane, "parallel");
@@ -1211,9 +1238,11 @@ function activeBonuses(board, troop, allies) {
   const enemies = foes ? foes.troops : [];
   const labels = [];
 
-  const mates = lineSize(troop, allies) - 1;
-  if (stats.lineBonus && mates > 0) {
-    labels.push(`Line +${Math.round(mates * stats.lineBonus * 100)}%`);
+  const line = lineGroup(troop, allies);
+  const mates = line.length - 1;
+  if (troop.type === "troop" && CONFIG.troopLineBonus > 0 && mates > 0) {
+    const pct = mates * CONFIG.troopLineBonus * lineNeighborQuality(troop, line);
+    labels.push(`Line +${Math.round(pct * 100)}%`);
   }
 
   if (troop.order === "charge" && stats.chargeMultiplier && stats.chargeMultiplier !== 1) {

@@ -137,6 +137,8 @@ class Projectile {
     /** Shooter unit or Side (keep gun); used for directional fort cover. */
     this.attacker = shot && shot.attacker ? shot.attacker : null;
     this.alive = true;
+    /** True after this shell has advanced once in the current sim step. */
+    this.movedThisStep = false;
     this.bounce = null;
     this.anchor = null;
     /** Bodies already struck; gun shells may continue for up to 3. */
@@ -230,6 +232,21 @@ class Projectile {
     this.bounce = null;
   }
 
+  /**
+   * Attacker percent sum on impact. Ranged shots bake everything except
+   * troop line bonus at fire; line quality is live so it reflects pushback
+   * that landed while the shell was in the air.
+   */
+  impactAttackerSum() {
+    let sum = this.attackerSum || 0;
+    const atk = this.attacker;
+    if (!atk || typeof atk.lineDamagePercent !== "function") return sum;
+    if (this.kind === "melee") return sum;
+    const target = this.target;
+    if (target && target.type === "skirmisher") return sum;
+    return sum + atk.lineDamagePercent(this.allies);
+  }
+
   /** Advance the shell; apply damage on impact. */
   update(dt) {
     if (this.bounce) {
@@ -259,8 +276,9 @@ class Projectile {
       this.alive = false;
       return;
     }
+    const attackerSum = this.impactAttackerSum();
     if (this.target.capitalHP !== undefined) {
-      const hit = this.target.applyKeepDamage(this.damage, this.attackerSum);
+      const hit = this.target.applyKeepDamage(this.damage, attackerSum);
       this.target.capitalHP -= hit;
       const keep = this.target.capital;
       this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
@@ -270,7 +288,7 @@ class Projectile {
     }
     const struck = this.target;
     const raw = this.baseDamage * this.hitFactor();
-    struck.takeDamage(raw, this.kind, this.attackerSum, this.shootingPushback, this.attacker);
+    struck.takeDamage(raw, this.kind, attackerSum, this.shootingPushback, this.attacker);
     this.sim.emitSound({ type: "hit", sideId: this.sideId });
     this.penHits += 1;
     this.continueBehind(struck);
@@ -412,7 +430,6 @@ class Unit {
     this.projectileColor = stats.projectileColor;
     this.radius = stats.radius;
     this.speed = stats.speed;
-    this.lineBonus = stats.lineBonus;
     this.fightsMelee = stats.fightsMelee;
     this.splash = stats.splash;
     this.restoreRange = stats.restoreRange || 0;
@@ -813,6 +830,35 @@ class Unit {
   /** True when two stations overlap enough to share a line. */
   withinLine(other) {
     return Math.abs(this.station() - other.station()) <= this.stationSlack("line");
+  }
+
+  /**
+   * How perfectly this unit lines up with other along the lane.
+   * 1 inside Perfect Line, 0 at the In Line edge, linear between.
+   */
+  lineOverlapRatio(other) {
+    const gap = Math.abs(this.station() - other.station());
+    const perfect = this.stationSlack("parallel");
+    const inLine = this.stationSlack("line");
+    if (gap <= perfect) return 1;
+    if (gap >= inLine || !(inLine > perfect)) return 0;
+    return 1 - (gap - perfect) / (inLine - perfect);
+  }
+
+  /**
+   * Average Perfect→In Line quality vs immediate adjacent-row members
+   * of this line. Solo lines have no neighbors → 0.
+   */
+  lineNeighborQuality(line) {
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < line.length; i += 1) {
+      const mate = line[i];
+      if (mate === this || !this.adjacentRow(mate)) continue;
+      sum += this.lineOverlapRatio(mate);
+      n += 1;
+    }
+    return n > 0 ? sum / n : 0;
   }
 
   /** Each type only lines with its own kind. */
@@ -3459,11 +3505,14 @@ class Unit {
   }
 
   /**
-   * Shooting line bonus: +20% for each other troop in line that is not
-   * in melee and can see a target. Broken units are already out of the line.
+   * Shooting line bonus: CONFIG.troopLineBonus for each other troop in
+   * line that is not in melee and can see a target, then scaled by how
+   * Perfect those adjacent-row neighbors are (average lineOverlapRatio).
+   * Broken units are already out of the line.
    */
   lineDamagePercent(allies) {
-    if (!this.lineBonus || this.type !== "troop") return 0;
+    const perMate = CONFIG.troopLineBonus || 0;
+    if (!(perMate > 0) || this.type !== "troop") return 0;
     const group = allies || [];
     const line = this.lineGroup(group);
     const foes = this.enemyTroops();
@@ -3474,7 +3523,8 @@ class Unit {
       const enemySide = mate.side === this.side.sim.player ? this.side.sim.enemy : this.side.sim.player;
       if (mate.nearestTarget(foes, mate.shootRange(), group, enemySide)) mates += 1;
     }
-    return mates * this.lineBonus;
+    if (mates <= 0) return 0;
+    return mates * perMate * this.lineNeighborQuality(line);
   }
 
   /** Shot falloff from 1 at point blank down to minDamageFactor at max range. */
@@ -3520,16 +3570,19 @@ class Unit {
    * Attacker percents added together: variance, charge, flank, line,
    * damage upgrade, missing-health loss, and the officer-damage bonus.
    * Troop line bonus does not apply when shooting skirmishers/rifles.
+   * Ranged shots omit line here — Projectile adds live lineDamagePercent
+   * on impact so pushback can change the bonus before the shell lands.
    * Defense is applied separately on impact as multipliers. Not yet truncated.
    */
-  attackerPercents(target, kind, allies) {
+  attackerPercents(target, kind, allies, opts) {
     const strike = kind || "shoot";
+    const omitLine = opts && opts.omitLine;
     let sum = (Math.random() * 2 - 1) * CONFIG.damageVariance;
     if (strike === "melee" && this.order === "charge") sum += this.chargeMultiplier - 1;
     if (strike === "melee" && target.lane && this.isFlanking(target)) {
       sum += this.flankMultiplier - 1;
     }
-    if (strike !== "melee" && target.type !== "skirmisher") {
+    if (!omitLine && strike !== "melee" && target.type !== "skirmisher") {
       sum += this.lineDamagePercent(allies);
     }
     if (this.side) sum += this.side.damageScale() - 1;
@@ -3540,15 +3593,17 @@ class Unit {
 
   /**
    * Base × falloff, before percent modifiers. Melee has no falloff.
-   * The attacker percent sum travels with the shot; defensive multipliers
-   * are applied on impact.
+   * Non-line attacker percents travel with the shot; troop line bonus and
+   * defensive multipliers are applied on impact.
    */
   attackDamage(target, kind, allies) {
     const strike = kind || "shoot";
     const falloff = strike === "melee" ? 1 : this.falloffTo(target);
     return {
       raw: this.baseAttackDamage(strike) * falloff,
-      attackerSum: this.attackerPercents(target, strike, allies),
+      attackerSum: this.attackerPercents(target, strike, allies, {
+        omitLine: strike !== "melee",
+      }),
     };
   }
 
@@ -3623,23 +3678,28 @@ class Unit {
     }
   }
 
-  /**
-   * One unit decision: finish a lane change first, then shoot or swing,
-   * then start a slide toward a side enemy, or march (advance stops when
-   * a friendly blocks ahead).
-   */
-  update(dt, allies, enemies, enemySide, projectiles) {
+  /** Cooldown, flash, fatigue, and held-order release for one step. */
+  beginTick(dt, enemies) {
     if (this.cooldown > 0) {
       this.cooldown -= dt;
     }
     if (this.flash > 0) {
       this.flash -= dt;
     }
-
     this.movingBackward = false;
     this.tickFatigue(dt, enemies);
     this.releaseHeldOrder(enemies);
+  }
 
+  /**
+   * One unit decision: finish a lane change first, then shoot or swing,
+   * then start a slide toward a side enemy, or march (advance stops when
+   * a friendly blocks ahead). Pushback is applied before actions so line
+   * bonus uses post-shove stations; a second pass covers cannon recoil.
+   */
+  update(dt, allies, enemies, enemySide, projectiles) {
+    this.beginTick(dt, enemies);
+    this.tickPushback(dt, allies);
     try {
       this.updateActions(dt, allies, enemies, enemySide, projectiles);
     } finally {
@@ -3648,8 +3708,8 @@ class Unit {
   }
 
   /**
-   * Orders, shooting, melee, and marching for one step. Pushback applies in
-   * update()'s finally so every early return still resolves paces.
+   * Orders, shooting, melee, and marching for one step. Callers apply
+   * pending pushback before this so line quality matches post-shove stations.
    */
   updateActions(dt, allies, enemies, enemySide, projectiles) {
     const inMeleeNow = this.isInMelee(enemies);
@@ -4096,6 +4156,7 @@ class Howitzer extends Cannon {
           attackerSum: shot.attackerSum,
           shotSign: aim.station ? (Math.sign(aim.station() - this.station()) || 1) : 1,
           shootingPushback: this.shootingPushback,
+          attacker: this,
         },
       ));
     }
@@ -4656,6 +4717,14 @@ export class GameSim {
     if (this.winner) return;
     this.clearPushbackTickFlags(this.player);
     this.clearPushbackTickFlags(this.enemy);
+    // In-flight hits (and their pushback) resolve before anyone shoots so
+    // line bonus uses post-shove alignment. Shells only advance once per step.
+    for (let i = 0; i < this.projectiles.length; i += 1) {
+      this.projectiles[i].movedThisStep = false;
+    }
+    this.updateProjectiles(dt);
+    this.clearPushbackTickFlags(this.player);
+    this.clearPushbackTickFlags(this.enemy);
     this.updateSide(this.player, this.enemy.troops, this.enemy, dt);
     this.updateSide(this.enemy, this.player.troops, this.player, dt);
     this.player.updateGuns(dt, this.enemy.troops, this.player.troops, this.projectiles);
@@ -4925,12 +4994,25 @@ export class GameSim {
       const troop = side.troops[i];
       troop.reformHold = troop.hp > 0 && troop.reformShouldStop(side.troops);
     }
+    // Pending pushback for the whole side first so every shooter sees
+    // post-shove stations when computing line bonus.
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (troop.hp <= 0) continue;
+      troop.beginTick(dt, opponents);
+      troop.tickPushback(dt, side.troops);
+    }
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
       if (troop.hp <= 0) {
         continue;
       }
-      troop.update(dt, side.troops, opponents, enemySide, this.projectiles);
+      try {
+        troop.updateActions(dt, side.troops, opponents, enemySide, this.projectiles);
+      } finally {
+        // Cannon recoil (and any pace queued during actions) after fire.
+        troop.tickPushback(dt, side.troops);
+      }
       troop.reformHold = false;
     }
     this.applySupport(side, dt);
@@ -5007,10 +5089,17 @@ export class GameSim {
     this.splats = this.splats.filter((splat) => splat.alive);
   }
 
-  /** Fly shells; they pass over units and only hit their locked target. */
+  /**
+   * Fly shells that have not already advanced this step. finishStep runs
+   * this before sides (in-flight impacts / pushback) and again after
+   * (newly fired shells), each shell moving at most once.
+   */
   updateProjectiles(dt) {
     for (let i = 0; i < this.projectiles.length; i += 1) {
-      this.projectiles[i].update(dt);
+      const shot = this.projectiles[i];
+      if (shot.movedThisStep) continue;
+      shot.update(dt);
+      shot.movedThisStep = true;
     }
     this.projectiles = this.projectiles.filter((shot) => shot.alive);
   }

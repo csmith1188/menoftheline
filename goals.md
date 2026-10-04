@@ -1,7 +1,7 @@
 # Bugs
 
 # Ideas
-- Total line bonus based on how perfect your line is
+- ~~Total line bonus based on how perfect your line is~~
 - fort melee bonus if enemy is not also in it
 - officers make order sounds when near lines given orders
 - Click, drag, long press (or rmb drag) to set a target

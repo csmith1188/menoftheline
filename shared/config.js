@@ -160,6 +160,11 @@ export const CONFIG = {
   perfectLinePaces: 1,
   /** Along-lane reach from a unit's center that still counts as one line, in paces. */
   inLinePaces: 8,
+  /**
+   * Troop shooting line bonus per other eligible troop in the line.
+   * Scaled by Perfect→In Line neighbor quality before it is applied.
+   */
+  troopLineBonus: 0.25,
   /** Along-lane reach from a unit's center that its footprint covers, in paces. */
   footprintPaces: 12,
   /** Gun shell: max gap between footprint edges to continue to the next body. */

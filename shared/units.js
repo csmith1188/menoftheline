@@ -39,7 +39,6 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 100,
-    lineBonus: 0.2,
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -59,7 +58,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 100,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -80,7 +79,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 25,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -100,7 +99,7 @@ export const UNIT_STATS = {
     meleeCooldown: 6,
     speed: 12,
     cost: 300,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0.5,
     restoreRange: 0,
@@ -120,7 +119,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
@@ -143,7 +142,6 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 150,
-    lineBonus: 0.2,
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -166,7 +164,7 @@ export const UNIT_STATS = {
     meleeCooldown: 2,
     speed: 15,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -189,7 +187,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 25,
     cost: 250,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -211,7 +209,7 @@ export const UNIT_STATS = {
     meleeCooldown: 6,
     speed: 15,
     cost: 400,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -235,7 +233,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 400,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,

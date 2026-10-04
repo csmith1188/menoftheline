@@ -4,7 +4,7 @@ Start from the attack's base damage. Multiply by range falloff for a shot (melee
 
 Range falloff is on [[Shooting]]. Melee, including charge and flank, is on [[Melee]].
 
-Attacker percentage modifiers include the random roll of plus or minus 10%, charge, flank, troop line bonus, damage ranks, missing-health loss, and the officer-damage bonus. Those add together into one sum. Troop line bonus is skipped when the target is a Skirmisher or Rifles. Damage ranks apply to units only; the Keep gun does not use them. Units that attack the Keep still use their own damage ranks.
+Attacker percentage modifiers include the random roll of plus or minus 10%, charge, flank, troop line bonus, damage ranks, missing-health loss, and the officer-damage bonus. Those add together into one sum. Troop line bonus stacks from eligible line-mates, then scales with how Perfect the shooter is with its adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge). For shots, that line term is measured when the shell lands (after pushback), not when it was fired. Troop line bonus is skipped when the target is a Skirmisher or Rifles. Damage ranks apply to units only; the Keep gun does not use them. Units that attack the Keep still use their own damage ranks.
 
 **Missing health.** A unit deals less damage as it loses health: each 2% of health missing costs 1% damage. A unit at half health deals 25% less damage. Friends inside a Color Guard restore aura ignore this loss and strike at full strength. See [[Units]].
 

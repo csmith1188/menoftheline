@@ -325,6 +325,8 @@ export class GameRoom {
     if (steps > cap) steps = cap;
     this.speedAccum -= steps;
     for (let s = 0; s < steps; s += 1) {
+      // Install this match's terrain overlay before commands/bots/sim read LOS.
+      this.sim.installTerrainFx();
       if (!this.sim.beginStep(STEP_DT)) break;
       this.applyQueued();
       this.runBots();

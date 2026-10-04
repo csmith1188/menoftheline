@@ -39,5 +39,15 @@
     </section>
   </div>
   <%- include("suggestion-modal", { nextPath: "/" }) %>
+  <script>
+    // Warm match music in the HTTP cache before /play so Socket.IO stays free in-match.
+    (function () {
+      try {
+        if (typeof fetch === "function") {
+          fetch("/bgm/HTL.ogg", { cache: "force-cache", credentials: "same-origin" }).catch(function () {});
+        }
+      } catch (err) {}
+    })();
+  </script>
 </body>
 </html>

@@ -34,6 +34,8 @@ export const TERRAIN_TINT = {
 
 let _cachedMapId = null;
 let _cachedFeatures = null;
+/** Open LOS segments by map id → "lane:sublane" → segments (static geometry). */
+let _openSegCache = new Map();
 
 function emptyTerrainFx() {
   return {
@@ -53,18 +55,8 @@ export function getTerrainFx() {
   return _terrainFx;
 }
 
-/** True when an Engineer aura overlaps this feature's footprint. */
-export function auraOverlapsFeature(unit, feature) {
-  if (!unit || !feature || unit.lane !== feature.lane || unit.hp <= 0) return false;
-  const paces = playerPacesOf(unit);
-  if (paces == null) return false;
-  const reach = CONFIG.officerRestorePaces;
-  const { minPaces, maxPaces } = featureInterval(feature);
-  return paces + reach >= minPaces && paces - reach <= maxPaces;
-}
-
-/** Rebuild pontoon / LOS-cancel overlay from living Engineers. */
-export function refreshTerrainFx(troopsBySide, mapId) {
+/** Build pontoon / LOS-cancel overlay without touching process-global FX. */
+export function computeTerrainFx(troopsBySide, mapId) {
   const pontoonIds = new Set();
   const losCancel = { player: new Set(), enemy: new Set() };
   const features = featuresOnMap(mapId);
@@ -83,7 +75,23 @@ export function refreshTerrainFx(troopsBySide, mapId) {
       }
     }
   }
-  _terrainFx = { pontoonIds, losCancel };
+  return { pontoonIds, losCancel };
+}
+
+/** True when an Engineer aura overlaps this feature's footprint. */
+export function auraOverlapsFeature(unit, feature) {
+  if (!unit || !feature || unit.lane !== feature.lane || unit.hp <= 0) return false;
+  const paces = playerPacesOf(unit);
+  if (paces == null) return false;
+  const reach = CONFIG.officerRestorePaces;
+  const { minPaces, maxPaces } = featureInterval(feature);
+  return paces + reach >= minPaces && paces - reach <= maxPaces;
+}
+
+/** Rebuild process-global pontoon / LOS-cancel overlay from living Engineers. */
+export function refreshTerrainFx(troopsBySide, mapId) {
+  _terrainFx = computeTerrainFx(troopsBySide, mapId);
+  return _terrainFx;
 }
 
 function riverIsPontoon(feature) {
@@ -114,6 +122,7 @@ export function featuresOnMap(mapId) {
 export function clearTerrainCache() {
   _cachedMapId = null;
   _cachedFeatures = null;
+  _openSegCache = new Map();
   _terrainFx = emptyTerrainFx();
 }
 
@@ -487,9 +496,19 @@ function mergedTerrainBlobs(lane, sublane, mapId) {
  * `leftFeature` / `rightFeature` bound the gap (null at a keep).
  */
 export function openSegmentsOnRow(lane, sublane, mapId) {
+  const id = mapId || CONFIG.defaultMapId;
+  let byRow = _openSegCache.get(id);
+  if (!byRow) {
+    byRow = new Map();
+    _openSegCache.set(id, byRow);
+  }
+  const key = `${lane}:${sublane}`;
+  let segments = byRow.get(key);
+  if (segments) return segments;
+
   const total = Path.lanePaces(lane);
-  const merged = mergedTerrainBlobs(lane, sublane, mapId);
-  const segments = [];
+  const merged = mergedTerrainBlobs(lane, sublane, id);
+  segments = [];
   let cursor = 0;
   let leftFeature = null;
   for (let i = 0; i < merged.length; i += 1) {
@@ -517,6 +536,7 @@ export function openSegmentsOnRow(lane, sublane, mapId) {
       rightFeature: null,
     });
   }
+  byRow.set(key, segments);
   return segments;
 }
 
@@ -575,38 +595,41 @@ export function sideCrestsSegment(viewerSideId, segment, troopsBySide) {
   return false;
 }
 
+/** Open fog region containing paces on this row, or null when on a footprint. */
+function fogRegionAt(fogRegions, lane, sublane, paces) {
+  if (!fogRegions || paces == null || lane == null || sublane == null) return null;
+  for (let i = 0; i < fogRegions.length; i += 1) {
+    const r = fogRegions[i];
+    if (r.lane !== lane || r.sublane !== sublane) continue;
+    if (paces >= r.minPaces - 1e-9 && paces <= r.maxPaces + 1e-9) return r;
+  }
+  return null;
+}
+
 /**
  * Fog visibility of an enemy unit for viewerSideId.
  * Melee contact always reveals. Guerillas add stealth and woods hide.
  * Other units in woods use ordinary fog/LOS. Open segments are visible when
  * any same-lane friendly crests them. Units on hill/peak/fort footprints
  * stay visible only when LOS reaches that footprint.
+ *
+ * Shot LOS is fully covered by canSeePace (same-lane friends + keep):
+ * cross-lane friend checks use the same keep→target segment as the keep probe.
+ * Pass `fogRegions` from snapshotTerrain to reuse open-segment visibility.
  */
-export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId) {
+export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId, fogRegions = null) {
   if (!enemy || enemy.hp <= 0) return false;
 
   if (inMeleeWithViewer(viewerSideId, enemy, troopsBySide)) return true;
   if (guerrillaConcealedFrom(viewerSideId, enemy, troopsBySide, mapId)) return false;
 
   const paces = playerPacesOf(enemy);
-  if (paces != null && enemy.lane != null && enemy.sublane != null) {
-    if (canSeePace(viewerSideId, enemy.lane, enemy.sublane, paces, troopsBySide, mapId)) {
-      return true;
-    }
+  if (paces == null || enemy.lane == null || enemy.sublane == null) return true;
+  if (fogRegions) {
+    const region = fogRegionAt(fogRegions, enemy.lane, enemy.sublane, paces);
+    if (region) return !region.fogged;
   }
-
-  const friends = living(troopsBySide && troopsBySide[viewerSideId]);
-  for (let i = 0; i < friends.length; i += 1) {
-    if (hasShotLos(friends[i], enemy, viewerSideId, troopsBySide, mapId)) return true;
-  }
-  const keepUnit = {
-    side: { id: viewerSideId },
-    lane: enemy.lane,
-    sublane: enemy.sublane,
-    progress: 0,
-    hp: 1,
-  };
-  return hasShotLos(keepUnit, enemy, viewerSideId, troopsBySide, mapId);
+  return canSeePace(viewerSideId, enemy.lane, enemy.sublane, paces, troopsBySide, mapId);
 }
 
 /**
@@ -677,9 +700,12 @@ export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, map
     progress: Math.max(0, Math.min(1, paces / total)),
     hp: 1,
   };
+  // Cross-lane observers use the same keep→target segment as keepUnit below.
   const friends = living(troopsBySide && troopsBySide[viewerSideId]);
   for (let i = 0; i < friends.length; i += 1) {
-    if (hasShotLos(friends[i], probe, viewerSideId, troopsBySide, mapId)) return true;
+    const friend = friends[i];
+    if (!friend || friend.lane !== lane) continue;
+    if (hasShotLos(friend, probe, viewerSideId, troopsBySide, mapId)) return true;
   }
   const keepUnit = {
     side: { id: viewerSideId },
@@ -795,10 +821,14 @@ export function unitOnClosedRiver(unit, mapId) {
   return false;
 }
 
-/** Public snapshot fields for clients. */
-export function snapshotTerrain(viewerSideId, troopsBySide, mapId) {
+/**
+ * Public snapshot fields for clients.
+ * Pass `{ skipFxRefresh: true }` when the caller already installed match FX
+ * via setTerrainFx / refreshTerrainFx (avoids clobbering another room's overlay).
+ */
+export function snapshotTerrain(viewerSideId, troopsBySide, mapId, opts = {}) {
   const id = mapId || CONFIG.defaultMapId;
-  refreshTerrainFx(troopsBySide, id);
+  if (!opts.skipFxRefresh) refreshTerrainFx(troopsBySide, id);
   const features = featuresOnMap(id).map((f) => ({
     id: f.id,
     kind: f.kind,

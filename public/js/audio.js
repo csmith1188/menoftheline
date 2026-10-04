@@ -91,8 +91,8 @@ function readStoredVolume() {
 }
 
 const BGM_DEFAULT_VOLUME = 0.5;
-/** Wait after match start so the BGM download does not collide with the first state flood. */
-const BGM_START_DELAY_MS = 800;
+/** Short delay after match start before playing (blob must already be local). */
+const BGM_START_DELAY_MS = 200;
 
 function readStoredBgmVolume() {
   const rawDefault = typeof document !== "undefined" && document.body
@@ -111,14 +111,8 @@ function readStoredBgmVolume() {
   }
 }
 
-/** Prefer Ogg when the browser can decode it; otherwise MP3. */
-function pickBgmSrc() {
-  const probe = typeof Audio !== "undefined" ? new Audio() : null;
-  if (probe) {
-    const ogg = probe.canPlayType("audio/ogg; codecs=vorbis") || probe.canPlayType("audio/ogg");
-    if (ogg) return `${BGM_BASE}.ogg`;
-  }
-  return `${BGM_BASE}.mp3`;
+function bgmSrc() {
+  return `${BGM_BASE}.ogg`;
 }
 
 /** Tiny Web Audio bus for the per-sublane shot plucks. */
@@ -279,12 +273,22 @@ const ShotTone = {
   },
 };
 
-/** Looping match music from /public/bgm, started after the countdown. */
+/**
+ * Looping match music from /public/bgm.
+ * Multi-MB files must never stream during a match: they share the game host
+ * with Socket.IO and starve state/command traffic on production bandwidth.
+ * Prefetch into a blob during lobby/countdown; play only from that blob.
+ */
 const MatchBgm = {
   el: null,
+  blobUrl: null,
   volume: readStoredBgmVolume(),
   wanted: false,
   startTimer: null,
+  /** False while a match is playing so we never open a BGM download then. */
+  allowNetwork: true,
+  prefetchCtrl: null,
+  prefetchPromise: null,
 
   applyGain() {
     if (this.el) this.el.volume = this.volume * BGM_MAX_GAIN;
@@ -296,13 +300,62 @@ const MatchBgm = {
     this.startTimer = null;
   },
 
+  isReady() {
+    return Boolean(this.blobUrl);
+  },
+
+  abortPrefetch() {
+    if (this.prefetchCtrl) {
+      this.prefetchCtrl.abort();
+      this.prefetchCtrl = null;
+    }
+    this.prefetchPromise = null;
+  },
+
+  /**
+   * Fully download BGM into a blob URL (HTTP cache friendly).
+   * Safe during lobby/countdown; no-ops while a match is playing.
+   */
+  prefetch() {
+    if (this.blobUrl) return Promise.resolve(true);
+    if (!this.allowNetwork) return Promise.resolve(false);
+    if (this.prefetchPromise) return this.prefetchPromise;
+    if (typeof fetch !== "function") return Promise.resolve(false);
+
+    const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    this.prefetchCtrl = ctrl;
+    this.prefetchPromise = (async () => {
+      try {
+        const res = await fetch(bgmSrc(), {
+          signal: ctrl ? ctrl.signal : undefined,
+          cache: "force-cache",
+        });
+        if (!res.ok) return false;
+        const blob = await res.blob();
+        if (ctrl && ctrl.signal.aborted) return false;
+        if (this.blobUrl) URL.revokeObjectURL(this.blobUrl);
+        this.blobUrl = URL.createObjectURL(blob);
+        if (this.el) this.el.src = this.blobUrl;
+        if (this.wanted) this.schedulePlay();
+        return true;
+      } catch (err) {
+        if (err && err.name === "AbortError") return false;
+        return false;
+      } finally {
+        if (this.prefetchCtrl === ctrl) this.prefetchCtrl = null;
+        this.prefetchPromise = null;
+      }
+    })();
+    return this.prefetchPromise;
+  },
+
   ensure() {
     if (this.el) return this.el;
     const el = new Audio();
     el.loop = true;
-    // Avoid preload=auto: that eagerly pulls multi-MB audio over the game host.
-    el.preload = "metadata";
-    el.src = pickBgmSrc();
+    // Never point at /bgm/* directly — that streams over the game host mid-match.
+    el.preload = "none";
+    if (this.blobUrl) el.src = this.blobUrl;
     this.el = el;
     this.applyGain();
     return el;
@@ -321,7 +374,9 @@ const MatchBgm = {
   },
 
   playNow() {
+    if (!this.blobUrl) return;
     const el = this.ensure();
+    if (!el.src) el.src = this.blobUrl;
     this.applyGain();
     if (this.volume <= 0) {
       el.pause();
@@ -332,13 +387,7 @@ const MatchBgm = {
     if (play && typeof play.catch === "function") play.catch(() => {});
   },
 
-  /** Arm playback; actual start is deferred so match-start sockets stay snappy. */
-  start() {
-    if (this.wanted && (this.startTimer != null || (this.el && !this.el.paused))) {
-      this.wanted = true;
-      return;
-    }
-    this.wanted = true;
+  schedulePlay() {
     this.clearStartTimer();
     this.startTimer = setTimeout(() => {
       this.startTimer = null;
@@ -347,20 +396,30 @@ const MatchBgm = {
     }, BGM_START_DELAY_MS);
   },
 
+  /**
+   * Arm playback for an active match. Aborts any in-flight download so BGM
+   * cannot compete with Socket.IO; plays only if the blob is already local.
+   */
+  start() {
+    this.wanted = true;
+    this.allowNetwork = false;
+    this.abortPrefetch();
+    if (!this.blobUrl) return;
+    if (this.el && !this.el.paused) return;
+    this.schedulePlay();
+  },
+
   stop() {
     this.clearStartTimer();
-    if (!this.wanted && (!this.el || this.el.paused)) {
-      this.wanted = false;
-      return;
-    }
     this.wanted = false;
+    this.allowNetwork = true;
     if (!this.el) return;
     this.el.pause();
     this.el.currentTime = 0;
   },
 
   unlock() {
-    if (!this.wanted || this.volume <= 0) return;
+    if (!this.wanted || this.volume <= 0 || !this.blobUrl) return;
     if (this.startTimer != null) return;
     this.playNow();
   },
@@ -385,6 +444,11 @@ export function getBgmVolume() {
 
 export function setBgmVolume(value) {
   MatchBgm.setVolume(value);
+}
+
+/** Download match BGM fully before play; call from lobby/landing, never mid-match. */
+export function prefetchMatchBgm() {
+  return MatchBgm.prefetch();
 }
 
 export function startMatchBgm() {

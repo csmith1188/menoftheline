@@ -9,13 +9,14 @@ import {
 import {
   canOccupy,
   clampPaceMove,
+  computeTerrainFx,
   featuresUnder,
   hasShotLos,
   isEnemyVisible,
   moveSpeedFactor,
   playerPacesFromProgress,
   progressFromPlayerPaces,
-  refreshTerrainFx,
+  setTerrainFx,
   shootRangeFactor,
   snapshotTerrain,
   terrainCover,
@@ -4880,6 +4881,11 @@ export class GameSim {
     this.tick = 0;
     /** Named map preset (terrain layout). */
     this.mapId = CONFIG.defaultMapId;
+    /** Per-match pontoon / Engineer LOS overlay (installed into terrain helpers while this sim runs). */
+    this.terrainFx = computeTerrainFx(
+      { player: this.player.troops, enemy: this.enemy.troops },
+      this.mapId,
+    );
     /** Eased lane shares. Income and the drawn line both use these. */
     this.shownTop = 0.5;
     this.shownBottom = 0.5;
@@ -4918,11 +4924,18 @@ export class GameSim {
     return troop;
   }
 
+  /** Rebuild and install this match's terrain overlay (avoids clobbering other rooms). */
   syncTerrainFx() {
-    refreshTerrainFx(
+    this.terrainFx = computeTerrainFx(
       { player: this.player.troops, enemy: this.enemy.troops },
       this.mapId,
     );
+    setTerrainFx(this.terrainFx);
+  }
+
+  /** Install this match's overlay before reading terrain helpers. */
+  installTerrainFx() {
+    setTerrainFx(this.terrainFx);
   }
 
   /**
@@ -4999,6 +5012,7 @@ export class GameSim {
   /** Movement, capture, guns, and the capital win check. */
   finishStep(dt) {
     if (this.winner) return;
+    // Recompute + install before any LOS / pontoon reads this step.
     this.syncTerrainFx();
     this.clearPushbackTickFlags(this.player);
     this.clearPushbackTickFlags(this.enemy);
@@ -5046,18 +5060,32 @@ export class GameSim {
       player: this.player.troops,
       enemy: this.enemy.troops,
     };
-    const terrain = forSideId
-      ? snapshotTerrain(forSideId, troopsBySide, this.mapId)
-      : snapshotTerrain("player", troopsBySide, this.mapId);
+    // Install this match's FX; skip global refresh inside snapshotTerrain so
+    // concurrent rooms do not overwrite each other mid-broadcast.
+    this.installTerrainFx();
+    const terrain = snapshotTerrain(
+      forSideId || "player",
+      troopsBySide,
+      this.mapId,
+      { skipFxRefresh: true },
+    );
 
     const visibleEnemyIds = new Set();
+    const visibleEnemyById = new Map();
     if (forSideId) {
       const foe = forSideId === "player" ? this.enemy : this.player;
       for (let i = 0; i < foe.troops.length; i += 1) {
         const troop = foe.troops[i];
         if (troop.hp <= 0) continue;
-        if (isEnemyVisible(forSideId, troop, troopsBySide, this.mapId)) {
+        if (isEnemyVisible(
+          forSideId,
+          troop,
+          troopsBySide,
+          this.mapId,
+          terrain.fogRegions,
+        )) {
           visibleEnemyIds.add(troop.id);
+          visibleEnemyById.set(troop.id, troop);
         }
       }
     }
@@ -5069,11 +5097,8 @@ export class GameSim {
       // Enemy combat audio only if a visible foe sits on that row (or any foe).
       if (sound.type === "shoot" || sound.type === "melee" || sound.type === "hit") {
         if (visibleEnemyIds.size === 0) return false;
-        if (sound.lane == null) return visibleEnemyIds.size > 0;
-        for (const id of visibleEnemyIds) {
-          const foe = forSideId === "player" ? this.enemy : this.player;
-          const troop = foe.troops.find((t) => t.id === id);
-          if (!troop) continue;
+        if (sound.lane == null) return true;
+        for (const troop of visibleEnemyById.values()) {
           if (troop.lane === sound.lane
             && (sound.sublane == null || troop.sublane === sound.sublane)) {
             return true;

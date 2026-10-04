@@ -6,6 +6,7 @@ import {
   getSoundVolume,
   playCountdownBeep,
   playSounds,
+  prefetchMatchBgm,
   setBgmVolume,
   setSoundVolume,
   startMatchBgm,
@@ -113,6 +114,8 @@ function syncBgmUi() {
 
 function syncMatchBgm() {
   const status = board.status;
+  // Pull the multi-MB track during lobby/countdown so match sockets stay free.
+  if (status === "waiting" || status === "countdown") prefetchMatchBgm();
   if (status === lastBgmStatus) return;
   lastBgmStatus = status;
   if (status === "playing") startMatchBgm();
@@ -381,6 +384,9 @@ document.addEventListener("pointerdown", (event) => {
   menu.classList.add("hidden");
   gear.setAttribute("aria-expanded", "false");
 });
+
+// Warm BGM while the play page / lobby is idle (never during match sockets).
+prefetchMatchBgm();
 
 function frame() {
   board.render();

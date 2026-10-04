@@ -121,6 +121,14 @@ export const CONFIG = {
   capitalCannonAttackCooldown: 1,
   /** Paces subtracted from Keep distance when ranking ranged targets only. */
   keepTargetDistanceOffsetPaces: 50,
+  /**
+   * When true, after picking the closest eligible target (or best
+   * Skirmisher/Rifles tier), if other eligible targets share an In Line
+   * station with that pick, aim at the one whose row is closest to the
+   * shooter. Equal row distance breaks by closer shot paces. Spreads
+   * volleys across a facing line instead of stacking on one body.
+   */
+  preferNearestRowAmongAlignedTargets: true,
 
   // Combat rules (not per-unit stats)
 
@@ -137,7 +145,7 @@ export const CONFIG = {
    * Fatigue lost per second while halted (outside own keep range).
    * Charge or melee contact uses fatigueCombatRate to gain instead.
    */
-  fatigueIdleRate: 1,
+  fatigueIdleRate: 2,
   /** Fatigue per second while charging or in melee contact (not stacked). */
   fatigueCombatRate: 4,
   /** Flat fatigue added when hit by a ranged shot. */
@@ -152,6 +160,11 @@ export const CONFIG = {
   perfectLinePaces: 1,
   /** Along-lane reach from a unit's center that still counts as one line, in paces. */
   inLinePaces: 8,
+  /**
+   * Troop shooting line bonus per other eligible troop in the line.
+   * Scaled by Perfect→In Line neighbor quality before it is applied.
+   */
+  troopLineBonus: 0.25,
   /** Along-lane reach from a unit's center that its footprint covers, in paces. */
   footprintPaces: 12,
   /** Gun shell: max gap between footprint edges to continue to the next body. */
@@ -159,7 +172,7 @@ export const CONFIG = {
   /** Cross-lane shots must also be shorter than this path back through your keep. */
   crossLaneMaxPaces: 200,
   /** Fort center, in paces forward from each keep. */
-  fortDistancePaces: 250,
+  fortDistancePaces: 200,
   /** Officer and color-guard restore reach, in paces along the lane. */
   officerRestorePaces: 60,
   /**
@@ -178,17 +191,37 @@ export const CONFIG = {
   /** Flat fatigue added when hit in melee or when making a melee attack. */
   fatigueOnMelee: 2,
   /** Pushback counter points needed to force one pace back. */
-  pushbackPerPace: 1.5,
+  pushbackPerPace: 2,
   /** Fatigue added when a melee/hit pushback pace is blocked behind. */
-  fatiguePerPace: 1,
-  /** Seconds to ease the first queued pushback pace (near-instant). */
-  pushbackEaseMin: 0.05,
-  /** Extra seconds of ease duration per later queued pace. */
-  pushbackEaseStep: 0.1,
+  fatiguePerPace: 0.5,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
-  /** Incoming damage removed while overlapping your fort in this lane. */
+  /**
+   * Incoming damage removed by fort cover: unit at or behind its fort
+   * while the attacker is past that fort (outside the fort footprint).
+   * Also used for hill (neutral fort) and woods cover.
+   */
   quarterArmor: 0.2,
+
+  // Terrain
+
+  /** Named map preset used when a match does not pick another. */
+  defaultMapId: "default",
+  /**
+   * Hill slope speed delta: before hill center (from own keep) ×(1 − this),
+   * after ×(1 + this). At exact center ×1.
+   */
+  hillSlope: 0.5,
+  /** Extra shoot range while a unit's centerline is on a hill footprint. */
+  hillRangeBonus: 0.1,
+  /** Move speed multiplier while on woods. */
+  woodsSlow: 0.5,
+  /** Move speed multiplier for infantry on peaks (cavalry/artillery blocked). */
+  peakSlow: 0.5,
+  /** Move speed multiplier for infantry crossing a river. */
+  riverInfantrySlow: 0.5,
+  /** Move speed multiplier for cavalry crossing a river (artillery blocked). */
+  riverCavalrySlow: 0.25,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,
   /** Pixels per second the splat rises. */

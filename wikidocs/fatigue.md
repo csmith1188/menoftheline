@@ -8,10 +8,10 @@ Every unit starts with an empty fatigue bar that fills at 100.
 - Charging, Retreating, or standing in melee adds fatigue over time. See [[Orders]].
 - Halting removes fatigue over time. Blue + signs rise while Halt recovers fatigue.
 - When a pushback pace cannot move the unit back because a friendly blocks it, that pace still counts and adds fatigue (guns ignore fatigue on blocked recoil). See [[Melee]] and [[Shooting]].
-- Your keep restores fatigue while you are in range. It also restores health, but only while no enemy stands behind either of your forts. Green + signs rise while health is restored. Officers, Color Guards, and the keep's restore are on [[Units]].
+- Your keep restores fatigue while you are in range. It also restores health, but only while no enemy stands at or behind either of your forts (the clear-fort check). Green + signs rise while health is restored. That same clear-fort check is used for the selected-unit Cover readout on [[The Map]]. Officers, Color Guards, and the keep's restore are on [[Units]].
 
 **Restore + signs.** Health restore shows green +. Halt fatigue restore shows blue +. With one restore source active, + signs appear at a quarter of the old heal rate. With two sources, they alternate at half rate. With three or more, they alternate at full rate (for example blue/green, green/green, or blue/green/green).
 
 When a unit is hit, roll from 1 to 100. If the roll is less than its fatigue percent minus its remaining health percent, it becomes Broken.
 
-A Broken unit takes no orders. It Retreats until fatigue is full or it reaches its own end of the lane, then Falls Back. It recovers fatigue while it is not Retreating. It stops being Broken, and returns to Advance, when its fatigue is at or below half of its current health. Retreat and Fall Back are on [[Orders]]. A Broken unit is never part of a line. See [[Lines]]. It also does not count toward [[The Middle Line]].
+A Broken unit takes no orders. It Retreats until fatigue is full or it reaches its own end of the lane, then Falls Back. If impassable terrain blocks that withdrawal on its current row (peaks for cavalry and artillery, rivers for artillery), it steps to a clear adjacent row and keeps going. It recovers fatigue while it is not Retreating. It stops being Broken, and returns to Advance, when its fatigue is at or below half of its current health. Retreat and Fall Back are on [[Orders]]. A Broken unit is never part of a line. See [[Lines]]. It also does not count toward [[The Middle Line]].

@@ -567,6 +567,11 @@ function drawLanes(ctx, w, h) {
   const cover = quarterSegments()[0];
   const at = toScreen(frame, cover.x1, (cover.y1 + cover.y2) / 2);
   ink(ctx, "cover", Math.max(36, at.x - 8), at.y, CONFIG.colors.player, 12, "right");
+  const hillPaces = CONFIG.topLanePaces / 3;
+  const hillT = hillPaces / CONFIG.topLanePaces;
+  const hillPt = Path.pointAt(Path.worldPoints("top", 0), hillT);
+  const hillAt = toScreen(frame, hillPt.x, hillPt.y);
+  ink(ctx, "terrain ⛰️", hillAt.x, Math.max(14, hillAt.y - 16), CONFIG.colors.text, 11);
   const town = townSpots()[2];
   const townAt = toScreen(frame, town.x, town.y);
   ink(ctx, "towns", townAt.x, Math.min(h - 12, townAt.y + 22), CONFIG.colors.text, 12);
@@ -860,6 +865,7 @@ const howtoPages = [
         items: [
           "Push the line in the top lane to gain more gold and build more units.",
           "Push the line in the bottom lane to gain more land and build better units and upgrades.",
+          "Forts grant cover to units at or behind them against attackers past the fort (selected-unit Cover shows while your fort lines are clear).",
         ],
       },
     ],
@@ -910,7 +916,7 @@ const howtoPages = [
           "Swipe forward to Charge.",
           "Swipe back to Fall Back.",
           "Long press or right-click a single unit to issue orders to only that unit (ignore lines).",
-          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
+          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
         ],
       },
     ],
@@ -925,6 +931,8 @@ const howtoPages = [
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
           "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+          "Among same-priority targets In Line across rows, aim at the nearer row (then closer). The keep counts as your row.",
+          "Troop line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
         ],
@@ -962,7 +970,7 @@ const howtoPages = [
           "Units already moving back (Retreat, Fall Back, charge reverse, peel) ignore pushback.",
           "Guns recoil themselves when they fire. The Keep gun pushes units but never recoils or gets pushed.",
           "Grenadiers take half of all incoming pushback.",
-          "Stacked paces ease through fast at first, then slower.",
+          "Stacked paces apply one instant step per tick.",
         ],
       },
     ],

@@ -1,6 +1,13 @@
 import { CONFIG, pointerHitReach } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
-import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
+import {
+  Path,
+  distance,
+  fortsClearOfEnemies,
+  inOwnFortCoverZone,
+  pointToSegment,
+} from "../shared/path.js";
+import { TERRAIN_EMOJI } from "../shared/terrain.js";
 
 /** Per-lane grand strategy cycle (Bastion → Attrition → Terror). */
 export const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -1005,6 +1012,33 @@ function lineSlack(troop) {
   return Path.stationSlack(troop.lane, "line", radius);
 }
 
+function perfectSlack(troop) {
+  return Path.stationSlack(troop.lane, "parallel");
+}
+
+/** 1 at Perfect Line, 0 at the In Line edge, linear between. */
+function lineOverlapRatio(a, b) {
+  const gap = Math.abs(troopStation(a) - troopStation(b));
+  const perfect = perfectSlack(a);
+  const inLine = lineSlack(a);
+  if (gap <= perfect) return 1;
+  if (gap >= inLine || !(inLine > perfect)) return 0;
+  return 1 - (gap - perfect) / (inLine - perfect);
+}
+
+/** Average Perfect→In Line quality vs adjacent-row members of this line. */
+function lineNeighborQuality(troop, line) {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    const mate = line[i];
+    if (mate === troop || Math.abs(troop.sublane - mate.sublane) !== 1) continue;
+    sum += lineOverlapRatio(troop, mate);
+    n += 1;
+  }
+  return n > 0 ? sum / n : 0;
+}
+
 function lineIsPerfect(group) {
   if (!group || group.length < 2) return true;
   const slack = Path.stationSlack(group[0].lane, "parallel");
@@ -1174,12 +1208,6 @@ function inCapitalRange(troop) {
   return distance(troop, capital) <= CONFIG.capitalCannonRange;
 }
 
-function overlapsOwnCapital(troop) {
-  const capital = troop.side && troop.side.capital;
-  if (!capital) return false;
-  return distance(troop, capital) <= CONFIG.capitalRadius + troop.bodyRadius();
-}
-
 /**
  * "color" while a color guard is restoring this unit, "officer" for a
  * plain officer, or null when nobody nearby is restoring.
@@ -1211,9 +1239,11 @@ function activeBonuses(board, troop, allies) {
   const enemies = foes ? foes.troops : [];
   const labels = [];
 
-  const mates = lineSize(troop, allies) - 1;
-  if (stats.lineBonus && mates > 0) {
-    labels.push(`Line +${Math.round(mates * stats.lineBonus * 100)}%`);
+  const line = lineGroup(troop, allies);
+  const mates = line.length - 1;
+  if (troop.type === "troop" && CONFIG.troopLineBonus > 0 && mates > 0) {
+    const pct = mates * CONFIG.troopLineBonus * lineNeighborQuality(troop, line);
+    labels.push(`Line +${Math.round(pct * 100)}%`);
   }
 
   if (troop.order === "charge" && stats.chargeMultiplier && stats.chargeMultiplier !== 1) {
@@ -1236,7 +1266,8 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Flank ${multText(stats.flankMultiplier)}`);
   }
 
-  if (touchesQuarterLine(troop) || overlapsOwnCapital(troop)) {
+  // Cover while at/behind own fort and no enemy has crossed either fort line.
+  if (side && inOwnFortCoverZone(troop) && fortsClearOfEnemies(side.id, enemies)) {
     labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
   }
 
@@ -1353,6 +1384,7 @@ function orderAnnouncement(troop, action) {
 }
 
 const SOUTHPAW_KEY = "motl-southpaw";
+const TERRAIN_LABELS_KEY = "motl-terrain-labels";
 
 export function readSouthpaw() {
   try {
@@ -1368,6 +1400,28 @@ export function writeSouthpaw(on) {
   } catch (err) {
     // Storage can be blocked; the in-memory flag still applies this session.
   }
+}
+
+/** Terrain emoji labels; off by default. */
+export function readTerrainLabels() {
+  try {
+    return localStorage.getItem(TERRAIN_LABELS_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+export function writeTerrainLabels(on) {
+  try {
+    localStorage.setItem(TERRAIN_LABELS_KEY, on ? "1" : "0");
+  } catch (err) {
+    // Storage can be blocked; the in-memory flag still applies this session.
+  }
+}
+
+/** True when terrain emojis should draw (settings toggle or training tutorial). */
+export function showTerrainLabels(board) {
+  return Boolean(board && (board.terrainLabels || board.trainingMode));
 }
 
 let troopProto = troopStateMethods;
@@ -1516,6 +1570,42 @@ export function applySnapshot(board, snap, seat, controlSide) {
     kind: splat.kind,
     age: splat.age,
   }));
+  board.mapId = snap.mapId || snap.terrain && snap.terrain.mapId || CONFIG.defaultMapId;
+  const rawFeatures = (snap.terrain && snap.terrain.features) || [];
+  board.terrainFeatures = rawFeatures.map((f) => {
+    const total = Path.lanePaces(f.lane);
+    const centerPaces = mirror ? total - f.centerPaces : f.centerPaces;
+    return {
+      id: f.id,
+      kind: f.kind,
+      lane: f.lane,
+      sublanes: f.sublanes.slice(),
+      centerPaces,
+      halfWidthPaces: f.halfWidthPaces,
+      sideId: f.sideId,
+      emoji: TERRAIN_EMOJI[f.kind] || "",
+    };
+  });
+  const rawFog = (snap.terrain && snap.terrain.fogRegions) || [];
+  board.fogRegions = rawFog.map((r) => {
+    const total = Path.lanePaces(r.lane);
+    if (!mirror) {
+      return {
+        lane: r.lane,
+        sublane: r.sublane,
+        minPaces: r.minPaces,
+        maxPaces: r.maxPaces,
+        fogged: Boolean(r.fogged),
+      };
+    }
+    return {
+      lane: r.lane,
+      sublane: r.sublane,
+      minPaces: total - r.maxPaces,
+      maxPaces: total - r.minPaces,
+      fogged: Boolean(r.fogged),
+    };
+  });
   if (board.drag) {
     const next = board.player.troops.find((troop) => troop.id === board.drag.troop.id);
     if (!next) board.drag = null;
@@ -1550,6 +1640,9 @@ export function createBoardState(canvas) {
     checkpoints: [],
     projectiles: [],
     splats: [],
+    mapId: CONFIG.defaultMapId,
+    terrainFeatures: [],
+    fogRegions: [],
     drag: null,
     buyDrag: null,
     strategyDrag: null,
@@ -1574,6 +1667,7 @@ export function createBoardState(canvas) {
     countdownLocalEnd: null,
     cssScale: 1,
     southpaw: readSouthpaw(),
+    terrainLabels: readTerrainLabels(),
     topCenter: 0.5,
     bottomCenter: 0.5,
     topCenterTo: 0.5,

@@ -337,12 +337,104 @@ export function quarterThickness() {
   }
 
 
+/** Footprint reach used for fort overlap, in paces from the fort center. */
+export function fortFootprintPaces() {
+  return CONFIG.footprintPaces * 2;
+}
+
+/** Shared 0..1 coordinate from the player keep (server Unit or client troop). */
+export function troopLaneT(troop) {
+  if (!troop) return 0;
+  if (typeof troop.laneT === "function") return troop.laneT();
+  const sideId = troop.side && troop.side.id;
+  return sideId === "player" ? (troop.progress || 0) : 1 - (troop.progress || 0);
+}
+
 /** True when this footprint overlaps its own fort in this lane. */
 export function touchesQuarterLine(troop) {
     const sideId = troop.side && troop.side.id;
-    if (!sideId || !troop.lane || !troop.station) {
+    if (!sideId || !troop.lane) {
       return false;
     }
-    const fort = Path.fortStation(troop.lane, sideId);
-    return Math.abs(troop.station() - fort) <= Path.stationSlack(troop.lane, "block");
+    if (typeof troop.station === "function") {
+      const fort = Path.fortStation(troop.lane, sideId);
+      return Math.abs(troop.station() - fort) <= Path.stationSlack(troop.lane, "block");
+    }
+    // Client troops: compare along-lane paces to the fort.
+    const paces = pacesFromKeepOf(troop, sideId);
+    if (paces == null) return false;
+    return Math.abs(paces - CONFIG.fortDistancePaces) <= fortFootprintPaces();
   }
+
+/**
+ * Paces from a keep to a body along that body's lane.
+ * Works for server Units, client snapshot troops (progress + side), and
+ * keeps / Sides (0 from own keep, lane length from the other).
+ */
+export function pacesFromKeepOf(body, keepSideId, lane) {
+  if (!body) return null;
+  if (typeof body.pacesFromKeep === "function") {
+    return body.pacesFromKeep(keepSideId);
+  }
+  // Keep / Side attacker: no lane of its own.
+  if (body.capitalHP !== undefined || (body.capital && body.id)) {
+    const ownId = body.id;
+    if (ownId === keepSideId) return 0;
+    const useLane = lane || "top";
+    return Path.lanePaces(useLane);
+  }
+  const useLane = body.lane || lane;
+  if (!useLane || !body.side) return null;
+  const total = Path.lanePaces(useLane);
+  const fromPlayer = troopLaneT(body) * total;
+  return keepSideId === "player" ? fromPlayer : total - fromPlayer;
+}
+
+/**
+ * True when no living foe stands between this side's keep and either fort
+ * (paces from keep ≤ fort distance). Same rule as keep health restore.
+ */
+export function fortsClearOfEnemies(sideId, foes) {
+  const limit = CONFIG.fortDistancePaces;
+  const list = foes || [];
+  for (let i = 0; i < list.length; i += 1) {
+    const foe = list[i];
+    if (!foe || foe.hp <= 0) continue;
+    const paces = pacesFromKeepOf(foe, sideId);
+    if (paces != null && paces <= limit) return false;
+  }
+  return true;
+}
+
+/**
+ * True when the defender is at or behind its own fort and the attacker
+ * is past that fort (outside the fort footprint, toward the enemy).
+ * Shooting into or through a fort from in front grants cover; standing
+ * in the fort with the attacker, or being shot from behind it, does not.
+ */
+export function hasFortCover(defender, attacker) {
+  const sideId = defender && defender.side && defender.side.id;
+  if (!sideId || !defender.lane || !attacker) return false;
+
+  const fort = CONFIG.fortDistancePaces;
+  const slack = fortFootprintPaces();
+  const defPaces = pacesFromKeepOf(defender, sideId);
+  // At or behind: inside the fort footprint, or closer to own keep.
+  if (defPaces == null || !(defPaces <= fort + slack)) return false;
+
+  const atkPaces = pacesFromKeepOf(attacker, sideId, defender.lane);
+  if (atkPaces == null) return false;
+  // Attacker must be strictly past the fort footprint.
+  return atkPaces > fort + slack;
+}
+
+/** True when this body is at or behind its own fort (cover zone). */
+export function inOwnFortCoverZone(troop) {
+  const sideId = troop && troop.side && troop.side.id;
+  if (!sideId || !troop.lane) return false;
+  const paces = pacesFromKeepOf(troop, sideId);
+  if (paces == null) return false;
+  const fort = CONFIG.fortDistancePaces;
+  const slack = fortFootprintPaces();
+  return paces <= fort + slack;
+}

@@ -94,6 +94,84 @@ describe("infantry formation", () => {
     assert.equal(reforms, 0);
     assert.equal(a.order, "reform");
   });
+
+  it("clears a same-row stack before reforming so the trailer is not jammed", () => {
+    const sim = makeSim();
+    const bot = makeBot("simple");
+    const front = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 1 });
+    const trailer = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 2 });
+    const stacker = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 2 });
+    const spp = (() => {
+      const saved = front.progress;
+      const before = front.station();
+      front.progress = saved - 0.01;
+      front.syncPosition();
+      const after = front.station();
+      front.progress = saved;
+      front.syncPosition();
+      return Math.abs(before - after) / 0.01;
+    })();
+    trailer.progress = front.progress - 6 / spp;
+    trailer.syncPosition();
+    stacker.progress = front.progress - 2 / spp;
+    stacker.syncPosition();
+    silence(sim);
+
+    stepBot(bot, sim);
+    assert.notEqual(front.order, "reform", "must not reform into the stack");
+    assert.ok(
+      trailer.switch != null
+        || stacker.switch != null
+        || stacker.sublane !== 2
+        || trailer.sublane !== 2,
+      "stack must start clearing before reform",
+    );
+
+    const dt = 0.05;
+    let jam = 0;
+    for (let n = 0; n < 300; n += 1) {
+      if (!sim.beginStep(dt)) break;
+      bot.act(sim);
+      sim.finishStep(dt);
+      for (const unit of [front, trailer, stacker]) {
+        if (unit.order !== "reform") continue;
+        for (const other of sim.player.troops) {
+          if (unit !== other && unit.isBlockedBy(other)) jam += 1;
+        }
+      }
+    }
+    assert.equal(jam, 0, `reform jam frames: ${jam}`);
+    assert.ok(trailer.isParallelTo(front) || stacker.isParallelTo(front));
+  });
+
+  it("steps off a non-troop blocker instead of reforming into it", () => {
+    const sim = makeSim();
+    const bot = makeBot("simple");
+    const front = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 1 });
+    const trailer = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 2 });
+    const gun = spawn(sim, "player", "cannon", "top", {
+      progress: 0.4, sublane: 2, order: "halt",
+    });
+    const spp = (() => {
+      const saved = front.progress;
+      const before = front.station();
+      front.progress = saved - 0.01;
+      front.syncPosition();
+      const after = front.station();
+      front.progress = saved;
+      front.syncPosition();
+      return Math.abs(before - after) / 0.01;
+    })();
+    trailer.progress = front.progress - 6 / spp;
+    trailer.syncPosition();
+    gun.progress = front.progress - 2 / spp;
+    gun.syncPosition();
+    silence(sim);
+
+    stepBot(bot, sim);
+    assert.notEqual(front.order, "reform");
+    assert.ok(trailer.switch != null || trailer.sublane !== 2);
+  });
 });
 
 describe("skirmishers", () => {

@@ -1,6 +1,7 @@
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
+import { TERRAIN_TINT } from "../shared/terrain.js";
 import { drawDebugRanges } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
 import {
@@ -9,14 +10,24 @@ import {
   createBoardState,
   inspectReadout,
   readSouthpaw,
+  readTerrainLabels,
+  showTerrainLabels,
   sideStateMethods,
   townStateMethods,
   troopStateMethods,
   useDrawPrototypes,
   writeSouthpaw,
+  writeTerrainLabels,
 } from "./board.js";
 
-export { applySnapshot, readSouthpaw, writeSouthpaw };
+export {
+  applySnapshot,
+  readSouthpaw,
+  writeSouthpaw,
+  readTerrainLabels,
+  writeTerrainLabels,
+  showTerrainLabels,
+};
 
 function drawProjectile(ctx, shot) {
   const shell = UNIT_STATS.troop;
@@ -388,7 +399,29 @@ const boardMethods = {
   },
 
 
-  /** Stroke every sublane so the 5-wide top and 3-wide U are visible. */
+  /** Stroke a pace interval along one sublane polyline/arc. */
+  strokeLaneInterval(ctx, lane, sublane, minPaces, maxPaces) {
+    const total = Path.lanePaces(lane);
+    if (!(total > 0) || !(maxPaces > minPaces)) return;
+    const t0 = Math.max(0, minPaces / total);
+    const t1 = Math.min(1, maxPaces / total);
+    if (!(t1 > t0)) return;
+    const pts = Path.worldPoints(lane, sublane);
+    const steps = lane === "bottom" ? Math.max(2, Math.ceil((t1 - t0) * 24)) : 1;
+    ctx.beginPath();
+    for (let k = 0; k <= steps; k += 1) {
+      const t = t0 + ((t1 - t0) * k) / steps;
+      const p = Path.pointAt(pts, t);
+      if (k === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+  },
+
+  /**
+   * Row segments between keeps and terrain. Fogged open segments draw dark;
+   * terrain footprints are drawn separately and are not darkened here.
+   */
   drawLanes(ctx) {
     const left = CONFIG.playerCapital;
     const right = CONFIG.enemyCapital;
@@ -404,28 +437,111 @@ const boardMethods = {
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
-    ctx.strokeStyle = CONFIG.colors.topSublane;
-    ctx.lineWidth = CONFIG.topSublaneWidth;
-    for (let s = 0; s < CONFIG.topSublaneCount; s += 1) {
-      const pts = Path.worldPoints("top", s);
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      ctx.lineTo(pts[1].x, pts[1].y);
-      ctx.stroke();
-    }
+    const fogRegions = this.fogRegions || [];
+    const features = this.terrainFeatures || [];
 
-    ctx.strokeStyle = CONFIG.colors.bottomSublane;
-    ctx.lineWidth = CONFIG.bottomSublaneWidth;
-    const ring = Path.bottomCenter();
-    for (let s = 0; s < CONFIG.bottomSublaneCount; s += 1) {
-      ctx.beginPath();
-      ctx.arc(ring.x, ring.y, Path.bottomRadius(s), Math.PI, 0, true);
-      ctx.stroke();
-    }
+    const drawRowBase = (lane, count, litColor, fogColor, width) => {
+      ctx.lineWidth = width;
+      for (let s = 0; s < count; s += 1) {
+        const total = Path.lanePaces(lane);
+        // Terrain intervals on this row (normal base under footprints).
+        const terrainCuts = [];
+        for (let i = 0; i < features.length; i += 1) {
+          const f = features[i];
+          if (f.lane !== lane || f.sublanes.indexOf(s) < 0) continue;
+          const half = f.halfWidthPaces || 0;
+          terrainCuts.push({
+            min: Math.max(0, f.centerPaces - half),
+            max: Math.min(total, f.centerPaces + half),
+          });
+        }
+        terrainCuts.sort((a, b) => a.min - b.min);
+        const open = fogRegions.filter((r) => r.lane === lane && r.sublane === s);
+
+        if (!open.length && !terrainCuts.length) {
+          ctx.strokeStyle = litColor;
+          this.strokeLaneInterval(ctx, lane, s, 0, total);
+          continue;
+        }
+
+        for (let i = 0; i < open.length; i += 1) {
+          const r = open[i];
+          ctx.strokeStyle = r.fogged ? fogColor : litColor;
+          this.strokeLaneInterval(ctx, lane, s, r.minPaces, r.maxPaces);
+        }
+        // Base stroke under terrain footprints (never fog-darkened).
+        ctx.strokeStyle = litColor;
+        for (let i = 0; i < terrainCuts.length; i += 1) {
+          this.strokeLaneInterval(ctx, lane, s, terrainCuts[i].min, terrainCuts[i].max);
+        }
+      }
+    };
+
+    drawRowBase(
+      "top",
+      CONFIG.topSublaneCount,
+      CONFIG.colors.topSublane,
+      "#1a2e28",
+      CONFIG.topSublaneWidth,
+    );
+    drawRowBase(
+      "bottom",
+      CONFIG.bottomSublaneCount,
+      CONFIG.colors.bottomSublane,
+      "#2a2218",
+      CONFIG.bottomSublaneWidth,
+    );
 
     this.drawQuarterLines(ctx);
+    this.drawTerrain(ctx);
     this.drawTopCenter(ctx);
     this.drawBottomCenter(ctx);
+  },
+
+  /**
+   * Stroke terrain footprints on the same polylines/arcs as rows, with
+   * emoji labels. Footprints are not fog-darkened.
+   */
+  drawTerrain(ctx) {
+    const features = this.terrainFeatures || [];
+    if (!features.length) return;
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (let i = 0; i < features.length; i += 1) {
+      const f = features[i];
+      const total = Path.lanePaces(f.lane);
+      if (!(total > 0)) continue;
+      const half = f.halfWidthPaces || 0;
+      const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.4)";
+      const width = f.lane === "top" ? CONFIG.topSublaneWidth : CONFIG.bottomSublaneWidth;
+      for (let s = 0; s < f.sublanes.length; s += 1) {
+        const sub = f.sublanes[s];
+        ctx.lineWidth = width;
+        ctx.strokeStyle = tint;
+        ctx.globalAlpha = 0.55;
+        this.strokeLaneInterval(
+          ctx,
+          f.lane,
+          sub,
+          f.centerPaces - half,
+          f.centerPaces + half,
+        );
+        const mid = Path.pointAt(
+          Path.worldPoints(f.lane, sub),
+          Math.max(0, Math.min(1, f.centerPaces / total)),
+        );
+        if (f.emoji && showTerrainLabels(this)) {
+          ctx.globalAlpha = 0.95;
+          ctx.font = `${Math.round(width * 1.1)}px serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#111";
+          ctx.fillText(f.emoji, mid.x, mid.y);
+        }
+      }
+    }
+    ctx.restore();
   },
 
   drawQuarterLines(ctx) {

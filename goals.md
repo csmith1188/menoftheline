@@ -1,20 +1,20 @@
 # Bugs
 
 # Ideas
-- fort melee bonus if enemy is not also in it
 - officers make order sounds when near lines given orders
-- Click, drag, long press (or rmb drag) to set a target
 - Reinforced Learning player
 - Game -> Client API
 - Site Services -> Client API (play without ever visiting site)
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories
+- Line select. Probably won't do because micro feels kinda good
+    - could make columns good (move faster in column) and in turn, field guns
+    - no long press. click to select.
+    - select lines by dragging across the lane in a line
+    - select columns by dragging across a row in a line
+    - telescope mode: swipe on the green field to pan. tap to zoom out. swiping no longer switches lanes
 
 # Feature
-- no long press. click to select.
-- select lines by dragging across the lane in a line
-- select columns by dragging across a row in a line
-- telescope mode: swipe on the green field to pan. tap to zoom out. swiping no longer switches lanes
 
 - ~~Remove Grand Strategies?~~ (disabled; Bastion default; restore in another mode)
 - Late game land?
@@ -31,28 +31,20 @@
 # Units
 
 # Roadmap
-- terrain:
-    - Blocked LOS creates fog of war in that lane (server/client comms about unit position)
-    - hills -> neutral forts
-    - woods -> block LoS unless inside, cover and slow
-    - river -> allow infantry, blocks horse and gun
-    - peaks -> block los unless inside, slow infantry, blocks horse and gun
-    - bridge -> cannot switch lanes
-    - fort blocks los
 - Bottom Lane Units
     - Militiamen
-        - Cheap troop for spam with poor endurance and discipline
+        - Cheap troop for spam with poor damage, endurance, and discipline
     - Guerillas
         - Not shown to enemy (server side) unless within 10 paces or shot within the last second
-        - Terrain ambush (always flanking when in terrain. move full speed?)
+        - Can see through woods and peaks when touching them, but cannot be seen as woods work now. Change default woods behavior to showing all units in its footprint except Guerillas.
+        - Isn't slown by terrain
     - Light Calvary
-        - Raiding towns
-        - Must attack single units in packs
-        - Terrain speed
-    - Horse Guns. Faster, less range and damage
+        - Isn't slown by terrain, but still blocked by peaks
+        - Similar to troop bonus, gets pack bonus for every other calvary in melee with units this unit is in melee with
+    - Horse Guns
+        - Faster, less range and damage
     - engineer unit, interacts with terrain behind it within an area
-        - adds pontoons to rivers
-        - can walk over mountains at half speed
-        - can shoot through woods
-        - can cancel fort cover
-        - increases range of nearby units when on a hill
+        - can see unblock LOS of terrain within officer range
+        - pontoons: turns rivers within officer range into bridge
+            - cannons on bridges that revert back to rivers peel back towards their own keep
+        - when on a hill, passes the hill bonus to units within officer range

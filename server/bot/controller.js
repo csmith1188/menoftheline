@@ -125,6 +125,17 @@ export class BotController {
       if (decisions[i].formation === "wait") issued.add(decisions[i].unit.id);
     }
 
+    // Clear same-row stacks before Reform. Reform recruits the whole seek
+    // chain and no longer sidesteps blockers, so a Reform issued first
+    // freezes the body that still needed to switch.
+    for (let i = 0; i < decisions.length; i += 1) {
+      const decision = decisions[i];
+      if (issued.has(decision.unit.id)) continue;
+      if (!decision.formation || decision.formation.action !== "switch") continue;
+      cmds.switchRow(sim, decision.unit, decision.formation.sublane);
+      issued.add(decision.unit.id);
+    }
+
     for (let i = 0; i < decisions.length; i += 1) {
       const decision = decisions[i];
       if (!decision.formation || decision.formation === "wait") continue;
@@ -148,14 +159,6 @@ export class BotController {
     }
     for (let i = 0; i < decisions.length; i += 1) {
       if (decisions[i].unit.order === "reform") issued.add(decisions[i].unit.id);
-    }
-
-    for (let i = 0; i < decisions.length; i += 1) {
-      const decision = decisions[i];
-      if (issued.has(decision.unit.id)) continue;
-      if (!decision.formation || decision.formation.action !== "switch") continue;
-      cmds.switchRow(sim, decision.unit, decision.formation.sublane);
-      issued.add(decision.unit.id);
     }
 
     const seen = new Set();

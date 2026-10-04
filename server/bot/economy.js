@@ -135,6 +135,14 @@ export function chooseSpawnKey(side, base, profile, ctx) {
   return base;
 }
 
+/** How freely the lane front can march (1 = clear, lower = slowed by terrain). */
+function laneFrontMoveFactor(info) {
+  const front = info.troopFront;
+  if (!front) return 1;
+  if (typeof front.terrainMoveFactor === "function") return front.terrainMoveFactor();
+  return 1;
+}
+
 function urgencyOf(snapshot, lane, profile) {
   const info = snapshot.lanes[lane];
   const threat = info.threat * CONFIG.botUrgencyThreat;
@@ -156,6 +164,9 @@ function urgencyOf(snapshot, lane, profile) {
       opportunity += CONFIG.botUrgencyOpportunity * 0.5;
     }
   }
+  // Slow terrain at the front makes opportunistic pushes less urgent.
+  const move = laneFrontMoveFactor(info);
+  if (move < 0.95) opportunity *= Math.max(0.5, move);
   return threat + disadvantage + shareDeficit + economy + garrison + opportunity;
 }
 

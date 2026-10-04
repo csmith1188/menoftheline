@@ -167,13 +167,20 @@ const ShotTone = {
     else ctx.resume().then(start).catch(() => {});
   },
 
-  /** Quick high-passed noise tick for a melee hit. */
-  playMelee() {
+  /**
+   * High-passed noise hit. `playbackRate` 2 = one octave up (tighter / brighter).
+   */
+  playNoiseHit({
+    life = 0.04,
+    decay = 0.03,
+    highpass = 1800,
+    volume = 0.14,
+    playbackRate = 1,
+  } = {}) {
     if (this.volume <= 0) return;
     const ctx = this.unlock();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const life = 0.04;
     const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * life), ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < data.length; i += 1) {
@@ -181,17 +188,59 @@ const ShotTone = {
     }
     const src = ctx.createBufferSource();
     src.buffer = buffer;
+    src.playbackRate.setValueAtTime(playbackRate, now);
     const filter = ctx.createBiquadFilter();
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(1800, now);
+    filter.frequency.setValueAtTime(highpass, now);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + decay);
     src.connect(filter);
     filter.connect(gain);
     gain.connect(this.master);
     src.start(now);
-    src.stop(now + life);
+    src.stop(now + life / playbackRate + 0.02);
+  },
+
+  /** Longer snare-like noise for a melee hit. */
+  playMelee() {
+    this.playNoiseHit({
+      life: 0.14,
+      decay: 0.12,
+      highpass: 1400,
+      volume: 0.16,
+      playbackRate: 1,
+    });
+  },
+
+  /** Closed hi-hat: same melee noise, one octave up. */
+  playRangedHit() {
+    this.playNoiseHit({
+      life: 0.05,
+      decay: 0.035,
+      highpass: 3600,
+      volume: 0.11,
+      playbackRate: 2,
+    });
+  },
+
+  /** Bass kick for a Keep hit — sine with a quick pitch drop. */
+  playKick() {
+    if (this.volume <= 0) return;
+    const ctx = this.unlock();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.exponentialRampToValueAtTime(38, now + 0.14);
+    gain.gain.setValueAtTime(0.32, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.24);
   },
 };
 
@@ -215,6 +264,8 @@ export function playSounds(events) {
   for (let i = 0; i < events.length; i += 1) {
     const event = events[i];
     if (event.type === "melee") ShotTone.playMelee();
+    else if (event.type === "hit") ShotTone.playRangedHit();
+    else if (event.type === "keep") ShotTone.playKick();
     else ShotTone.play(event.lane, event.sublane, event.unitType, event.sideId);
   }
 }

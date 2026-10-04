@@ -16,7 +16,7 @@ import { CONFIG } from "./config.js";
  */
 const SHOT = {
   shootingPushback: 1,
-  meleePushback: 1,
+  meleePushback: 2,
   pushbackTakenFactor: 1,
   chargeMultiplier: 1.2,
   projectileSize: 4,
@@ -39,7 +39,6 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 100,
-    lineBonus: 0.2,
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -59,7 +58,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 100,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -80,7 +79,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 25,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -100,7 +99,7 @@ export const UNIT_STATS = {
     meleeCooldown: 6,
     speed: 12,
     cost: 300,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0.5,
     restoreRange: 0,
@@ -120,7 +119,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
@@ -143,7 +142,6 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 150,
-    lineBonus: 0.2,
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -166,7 +164,7 @@ export const UNIT_STATS = {
     meleeCooldown: 2,
     speed: 15,
     cost: 200,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -189,13 +187,13 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 25,
     cost: 250,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
-    meleePushback: 2,
+    meleePushback: 4,
   },
   /** Cannon: shorter reach, cannister — one shell per in-range row, no splash. */
   howitzer: {
@@ -211,7 +209,7 @@ export const UNIT_STATS = {
     meleeCooldown: 6,
     speed: 15,
     cost: 400,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 0,
@@ -235,7 +233,7 @@ export const UNIT_STATS = {
     meleeCooldown: 1.5,
     speed: 15,
     cost: 400,
-    lineBonus: 0,
+
     fightsMelee: true,
     splash: 0,
     restoreRange: 100,
@@ -246,6 +244,25 @@ export const UNIT_STATS = {
 };
 export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
+}
+
+/** Terrain mobility: infantry / cavalry / artillery. */
+const MOBILITY_CLASS = {
+  troop: "infantry",
+  grenadier: "infantry",
+  skirmisher: "infantry",
+  rifle: "infantry",
+  officer: "infantry",
+  colorGuard: "infantry",
+  dragoon: "cavalry",
+  lancer: "cavalry",
+  cannon: "artillery",
+  howitzer: "artillery",
+};
+
+/** Mobility class for terrain rules (river/peak/etc.). */
+export function mobilityClass(type) {
+  return MOBILITY_CLASS[type] || "infantry";
 }
 
 /** True when `type` is an alternate spawn key (grenadier, rifle, …). */

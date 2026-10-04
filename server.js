@@ -29,6 +29,9 @@ import {
   deleteWikiPageBySlug,
   reopenSuggestion,
   saveWikiPage,
+  bgmVolumePercent,
+  clampBgmVolumePercent,
+  setPlayerBgmVolume,
   setPlayerTooltips,
   setWikiRevisionRewarded,
   systemStats,
@@ -129,6 +132,7 @@ async function playerFromSession(sess, options = {}) {
       formbarId: account.formbar_id,
       mmr: account.mmr,
       tooltips: tooltipsEnabled(account),
+      bgmVolume: bgmVolumePercent(account),
     };
   }
   let guest = null;
@@ -143,6 +147,7 @@ async function playerFromSession(sess, options = {}) {
     formbarId: null,
     mmr: null,
     tooltips: tooltipsEnabled(guest),
+    bgmVolume: bgmVolumePercent(guest),
   };
 }
 
@@ -813,6 +818,7 @@ app.get("/play", async (req, res, next) => {
     res.render(use3d ? "play3d" : "index", {
       debugRanges: process.env.DEBUG_RANGES === "1",
       tooltipsDefault: player.tooltips !== false,
+      bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 100,
     });
   } catch (err) {
     next(err);
@@ -857,6 +863,12 @@ io.on("connection", (socket) => {
     const enabled = Boolean(on);
     if (socket.data.user) socket.data.user.tooltips = enabled;
     setPlayerTooltips(socket.data.user, enabled).catch((err) => console.error(err));
+  });
+  socket.on("bgmVolume", (percent) => {
+    if (!Number.isFinite(Number(percent))) return;
+    const value = clampBgmVolumePercent(percent);
+    if (socket.data.user) socket.data.user.bgmVolume = value;
+    setPlayerBgmVolume(socket.data.user, value).catch((err) => console.error(err));
   });
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));

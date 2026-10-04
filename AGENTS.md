@@ -84,7 +84,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 
 ### Command / socket cheat sheet
 
-- Client → server: `command` (payload to `sim.applyCommand`), also `leave`, `concede`, `tooltips`, `botSettings`, `debugPlay`.
+- Client → server: `command` (payload to `sim.applyCommand`), also `leave`, `concede`, `tooltips`, `bgmVolume`, `botSettings`, `debugPlay`.
 - Server → client: `state` (public snapshot), `lobby`, `go-home`, `replaced`.
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`.
 

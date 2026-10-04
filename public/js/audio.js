@@ -69,6 +69,10 @@ const NOTE_FREQ = {
 };
 
 const VOLUME_KEY = "motl-sound-volume";
+const BGM_VOLUME_KEY = "motl-bgm-volume";
+const BGM_BASE = "/bgm/HTL";
+/** Slider at 100% plays the file at this gain. */
+const BGM_MAX_GAIN = 0.5;
 
 function clampVolume(value) {
   const n = Number(value);
@@ -84,6 +88,33 @@ function readStoredVolume() {
   } catch (err) {
     return 1;
   }
+}
+
+function readStoredBgmVolume() {
+  const rawDefault = typeof document !== "undefined" && document.body
+    ? document.body.dataset.bgmVolumeDefault
+    : null;
+  if (rawDefault != null && rawDefault !== "") {
+    const fromDb = Number(rawDefault);
+    if (Number.isFinite(fromDb)) return clampVolume(fromDb / 100);
+  }
+  try {
+    const raw = localStorage.getItem(BGM_VOLUME_KEY);
+    if (raw == null) return 1;
+    return clampVolume(raw);
+  } catch (err) {
+    return 1;
+  }
+}
+
+/** Prefer Ogg when the browser can decode it; otherwise MP3. */
+function pickBgmSrc() {
+  const probe = typeof Audio !== "undefined" ? new Audio() : null;
+  if (probe) {
+    const ogg = probe.canPlayType("audio/ogg; codecs=vorbis") || probe.canPlayType("audio/ogg");
+    if (ogg) return `${BGM_BASE}.ogg`;
+  }
+  return `${BGM_BASE}.mp3`;
 }
 
 /** Tiny Web Audio bus for the per-sublane shot plucks. */
@@ -244,8 +275,75 @@ const ShotTone = {
   },
 };
 
+/** Looping match music from /public/bgm, started after the countdown. */
+const MatchBgm = {
+  el: null,
+  volume: readStoredBgmVolume(),
+  wanted: false,
+
+  applyGain() {
+    if (this.el) this.el.volume = this.volume * BGM_MAX_GAIN;
+  },
+
+  ensure() {
+    if (this.el) return this.el;
+    const el = new Audio();
+    el.loop = true;
+    el.preload = "auto";
+    el.src = pickBgmSrc();
+    this.el = el;
+    this.applyGain();
+    return el;
+  },
+
+  setVolume(value) {
+    this.volume = clampVolume(value);
+    this.applyGain();
+    try {
+      localStorage.setItem(BGM_VOLUME_KEY, String(this.volume));
+    } catch (err) {
+      // Storage can be blocked; the in-memory level still applies this session.
+    }
+    if (this.wanted && this.volume > 0) this.start();
+    else if (this.wanted && this.volume <= 0 && this.el) this.el.pause();
+  },
+
+  start() {
+    this.wanted = true;
+    const el = this.ensure();
+    this.applyGain();
+    if (this.volume <= 0) {
+      el.pause();
+      return;
+    }
+    if (!el.paused) return;
+    const play = el.play();
+    if (play && typeof play.catch === "function") play.catch(() => {});
+  },
+
+  stop() {
+    if (!this.wanted && (!this.el || this.el.paused)) {
+      this.wanted = false;
+      return;
+    }
+    this.wanted = false;
+    if (!this.el) return;
+    this.el.pause();
+    this.el.currentTime = 0;
+  },
+
+  unlock() {
+    if (!this.wanted || this.volume <= 0) return;
+    const el = this.ensure();
+    if (!el.paused) return;
+    const play = el.play();
+    if (play && typeof play.catch === "function") play.catch(() => {});
+  },
+};
+
 export function unlockAudio() {
   ShotTone.unlock();
+  MatchBgm.unlock();
 }
 
 export function getSoundVolume() {
@@ -254,6 +352,26 @@ export function getSoundVolume() {
 
 export function setSoundVolume(value) {
   ShotTone.setVolume(value);
+}
+
+export function getBgmVolume() {
+  return MatchBgm.volume;
+}
+
+export function setBgmVolume(value) {
+  MatchBgm.setVolume(value);
+}
+
+export function preloadMatchBgm() {
+  MatchBgm.ensure();
+}
+
+export function startMatchBgm() {
+  MatchBgm.start();
+}
+
+export function stopMatchBgm() {
+  MatchBgm.stop();
 }
 
 export function playCountdownBeep() {

@@ -1,7 +1,18 @@
 import { applySnapshot, createBoard, writeSouthpaw, writeTerrainLabels } from "./render.js";
 import { applyCountdownTiming, countdownSecondsLeft } from "./board.js";
 import { bindInput } from "./input.js";
-import { getSoundVolume, playCountdownBeep, playSounds, setSoundVolume, unlockAudio } from "./audio.js";
+import {
+  getBgmVolume,
+  getSoundVolume,
+  playCountdownBeep,
+  playSounds,
+  setBgmVolume,
+  setSoundVolume,
+  preloadMatchBgm,
+  startMatchBgm,
+  stopMatchBgm,
+  unlockAudio,
+} from "./audio.js";
 import { bindRules } from "./rules.js";
 import { bindUnitInfo } from "./unitInfo.js";
 import { readTooltipsDefault } from "./tooltips.js";
@@ -29,6 +40,8 @@ const tooltipsBtn = document.getElementById("tooltips");
 const terrainLabelsBtn = document.getElementById("terrain-labels");
 const soundVolume = document.getElementById("sound-volume");
 const soundMute = document.getElementById("sound-mute");
+const bgmVolume = document.getElementById("bgm-volume");
+const bgmMute = document.getElementById("bgm-mute");
 const training = document.getElementById("training");
 const botDifficulty = document.getElementById("bot-difficulty");
 const botSpeed = document.getElementById("bot-speed");
@@ -75,6 +88,7 @@ terrainLabelsBtn.addEventListener("click", () => {
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
+let bgmBeforeMute = getBgmVolume() > 0 ? getBgmVolume() : 1;
 let syncingBotUi = false;
 /** Sim side for debug bot games only; null uses seat for multiplayer mirror. */
 let controlSide = null;
@@ -86,6 +100,23 @@ function syncSoundUi() {
   soundMute.setAttribute("aria-pressed", muted ? "true" : "false");
   soundMute.textContent = muted ? "Unmute" : "Mute";
   soundMute.title = muted ? "Unmute sound" : "Mute sound";
+}
+
+function syncBgmUi() {
+  const volume = getBgmVolume();
+  const muted = volume <= 0;
+  bgmVolume.value = String(Math.round(volume * 100));
+  bgmMute.setAttribute("aria-pressed", muted ? "true" : "false");
+  bgmMute.textContent = muted ? "Unmute" : "Mute";
+  bgmMute.title = muted ? "Unmute music" : "Mute music";
+}
+
+function syncMatchBgm() {
+  if (board.status === "playing") startMatchBgm();
+  else {
+    stopMatchBgm();
+    if (board.status === "countdown") preloadMatchBgm();
+  }
 }
 
 function applyBotSettingsUi(settings) {
@@ -113,6 +144,7 @@ function applyDebugPlayUi(settings) {
 }
 
 syncSoundUi();
+syncBgmUi();
 soundVolume.addEventListener("input", () => {
   const next = Number(soundVolume.value) / 100;
   setSoundVolume(next);
@@ -144,6 +176,28 @@ board.onCommand = (cmd) => {
   tutorial.noteCommand(cmd);
 };
 bindInput(board);
+
+function persistBgmVolume() {
+  socket.emit("bgmVolume", Math.round(getBgmVolume() * 100));
+}
+
+bgmVolume.addEventListener("input", () => {
+  const next = Number(bgmVolume.value) / 100;
+  setBgmVolume(next);
+  if (next > 0) bgmBeforeMute = next;
+  syncBgmUi();
+});
+bgmVolume.addEventListener("change", persistBgmVolume);
+bgmMute.addEventListener("click", () => {
+  if (getBgmVolume() > 0) {
+    bgmBeforeMute = getBgmVolume();
+    setBgmVolume(0);
+  } else {
+    setBgmVolume(bgmBeforeMute > 0 ? bgmBeforeMute : 1);
+  }
+  syncBgmUi();
+  persistBgmVolume();
+});
 
 botDifficulty.addEventListener("change", () => {
   if (syncingBotUi) return;
@@ -197,6 +251,7 @@ function syncChrome() {
   const confirming = !confirmBox.classList.contains("hidden");
   concede.classList.toggle("hidden", !canConcede || confirming);
   if (!canConcede) confirmBox.classList.add("hidden");
+  syncMatchBgm();
 }
 
 function apply(snap) {
@@ -253,6 +308,7 @@ socket.on("state", (snap) => {
 
 socket.on("replaced", () => {
   replaced = true;
+  stopMatchBgm();
   lobbyMessage = "This match is open in another tab.";
   lobby.classList.remove("hidden");
   lobbyLeave.classList.remove("hidden");
@@ -265,11 +321,13 @@ socket.on("replaced", () => {
 
 socket.on("go-home", () => {
   leaving = true;
+  stopMatchBgm();
   window.location.assign("/");
 });
 
 socket.on("disconnect", () => {
   if (replaced || leaving) return;
+  stopMatchBgm();
   lobbyMessage = "Connection lost. Reload to rejoin.";
   lobby.classList.remove("hidden");
   lobbyLeave.classList.remove("hidden");

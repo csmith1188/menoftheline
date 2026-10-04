@@ -4,7 +4,7 @@ A unit shoots enemies in its own lane whose centers are within its current range
 
 It may also shoot an enemy in the other lane when both of these are true: the path from the shooter back to its own keep, plus the path from that keep out to the target, is shorter than 200 paces; that same path fits inside the shooter's current range; and LOS is clear on the outbound leg from the keep to the target.
 
-The enemy keep can be shot whenever it is within the shooter's current weapon range. For choosing which target to aim at, the keep counts as 50 paces closer than it really is; range checks and damage falloff still use the real distance. See [[Units]].
+The enemy keep can be shot whenever it is within the shooter's current weapon range and line of sight is clear along the shooter's own row from the shooter to the keep (the keep counts as being in that row). Terrain still blocks shots *past* it the usual way, so an enemy fort between you and the keep stops fire until you pass or occupy it. For choosing which target to aim at, the keep counts as 50 paces closer than it really is; range checks and damage falloff still use the real distance. See [[Units]].
 
 - Advancing and Falling Back units use engagement range.
 - Halted units use full range.

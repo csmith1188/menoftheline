@@ -280,6 +280,8 @@ export function inMeleeWithViewer(viewerSideId, enemy, troopsBySide) {
  * Ranged LOS from observer to target for viewerSideId.
  * Cross-lane: only outbound leg keep → target on target lane.
  * Same-lane: between observer and target paces on target's lane/row.
+ * Keep targets count as the observer's lane/row, so LOS is observer → keep
+ * (not home-keep → enemy-keep across the whole lane).
  * Units standing on a terrain footprint remain shootable (that footprint
  * does not block shots *to* them); footprints still block shots past them.
  */
@@ -291,8 +293,10 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
   let targetLane = target.lane;
   let targetSublane = target.sublane;
   let targetPaces = playerPacesOf(target);
+  const isKeepTarget = target.capitalHP !== undefined || (target.capital && target.id);
 
-  if (target.capitalHP !== undefined || (target.capital && target.id)) {
+  if (isKeepTarget) {
+    // Keep sits on every row; for LOS it is this shooter's lane/row.
     targetLane = (observer && observer.lane) || "top";
     targetSublane = observer && observer.sublane != null ? observer.sublane : 0;
     const keepId = target.id;
@@ -302,7 +306,8 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
   if (targetLane == null || targetPaces == null) return true;
 
   let fromPaces;
-  const sameLane = observer && observer.lane === targetLane && !target.capitalHP && !(target.capital && target.id);
+  // Unit→keep uses the same along-lane segment as unit→unit.
+  const sameLane = observer && observer.lane === targetLane;
 
   if (sameLane) {
     fromPaces = playerPacesOf(observer);

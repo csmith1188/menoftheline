@@ -268,6 +268,35 @@ describe("terrain cover and LOS", () => {
     enemyViewer.syncPosition();
     assert.equal(hasShotLos(enemyViewer, player, "enemy", tb), false);
   });
+
+  it("keep LOS is along the shooter's row, not home-keep to enemy-keep", () => {
+    const sim = makeSim({ mapId: "empty" });
+    const enemyFort = CONFIG.topLanePaces - CONFIG.fortDistancePaces;
+    const half = fortFootprintPaces();
+    const tb = () => troopsBySide(sim);
+
+    // Short of the enemy fort: fort still lies between shooter and keep.
+    const blocked = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", enemyFort - half - 30),
+      sublane: 2,
+      order: "halt",
+    });
+    assert.equal(hasShotLos(blocked, sim.enemy, "player", tb()), false);
+    assert.equal(blocked.inShotRange(sim.enemy, blocked.shootRange()), false);
+
+    // Past the enemy fort: clear shot to the keep on this row.
+    const clear = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", enemyFort + half + 30),
+      sublane: 1,
+      order: "halt",
+    });
+    assert.equal(hasShotLos(clear, sim.enemy, "player", tb()), true);
+    assert.ok(clear.inShotRange(sim.enemy, clear.shootRange()));
+    assert.equal(
+      clear.nearestTarget(sim.enemy.troops, clear.shootRange(), sim.player.troops, sim.enemy),
+      sim.enemy,
+    );
+  });
 });
 
 describe("fog snapshot", () => {

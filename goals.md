@@ -33,18 +33,18 @@
 # Roadmap
 - Bottom Lane Units
     - Militiamen
-        - Cheap troop for spam with poor endurance and discipline
+        - Cheap troop for spam with poor damage, endurance, and discipline
     - Guerillas
         - Not shown to enemy (server side) unless within 10 paces or shot within the last second
-        - Can see through
+        - Can see through woods and peaks when touching them, but cannot be seen as woods work now. Change default woods behavior to showing all units in its footprint except Guerillas.
+        - Isn't slown by terrain
     - Light Calvary
-        - Raiding towns
-        - Must attack single units in packs
-        - Terrain speed
-    - Horse Guns. Faster, less range and damage
+        - Isn't slown by terrain, but still blocked by peaks
+        - Similar to troop bonus, gets pack bonus for every other calvary in melee with units this unit is in melee with
+    - Horse Guns
+        - Faster, less range and damage
     - engineer unit, interacts with terrain behind it within an area
-        - adds pontoons to rivers
-        - can walk over mountains at half speed
-        - can shoot through woods
-        - can cancel fort cover
-        - increases range of nearby units when on a hill
+        - can see unblock LOS of terrain within officer range
+        - pontoons: turns rivers within officer range into bridge
+            - cannons on bridges that revert back to rivers peel back towards their own keep
+        - when on a hill, passes the hill bonus to units within officer range

@@ -66,6 +66,7 @@ export async function initDb() {
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     tooltips INTEGER NOT NULL DEFAULT 1,
+    bgm_volume INTEGER NOT NULL DEFAULT 100,
     created_at INTEGER NOT NULL
   )`);
   await run(`CREATE TABLE IF NOT EXISTS accounts (
@@ -77,6 +78,7 @@ export async function initDb() {
     wins INTEGER NOT NULL DEFAULT 0,
     losses INTEGER NOT NULL DEFAULT 0,
     tooltips INTEGER NOT NULL DEFAULT 1,
+    bgm_volume INTEGER NOT NULL DEFAULT 100,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -143,9 +145,15 @@ export async function initDb() {
   if (!accountCols.some((col) => col.name === "tooltips")) {
     await run("ALTER TABLE accounts ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
   }
+  if (!accountCols.some((col) => col.name === "bgm_volume")) {
+    await run("ALTER TABLE accounts ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 100");
+  }
   const userCols = await all("PRAGMA table_info(users)");
   if (!userCols.some((col) => col.name === "tooltips")) {
     await run("ALTER TABLE users ADD COLUMN tooltips INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!userCols.some((col) => col.name === "bgm_volume")) {
+    await run("ALTER TABLE users ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 100");
   }
   await seedWikiHome();
 }
@@ -179,7 +187,7 @@ export async function createGuest() {
 
 export async function getUser(id) {
   if (!id) return null;
-  const row = await get("SELECT id, name, tooltips FROM users WHERE id = ?", [id]);
+  const row = await get("SELECT id, name, tooltips, bgm_volume FROM users WHERE id = ?", [id]);
   return row || null;
 }
 
@@ -205,7 +213,7 @@ export async function getAccount(formbarId) {
   const id = Number(formbarId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const row = await get(
-    "SELECT formbar_id, name, mmr, tickets, held, wins, losses, tooltips FROM accounts WHERE formbar_id = ?",
+    "SELECT formbar_id, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume FROM accounts WHERE formbar_id = ?",
     [id],
   );
   return row || null;
@@ -353,6 +361,40 @@ export async function setPlayerTooltips(player, on) {
 export function tooltipsEnabled(row) {
   if (!row || row.tooltips == null) return true;
   return Number(row.tooltips) !== 0;
+}
+
+/** Clamp a music slider percent (0–50) for storage. */
+export function clampBgmVolumePercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 50;
+  return Math.max(0, Math.min(50, Math.round(n)));
+}
+
+/** Music slider percent (0–50) stored on an account or guest row. */
+export function bgmVolumePercent(row) {
+  if (!row || row.bgm_volume == null) return 50;
+  return clampBgmVolumePercent(row.bgm_volume);
+}
+
+/** Persist match BGM volume preference for an account or guest. */
+export async function setPlayerBgmVolume(player, percent) {
+  const value = clampBgmVolumePercent(percent);
+  if (!player) return false;
+  if (player.formbarId) {
+    const id = Number(player.formbarId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    const result = await run(
+      "UPDATE accounts SET bgm_volume = ?, updated_at = ? WHERE formbar_id = ?",
+      [value, Date.now(), id],
+    );
+    return result.changes > 0;
+  }
+  if (!player.id) return false;
+  const result = await run(
+    "UPDATE users SET bgm_volume = ? WHERE id = ?",
+    [value, player.id],
+  );
+  return result.changes > 0;
 }
 
 export async function topAccounts(limit = 10) {

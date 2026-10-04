@@ -1,5 +1,30 @@
 [
   {
+    "date": "2026-10-04",
+    "title": "Unit Price Balance",
+    "summary": "Increased prices on units to increase mass tax effect and reduce spam late game causing games to drag out.",
+    "items": [
+      "Dragoon, Officer gold cost increased from 200 to 300.",
+      "Field Gun gold cost increased from 300 to 400.",
+      "Grenadier gold cost increased from 150 to 200.",
+      "Howitzer, Color Guard gold cost increased from 400 to 500.",
+      "Lancer gold cost increased from 250 to 300.",
+      "Troop gold cost increased from 100 to 150."
+    ]
+  },
+  {
+    "date": "2026-10-03",
+    "title": "Terrain and Line of Sight",
+    "summary": "Terrain features (hills, woods, rivers, peaks, bridges, forts) now block or reveal vision and line of sight (LOS) exactly as described in the Map rules. Enemy units in woods require you to also occupy that woods to see or shoot them. Forts and LOS-blocking terrain create fogged segments you can't see into unless a friendly unit has advanced past the terrain blocking that segment in any row. Units on fort, hill, peak, or bridge footprints are visible only if you have LOS to that feature; hills and peaks also boost range or restrict movement. The new LOS model means you will only see or target enemies your side can actually spot, and fog updates dynamically as units move. All terrain rules follow the complete descriptions in the in-game Map and the wiki. Tooltips and training mode improvements included.",
+    "items": [
+      "Terrain features now fully implement LOS and vision/fog: hills, woods, peaks, forts block vision (except to units standing on them); woods hide units unless your side occupies the same feature.",
+      "Cresting a segment (moving a unit past the center of blocking terrain) reveals that segment on all rows for your side.",
+      "Units behind their own fort have cover against shots from enemies past the fort. Hills and peaks grant cover and range bonuses, and restrict some unit types.",
+      "Bridges and rivers affect movement speed as described: infantry, cavalry, and artillery interact differently.",
+      "You only see enemy units your side could logically spot under these rules; fog of war now matches the map documentation."
+    ]
+  },
+  {
     "date": "2026-09-30",
     "title": "Training Mode and Tooltips",
     "summary": "New features have been added to help new players get oriented.",

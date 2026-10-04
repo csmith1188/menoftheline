@@ -1,6 +1,12 @@
 import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
 import { UNIT_STATS, unitStats, massTaxOf, unitLandCost, isAlternateUnit } from "../shared/units.js";
-import { Path, distance, touchesQuarterLine } from "../shared/path.js";
+import {
+  Path,
+  distance,
+  fortsClearOfEnemies as fortsClearOfEnemiesShared,
+  hasFortCover,
+  touchesQuarterLine,
+} from "../shared/path.js";
 
 /** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -128,6 +134,8 @@ class Projectile {
     this.shootingPushback = shot && shot.shootingPushback != null
       ? shot.shootingPushback
       : 0;
+    /** Shooter unit or Side (keep gun); used for directional fort cover. */
+    this.attacker = shot && shot.attacker ? shot.attacker : null;
     this.alive = true;
     this.bounce = null;
     this.anchor = null;
@@ -256,12 +264,14 @@ class Projectile {
       this.target.capitalHP -= hit;
       const keep = this.target.capital;
       this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
+      this.sim.emitSound({ type: "keep", sideId: this.sideId });
       this.alive = false;
       return;
     }
     const struck = this.target;
     const raw = this.baseDamage * this.hitFactor();
-    struck.takeDamage(raw, this.kind, this.attackerSum, this.shootingPushback);
+    struck.takeDamage(raw, this.kind, this.attackerSum, this.shootingPushback, this.attacker);
+    this.sim.emitSound({ type: "hit", sideId: this.sideId });
     this.penHits += 1;
     this.continueBehind(struck);
   }
@@ -1196,16 +1206,31 @@ class Unit {
   /**
    * Enemy this troop is touching. Body radii plus meleeSlack, same as
    * the pre-1D charge contact: a neighbor row is not melee unless the
-   * bodies actually meet.
+   * bodies actually meet. When several enemies are in reach, prefer one
+   * this unit is flanking; otherwise the closest body.
    */
   collidingEnemy(enemies) {
     const reach = this.bodyRadius() + CONFIG.meleeSlack;
+    let best = null;
+    let bestFlank = false;
+    let bestDist = Infinity;
     for (let i = 0; i < enemies.length; i += 1) {
       const enemy = enemies[i];
       if (enemy.hp <= 0 || enemy.lane !== this.lane) continue;
-      if (distance(this, enemy) <= reach + enemy.bodyRadius()) return enemy;
+      const dist = distance(this, enemy);
+      if (dist > reach + enemy.bodyRadius()) continue;
+      const flank = this.isFlanking(enemy);
+      if (
+        !best
+        || (flank && !bestFlank)
+        || (flank === bestFlank && dist < bestDist)
+      ) {
+        best = enemy;
+        bestFlank = flank;
+        bestDist = dist;
+      }
     }
-    return null;
+    return best;
   }
 
   /**
@@ -1931,15 +1956,7 @@ class Unit {
    * keep fatigue restore still runs.
    */
   fortsClearOfEnemies() {
-    const foes = this.enemyTroops();
-    const limit = CONFIG.fortDistancePaces;
-    const sideId = this.side.id;
-    for (let i = 0; i < foes.length; i += 1) {
-      const foe = foes[i];
-      if (foe.hp <= 0) continue;
-      if (foe.pacesFromKeep(sideId) <= limit) return false;
-    }
-    return true;
+    return fortsClearOfEnemiesShared(this.side.id, this.enemyTroops());
   }
 
   /** True when other is a legal shot at this pace range. */
@@ -3284,12 +3301,13 @@ class Unit {
   /**
    * Apply raw (base × falloff), the attacker's percent sum, then defensive
    * multipliers (armor, cover) one after another. Optional pushAmount is
-   * shooting/melee pushback from the attacker.
+   * shooting/melee pushback from the attacker. attacker is the striking
+   * unit or keep Side, used for directional fort cover.
    */
-  takeDamage(raw, kind, attackerSum, pushAmount) {
+  takeDamage(raw, kind, attackerSum, pushAmount, attacker) {
     const hit = truncateDamage(Math.max(
       0,
-      raw * (1 + (attackerSum || 0)) * this.incomingMultiplier(kind),
+      raw * (1 + (attackerSum || 0)) * this.incomingMultiplier(kind, attacker),
     ));
     this.hp -= hit;
     this.flash = 0.12;
@@ -3420,10 +3438,10 @@ class Unit {
    * Product of defensive factors: armor ranks and fort cover. Each stacks
    * by multiplying, not by adding percents.
    */
-  incomingMultiplier(kind) {
+  incomingMultiplier(kind, attacker) {
     let mult = 1;
     if (this.side) mult *= 1 - this.side.armorReduction();
-    if (this.hasCover()) mult *= 1 - CONFIG.quarterArmor;
+    if (this.hasCover(attacker)) mult *= 1 - CONFIG.quarterArmor;
     return Math.max(0, mult);
   }
 
@@ -3432,9 +3450,12 @@ class Unit {
     return touchesQuarterLine(this);
   }
 
-  /** Fort overlap grants the cover bonus. The keep does not. */
-  hasCover() {
-    return this.onQuarterLine();
+  /**
+   * Fort cover when at or behind own fort and the attacker is past that
+   * fort (outside the footprint). The keep does not grant cover.
+   */
+  hasCover(attacker) {
+    return hasFortCover(this, attacker);
   }
 
   /**
@@ -3554,14 +3575,15 @@ class Unit {
     const shot = this.attackDamage(target, strike, allies);
     if (strike === "melee") {
       this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnMelee);
-      this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
       if (target && target.capitalHP !== undefined) {
         const hit = target.applyKeepDamage(shot.raw, shot.attackerSum);
         target.capitalHP -= hit;
         this.side.sim.spawnSplat(target.capital.x, target.capital.y, hit, "melee");
+        this.side.sim.emitSound({ type: "keep", sideId: this.side.id });
       } else if (target && target.takeDamage) {
+        this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
         const push = this.order === "charge" ? this.meleePushback : 0;
-        target.takeDamage(shot.raw, "melee", shot.attackerSum, push);
+        target.takeDamage(shot.raw, "melee", shot.attackerSum, push, this);
       }
       this.cooldown = this.strikeDelay(strike);
       this.flash = 0.12;
@@ -3591,6 +3613,7 @@ class Unit {
         attackerSum: shot.attackerSum,
         shotSign: target.station && this.station ? Math.sign(target.station() - this.station()) || 1 : 1,
         shootingPushback: this.shootingPushback,
+        attacker: this,
       },
     ));
     this.cooldown = this.strikeDelay(strike);
@@ -4222,7 +4245,7 @@ class Side {
     return Math.min(CONFIG.armorCap, CONFIG.armorPerUpgrade * this.upgrades.armor);
   }
 
-  /** Apply armor and optional fort cover as separate multipliers. */
+  /** Apply armor and optional fort cover as separate multipliers (tests/helpers). */
   mitigate(amount, cover) {
     let mult = 1 - this.armorReduction();
     if (cover) mult *= 1 - CONFIG.quarterArmor;
@@ -4473,6 +4496,7 @@ class Side {
         attackerSum,
         shotSign: this.id === "player" ? 1 : -1,
         shootingPushback: shell.shootingPushback || 0,
+        attacker: this,
       },
     ));
     this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "cannon", sideId: this.id });

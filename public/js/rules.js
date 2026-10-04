@@ -860,6 +860,7 @@ const howtoPages = [
         items: [
           "Push the line in the top lane to gain more gold and build more units.",
           "Push the line in the bottom lane to gain more land and build better units and upgrades.",
+          "Forts grant cover to units at or behind them against attackers past the fort (selected-unit Cover shows while your fort lines are clear).",
         ],
       },
     ],

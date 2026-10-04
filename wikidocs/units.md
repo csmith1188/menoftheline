@@ -22,4 +22,4 @@ Each unit has its own health, ranges, damage, speeds, and pushback. Each type ha
 
 - **Keep:** Each player starts with a keep. It does not move, take orders, or get built. It sits at the end of every row of both lanes. Its combat is fixed: town research does not change its gun damage, fire rate, or hit points, and Defense ranks do not reduce damage it takes. It shoots, and it can shoot a unit that is in melee. Its gun applies Field Gun shooting pushback to units it hits; the Keep itself never recoils and never takes pushback. Ranged units may shoot the keep even while friendlies are meleeing it. If your keep is destroyed, you lose. See [[The Map]], [[Shooting]], [[Melee]], and [[Towns]].
 
-- The closer you are to your keep, the more fatigue and health your units restore. Health restore stops if any enemy is behind either of your forts; fatigue restore still runs.
+- The closer you are to your keep, the more fatigue and health your units restore. Health restore stops if any enemy is at or behind either of your forts; fatigue restore still runs. See [[The Map]] and [[Fatigue and Breaking]].

@@ -40,7 +40,7 @@ server/
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
   units.js             UNIT_STATS, variants, labels, BUY_UNITS, cost helpers
-  path.js              Path / lanes / progress / quarter-line helpers
+  path.js              Path / lanes / progress / fort cover helpers
   unitInfo.js          Player-facing unit copy + derived info panels
 public/js/             Browser match client (ES modules, imports ../shared/)
   main.js              2D match bootstrap: socket, lobby, menus
@@ -66,7 +66,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 |-----------------|------------|--------------|
 | Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
 | Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
-| Movement / lanes / progress / LoS geometry | `shared/path.js` | `server/sim.js`, `public/js/board.js` + `render.js` |
+| Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `server/sim.js` (cover via `hasFortCover`), `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
 | Combat, orders, fatigue, pushback, keeps, towns | `server/sim.js` (`GameSim`, `Unit`, `applyCommand`) | `test/*.test.js`, matching `wikidocs/*.md` |
 | Player commands (buy, order, bank, upgrade, …) | `GameSim.applyCommand` in `server/sim.js` | `server/room.js` (queue), `public/js/input.js` (emit), bot `server/bot/commands.js` / `economy.js` |
 | Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |

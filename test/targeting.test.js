@@ -138,3 +138,52 @@ describe("preferNearestRowAmongAlignedTargets", () => {
     assert.equal(aim, nearRow);
   });
 });
+
+describe("melee flank target preference", () => {
+  it("prefers an adjacent-row flank over a same-row contact listed first", () => {
+    const sim = makeSim();
+    const charger = spawn(sim, "player", "troop", "top", {
+      progress: 0.5,
+      sublane: 2,
+      order: "charge",
+    });
+    // Listed first: same row, parallel → not a flank.
+    const frontal = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.5,
+      sublane: 2,
+      order: "halt",
+    });
+    const flanked = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.5,
+      sublane: 1,
+      order: "halt",
+    });
+    assert.ok(charger.footprintReaches(frontal));
+    assert.ok(charger.footprintReaches(flanked));
+    assert.equal(charger.isFlanking(frontal), false);
+    assert.equal(charger.isFlanking(flanked), true);
+    assert.equal(charger.collidingEnemy([frontal, flanked]), flanked);
+  });
+
+  it("keeps the closest contact when neither is a flank", () => {
+    const sim = makeSim();
+    const unit = spawn(sim, "player", "troop", "top", {
+      progress: 0.5,
+      sublane: 2,
+      order: "halt",
+    });
+    const farther = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.5,
+      sublane: 1,
+      order: "halt",
+    });
+    const nearer = spawn(sim, "enemy", "troop", "top", {
+      progress: 0.5,
+      sublane: 2,
+      order: "halt",
+    });
+    assert.equal(unit.isFlanking(farther), false);
+    assert.equal(unit.isFlanking(nearer), false);
+    assert.equal(unit.collidingEnemy([farther, nearer]), nearer);
+  });
+});

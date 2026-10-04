@@ -1,6 +1,12 @@
 import { CONFIG, pointerHitReach } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
-import { Path, distance, pointToSegment, touchesQuarterLine } from "../shared/path.js";
+import {
+  Path,
+  distance,
+  fortsClearOfEnemies,
+  inOwnFortCoverZone,
+  pointToSegment,
+} from "../shared/path.js";
 
 /** Per-lane grand strategy cycle (Bastion → Attrition → Terror). */
 export const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -1174,12 +1180,6 @@ function inCapitalRange(troop) {
   return distance(troop, capital) <= CONFIG.capitalCannonRange;
 }
 
-function overlapsOwnCapital(troop) {
-  const capital = troop.side && troop.side.capital;
-  if (!capital) return false;
-  return distance(troop, capital) <= CONFIG.capitalRadius + troop.bodyRadius();
-}
-
 /**
  * "color" while a color guard is restoring this unit, "officer" for a
  * plain officer, or null when nobody nearby is restoring.
@@ -1236,7 +1236,8 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Flank ${multText(stats.flankMultiplier)}`);
   }
 
-  if (touchesQuarterLine(troop) || overlapsOwnCapital(troop)) {
+  // Cover while at/behind own fort and no enemy has crossed either fort line.
+  if (side && inOwnFortCoverZone(troop) && fortsClearOfEnemies(side.id, enemies)) {
     labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
   }
 

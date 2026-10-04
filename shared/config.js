@@ -191,7 +191,10 @@ export const CONFIG = {
   fatiguePerPace: 0.5,
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
-  /** Incoming damage removed while overlapping your fort in this lane. */
+  /**
+   * Incoming damage removed by fort cover: unit at or behind its fort
+   * while the attacker is past that fort (outside the fort footprint).
+   */
   quarterArmor: 0.2,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,

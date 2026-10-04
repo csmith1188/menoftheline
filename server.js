@@ -67,7 +67,15 @@ await initDb();
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer);
+// Prefer WebSocket; long-polling at 20 Hz state kills mobile Safari latency.
+const io = new Server(httpServer, {
+  transports: ["websocket", "polling"],
+  pingInterval: 20000,
+  pingTimeout: 20000,
+  // Skip websocket payload compression — decompressing every tick hammers phones.
+  perMessageDeflate: false,
+  httpCompression: true,
+});
 const formbarSocket = connectFormbar(AUTH_URL, process.env.API_KEY || "");
 
 const sessionMiddleware = session({

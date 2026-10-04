@@ -199,6 +199,12 @@ export const boardStateMethods = {
       || (navigator.maxTouchPoints || 0) > 0;
   },
 
+  /** Cap backing-store DPR; phones pay heavily for fog/terrain strokes above 1.5. */
+  devicePixelRatio() {
+    const raw = window.devicePixelRatio || 1;
+    return Math.min(raw, this.isTouchUi() ? 1.5 : 2);
+  },
+
   uiFont(px, weight) {
     const size = Math.round(px * CONFIG.uiScale);
     return `${weight || "bold"} ${size}px Trebuchet MS, sans-serif`;

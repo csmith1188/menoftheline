@@ -375,9 +375,18 @@ const boardMethods = {
     }
     this.canvas.style.width = `${cssW}px`;
     this.canvas.style.height = `${cssH}px`;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-    this.canvas.width = Math.round(CONFIG.canvasWidth * dpr);
-    this.canvas.height = Math.round(CONFIG.canvasHeight * dpr);
+    const dpr = this.devicePixelRatio();
+    const bufW = Math.round(CONFIG.canvasWidth * dpr);
+    const bufH = Math.round(CONFIG.canvasHeight * dpr);
+    const fitKey = `${Math.round(cssW)}x${Math.round(cssH)}@${dpr}`;
+    // iOS URL-bar jitter must not reallocate the canvas mid-gesture.
+    if (this._fitKey !== fitKey
+      || this.canvas.width !== bufW
+      || this.canvas.height !== bufH) {
+      this.canvas.width = bufW;
+      this.canvas.height = bufH;
+      this._fitKey = fitKey;
+    }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.cssScale = cssW / CONFIG.canvasWidth;
     const left = (availW - cssW) / 2;
@@ -680,7 +689,7 @@ const boardMethods = {
     this.presentLaneCenters();
     if (this.refreshHoldSelect) this.refreshHoldSelect();
     const ctx = this.ctx;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const dpr = this.devicePixelRatio();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (this.telescope) {
       this.stepTelescope();
@@ -1175,7 +1184,14 @@ export function createBoard(canvas) {
   Object.setPrototypeOf(board, boardMethods);
   board.fitCanvas();
   if (window.ResizeObserver && canvas.parentElement) {
-    const observer = new ResizeObserver(() => board.fitCanvas());
+    let resizeTimer = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer != null) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        board.fitCanvas();
+      }, 100);
+    });
     observer.observe(canvas.parentElement);
   }
   return board;

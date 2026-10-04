@@ -217,7 +217,11 @@ let leaving = false;
 let lobbyMessage = "Connecting...";
 let lastCountdownBeep = null;
 
-const socket = window.io();
+// WebSocket first — default polling→upgrade leaves iPhone on HTTP long-poll
+// under some networks, so 20 Hz state + commands feel dead while RAF still runs.
+const socket = window.io({
+  transports: ["websocket", "polling"],
+});
 board.onCommand = (cmd) => socket.emit("command", cmd);
 bindInput(board);
 
@@ -440,7 +444,33 @@ function apply(snap) {
     playSounds(sounds);
     lastTick = snap.tick;
   }
-  syncChrome();
+  if (board.status !== "playing" || board.winner) syncChrome();
+  else {
+    syncMatchBgm();
+    if (board.player) syncScore();
+  }
+}
+
+let latestState = null;
+let stateRaf = 0;
+
+function flushState() {
+  stateRaf = 0;
+  const snap = latestState;
+  latestState = null;
+  if (!snap) return;
+  if (!seat) {
+    pending = snap;
+    return;
+  }
+  apply(snap);
+}
+
+/** Keep only the newest snapshot when the main thread falls behind (phones). */
+function queueState(snap) {
+  latestState = snap;
+  if (stateRaf) return;
+  stateRaf = requestAnimationFrame(flushState);
 }
 
 socket.on("lobby", (lobbyState) => {
@@ -474,7 +504,7 @@ socket.on("state", (snap) => {
     pending = snap;
     return;
   }
-  apply(snap);
+  queueState(snap);
 });
 
 socket.on("replaced", () => {

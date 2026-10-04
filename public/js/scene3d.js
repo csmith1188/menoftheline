@@ -318,7 +318,9 @@ function lineMesh(x1, y1, x2, y2, color, lift, thickness) {
  */
 export function createScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const touchUi = window.matchMedia("(pointer: coarse)").matches
+    || (navigator.maxTouchPoints || 0) > 0;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, touchUi ? 1.5 : 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 

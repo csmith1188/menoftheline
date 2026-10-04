@@ -12,11 +12,24 @@ import {
 
 /** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
+/** Touch presses often sit near 400ms; require a clearer hold on coarse pointers. */
+const SELECT_HOLD_TOUCH_MS = 800;
 /** Hold this long on a buy button (no swipe) to open the unit info overlay. */
 const BUY_INFO_HOLD_MS = 1200;
 /** Two-finger spread / squeeze past this ratio counts as zoom in / out. */
 const PINCH_OUT = 1.12;
 const PINCH_IN = 0.88;
+
+function selectHoldMs(board) {
+  return board && typeof board.isTouchUi === "function" && board.isTouchUi()
+    ? SELECT_HOLD_TOUCH_MS
+    : SELECT_HOLD_MS;
+}
+
+function isBoardPointer(board, event) {
+  if (board.activePointerId == null) return Boolean(event.isPrimary);
+  return event.pointerId === board.activePointerId;
+}
 
 const pointerMethods = {
   /**
@@ -24,12 +37,14 @@ const pointerMethods = {
    * Enemies can be selected for info only.
    */
   onPointerDown(event) {
-    if (!event.isPrimary) return;
     if (event.pointerType === "mouse" && event.button !== 0) {
       // Right-click matches a completed long-press: solo-select that unit.
       if (event.button === 2) this.onRightClickSolo(event);
       return;
     }
+    // bindInput only forwards the gesture finger; still ignore a stray second id.
+    if (this.activePointerId != null && event.pointerId !== this.activePointerId) return;
+    this.activePointerId = event.pointerId;
     if (this.telescope) {
       event.preventDefault();
       this.telescopeSlide = 0;
@@ -203,7 +218,7 @@ const pointerMethods = {
 
   /** While dragging, keep the hover point so the target row can light up. */
   onPointerMove(event) {
-    if (!event.isPrimary) {
+    if (!isBoardPointer(this, event)) {
       return;
     }
     event.preventDefault();
@@ -258,9 +273,10 @@ const pointerMethods = {
    * across-drag changes row; long-press / right-click selects only that unit.
    */
   onPointerUp(event) {
-    if (!event.isPrimary) {
+    if (!isBoardPointer(this, event)) {
       return;
     }
+    this.activePointerId = null;
     clearGestureHints(this);
     const rightRelease = event.pointerType === "mouse" && event.button === 2;
     if (event.pointerType === "mouse" && event.button !== 0) {
@@ -379,7 +395,8 @@ const pointerMethods = {
     const friendly = troop.side && troop.side.id === "player";
 
     // Long-press without a drag: already solo-selected; nothing more to do.
-    if (start.soloPick && pulled < orderMin) {
+    // Melee may set soloPick on down — that must not swallow the tap order.
+    if (start.holdSolo && pulled < orderMin) {
       return;
     }
 
@@ -435,7 +452,7 @@ const pointerMethods = {
    */
   releaseDirectOrder(troop, start, point, pulled, intent) {
     const orderMin = this.orderDragMin();
-    if (start.soloPick && pulled < orderMin) {
+    if (start.holdSolo && pulled < orderMin) {
       return;
     }
     // Clicking a different unit selects its line (exits solo on the prior unit).
@@ -591,13 +608,14 @@ const pointerMethods = {
     if (!drag || !drag.troop || drag.troop.hp <= 0 || drag.downAt == null) {
       return;
     }
-    if (!drag.soloPick
-        && performance.now() - drag.downAt >= SELECT_HOLD_MS) {
+    if (!drag.holdSolo
+        && performance.now() - drag.downAt >= selectHoldMs(this)) {
       const troop = drag.troop;
       const finger = { x: drag.hx, y: drag.hy };
       // Unit walked out from under the press — not a hold on that unit.
       if (this.hitAnyTroopAt(finger) === troop
           && this.dragPullFromUnit(drag, finger, troop) < this.orderDragMin()) {
+        drag.holdSolo = true;
         drag.soloPick = true;
         this.selectTroop(troop, true);
       }
@@ -747,8 +765,11 @@ export function bindInput(board) {
   const canvas = board.canvas;
   const opts = { passive: false };
   const pointers = new Map();
+  /** Pointer ids that participated in an acted pinch (gesture was consumed). */
   const pinchIds = new Set();
   let pinch = null;
+  /** First finger that owns the board gesture (buy/drag/tap). */
+  let gesturePointerId = null;
 
   function clearTransientPress() {
     board.drag = null;
@@ -758,7 +779,19 @@ export function bindInput(board) {
     board.telescopeSlide = 0;
     board.lanePress = null;
     board.enemyPress = null;
+    board.activePointerId = null;
     clearGestureHints(board);
+  }
+
+  function hasActiveBoardGesture() {
+    return Boolean(
+      board.drag
+      || board.buyDrag
+      || board.strategyDrag
+      || board.telescopeDrag
+      || board.lanePress
+      || board.enemyPress,
+    );
   }
 
   function pinchCenterEvent() {
@@ -776,9 +809,7 @@ export function bindInput(board) {
     return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
   }
 
-  function beginPinch() {
-    clearTransientPress();
-    for (const id of pointers.keys()) pinchIds.add(id);
+  function watchPinch() {
     const dist = Math.max(1, pinchDistance());
     const center = pinchCenterEvent();
     pinch = {
@@ -792,13 +823,17 @@ export function bindInput(board) {
   function stepPinch() {
     if (!pinch || pinch.acted || pointers.size !== 2) return;
     const ratio = pinchDistance() / pinch.startDist;
+    if (ratio < PINCH_OUT && ratio > PINCH_IN) return;
+    // Only now consume the primary press — brief palm/2nd-finger touches stay taps.
+    pinch.acted = true;
+    clearTransientPress();
+    gesturePointerId = null;
+    for (const id of pointers.keys()) pinchIds.add(id);
     if (ratio >= PINCH_OUT) {
-      pinch.acted = true;
       if (!board.telescope && pinch.spot) {
         board.openTelescopeAt(pinch.spot.lane, pinch.spot.along);
       }
-    } else if (ratio <= PINCH_IN) {
-      pinch.acted = true;
+    } else {
       board.closeTelescope();
     }
   }
@@ -814,15 +849,32 @@ export function bindInput(board) {
     board.closeTelescope();
   }
 
+  function finishPointer(event, { complete }) {
+    const id = event.pointerId;
+    const fromPinch = pinchIds.has(id);
+    pointers.delete(id);
+    pinchIds.delete(id);
+    if (pointers.size < 2) pinch = null;
+
+    if (fromPinch) {
+      event.preventDefault();
+      return;
+    }
+    if (id !== gesturePointerId) return;
+    gesturePointerId = null;
+    if (complete) board.onPointerUp(event);
+    else clearTransientPress();
+  }
+
   canvas.addEventListener("pointerdown", (event) => {
     unlockAudio();
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.size >= 2) {
       event.preventDefault();
-      pinchIds.add(event.pointerId);
-      if (!pinch) beginPinch();
+      if (!pinch) watchPinch();
       return;
     }
+    gesturePointerId = event.pointerId;
     board.onPointerDown(event);
   }, opts);
   canvas.addEventListener("pointermove", (event) => {
@@ -832,26 +884,22 @@ export function bindInput(board) {
     if (pinch && pointers.size >= 2) {
       event.preventDefault();
       stepPinch();
+      // Freeze the primary drag while a second finger is down (until pinch acts or ends).
       return;
     }
     board.onPointerMove(event);
   }, opts);
   canvas.addEventListener("pointerup", (event) => {
-    const fromPinch = pinchIds.has(event.pointerId);
-    pointers.delete(event.pointerId);
-    pinchIds.delete(event.pointerId);
-    if (pointers.size < 2) pinch = null;
-    if (fromPinch || pointers.size >= 2) {
-      event.preventDefault();
-      return;
-    }
-    board.onPointerUp(event);
+    finishPointer(event, { complete: true });
   }, opts);
+  // iOS edge swipes / capture loss: complete as a tap/swipe instead of dropping the press.
   canvas.addEventListener("pointercancel", (event) => {
-    pointers.delete(event.pointerId);
-    pinchIds.delete(event.pointerId);
-    if (pointers.size < 2) pinch = null;
-    clearTransientPress();
+    finishPointer(event, { complete: true });
+  });
+  canvas.addEventListener("lostpointercapture", (event) => {
+    if (event.pointerId !== gesturePointerId) return;
+    if (!hasActiveBoardGesture()) return;
+    finishPointer(event, { complete: true });
   });
   canvas.addEventListener("wheel", (event) => {
     if (event.deltaY === 0) return;

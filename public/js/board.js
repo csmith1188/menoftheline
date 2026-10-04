@@ -1,5 +1,5 @@
 import { CONFIG, pointerHitReach } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, massTaxOf, unitStats } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, cycleVariantPick, massTaxOf, unitStats, variantOptions } from "../shared/units.js";
 import {
   Path,
   distance,
@@ -407,23 +407,18 @@ export const boardStateMethods = {
 
   /** Spawn key currently shown on this buy button. Bases default on. */
   selectedBuyUnit(base) {
-    const variant = UNIT_VARIANTS[base];
-    if (!variant) return base;
+    const options = variantOptions(base);
     const pick = this.buySelection && this.buySelection[base];
-    if (pick === base || pick === variant) return pick;
+    if (options.indexOf(pick) >= 0) return pick;
     return base;
   },
 
-  /** Cycle base ↔ alternate. dir is -1 left or +1 right. */
+  /** Cycle base → yellow (elite) → white (light). dir is -1 left or +1 right. */
   cycleBuyVariant(base, dir) {
-    const variant = UNIT_VARIANTS[base];
-    if (!variant) return false;
+    const options = variantOptions(base);
+    if (options.length < 2) return false;
     if (!this.buySelection) this.buySelection = {};
-    const options = [base, variant];
-    const cur = this.selectedBuyUnit(base);
-    let idx = options.indexOf(cur);
-    if (idx < 0) idx = 0;
-    this.buySelection[base] = options[(idx + dir + options.length) % options.length];
+    this.buySelection[base] = cycleVariantPick(base, this.selectedBuyUnit(base), dir);
     return true;
   },
 
@@ -1169,6 +1164,26 @@ function hasChargeSpeed(troop) {
   return true;
 }
 
+/** Other living Light Cavalry whose bodies sit in this unit's melee reach. */
+function lightCavalryPackMates(troop, allies) {
+  const radius = typeof troop.bodyRadius === "function"
+    ? troop.bodyRadius()
+    : (troop.radius || troopKindStats(troop).radius);
+  const reach = radius + (CONFIG.meleeSlack || 0);
+  let n = 0;
+  for (let i = 0; i < allies.length; i += 1) {
+    const ally = allies[i];
+    if (!ally || ally === troop || ally.hp <= 0) continue;
+    if (ally.variant !== "lightCavalry") continue;
+    if (ally.lane !== troop.lane) continue;
+    const allyRadius = typeof ally.bodyRadius === "function"
+      ? ally.bodyRadius()
+      : (ally.radius || troopKindStats(ally).radius);
+    if (distance(troop, ally) <= reach + allyRadius) n += 1;
+  }
+  return n;
+}
+
 /** Body contact, same test the sim uses for melee order lock. */
 function bodyInMelee(troop, enemies) {
   const stats = troopKindStats(troop);
@@ -1244,6 +1259,13 @@ function activeBonuses(board, troop, allies) {
   if (troop.type === "troop" && CONFIG.troopLineBonus > 0 && mates > 0) {
     const pct = mates * CONFIG.troopLineBonus * lineNeighborQuality(troop, line);
     labels.push(`Line +${Math.round(pct * 100)}%`);
+  }
+
+  if (troop.variant === "lightCavalry" && CONFIG.cavalryPackBonus > 0) {
+    const packMates = lightCavalryPackMates(troop, allies);
+    if (packMates > 0) {
+      labels.push(`Pack +${Math.round(packMates * CONFIG.cavalryPackBonus * 100)}%`);
+    }
   }
 
   if (troop.order === "charge" && stats.chargeMultiplier && stats.chargeMultiplier !== 1) {

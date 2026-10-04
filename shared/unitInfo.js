@@ -10,13 +10,13 @@ import {
 /** Short real-life role + tactical purpose for each spawn key. */
 export const UNIT_SUMMARIES = {
   troop:
-    "Line infantry — the backbone of the army. Hold formation, trade fire with weight of numbers, and dress onto Halt or Reform by walking into Perfect Line.",
+    "Line infantry — the backbone of the army. Trade fire with weight of numbers.",
   skirmisher:
     "Light infantry that fights in open order. Harass, screen, and pick at the enemy from flexible positions.",
   dragoon:
     "Mounted infantry that fire light muskets and attack with swords. Devastating when flanking their enemy.",
   cannon:
-    "Field artillery that shoots a solid iron ball that bounces through lines of enemies.",
+    "Field artillery that shoots a solid iron ball that bounces through files of enemies.",
   officer:
     "A Major keeps battalions together — restoring fatigue and casualties nearby.",
   grenadier:
@@ -28,7 +28,17 @@ export const UNIT_SUMMARIES = {
   howitzer:
     "Loaded with cannister shot that blasts lines of soldiers who get too close.",
   colorGuard:
-    "Flag-bearers who restore the line like an Officer, and hold wounded friends at full damage in their aura.",
+    "Flag-bearers who restore the line like an Officer, and hold wounded Troops at full damage in their aura.",
+  militia:
+    "Cheap levied infantry. Fill the line quickly, but they break sooner and hit lighter.",
+  guerrilla:
+    "Civilians who take up arms and hide in terrain and open fields, ambushing and harassing enemies.",
+  lightCavalry:
+    "Horsemen who counter their lack of endurance by hunting in packs.",
+  horseGun:
+    "Guns light enough for the crew to be carried on them, making them faster but reducing their efectiveness.",
+  engineer:
+    "Manages the logistics of battle, building pontoons, gathering intelligence, and passing it to friendly units.",
 };
 
 /** Base buy type for art (alternates share the base SVG). */
@@ -74,6 +84,12 @@ const BASIC_FIELDS = [
     invert: true,
   },
   {
+    key: "chargeSpeed",
+    label: "Charge",
+    value: (s) => s.chargeSpeed,
+    display: (s) => times(s.chargeSpeed),
+  },
+  {
     key: "range",
     label: "Range",
     value: (s) => s.range,
@@ -117,12 +133,6 @@ const BASIC_FIELDS = [
     display: (s) => `${fmtNum(s.meleeCooldown)}s`,
     invert: true,
   },
-  {
-    key: "cost",
-    label: "Cost",
-    value: (s) => s.cost,
-    display: (s) => `${fmtNum(s.cost)} gold`,
-  },
 ];
 
 function maxForField(field) {
@@ -152,13 +162,27 @@ function barRatio(field, value, max) {
 }
 
 /**
- * Basic combat/economy stats with bar ratios vs the roster max.
+ * Gold and land prices shown beside the unit name (not as bars).
+ * Land is 0 for base units.
+ */
+export function unitEconomy(type) {
+  const stats = unitStats(type);
+  const land = unitLandCost(type);
+  return {
+    cost: stats.cost,
+    land,
+    costDisplay: `${fmtNum(stats.cost)} gold`,
+    landDisplay: land > 0 ? `${fmtNum(land)} land` : "",
+  };
+}
+
+/**
+ * Basic combat stats with bar ratios vs the roster max.
  * Inverted fields (speed, reload, melee speed) treat lower as better.
- * Land cost is appended only for alternates.
  */
 export function unitBasicStats(type) {
   const stats = unitStats(type);
-  const rows = BASIC_FIELDS.map((field) => {
+  return BASIC_FIELDS.map((field) => {
     const value = field.value(stats);
     const max = maxForField(field);
     return {
@@ -170,23 +194,6 @@ export function unitBasicStats(type) {
       ratio: barRatio(field, value, max),
     };
   });
-  const land = unitLandCost(type);
-  if (land > 0) {
-    let landMax = land;
-    for (const key of Object.keys(UNIT_STATS)) {
-      const v = unitLandCost(key);
-      if (v > landMax) landMax = v;
-    }
-    rows.push({
-      key: "land",
-      label: "Land",
-      value: land,
-      display: `${fmtNum(land)} land`,
-      max: landMax,
-      ratio: Math.max(0, Math.min(1, land / landMax)),
-    });
-  }
-  return rows;
 }
 
 function splashHits(splash) {
@@ -207,7 +214,7 @@ export function unitAbilityLines(type) {
       `Line shooting bonus: +${pct(CONFIG.troopLineBonus)} per other eligible troop in the line, scaled by how Perfect you are with adjacent-row neighbors (not vs Skirmishers/Rifles).`,
     );
     lines.push(
-      "Order passing: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them lets that Troop walk past without re-inheriting.",
+      "Advancing troops coming into line will inherit the halt/reform order of exisitng lines.",
     );
   }
   if (type === "grenadier") {
@@ -253,14 +260,44 @@ export function unitAbilityLines(type) {
     const paces = CONFIG.officerRestorePaces;
     const rate = stats.restoreRate || 1;
     lines.push(
-      `Restores fatigue and health to friends within ${fmtNum(paces)} paces on every row of its lane (${fmtNum(rate)}/s; doubled when ahead).`,
+      `Restores fatigue and health to friends within range; doubled when ahead.`,
     );
     if (type === "colorGuard") {
-      lines.push("Friends in this aura ignore damage loss from missing health.");
-      lines.push("Does not stack with another Color Guard; stacks with one Officer.");
+      lines.push("Friends in this aura ignore damage loss from missing health. Does not stack with another Color Guard.");
     } else {
-      lines.push("A second Officer does not add more; only the stronger restore applies. Stacks with one Color Guard.");
+      lines.push("Doesn't stack with other officers.");
     }
+  }
+  if (type === "militia") {
+    lines.push("Takes more pushback.");
+  }
+  if (type === "guerrilla") {
+    lines.push(
+      `Hidden from the enemy unless within ${fmtNum(CONFIG.guerrillaStealthPaces)} paces, in melee, or for ${fmtNum(CONFIG.guerrillaShotRevealSec)}s after shooting.`,
+    );
+    lines.push("Woods hide Guerillas unless occupied. Not slowed by terrain.");
+    lines.push("Do not volley while Halted in the open except at enemies within stealth range; occupying a terrain feature lets them Halt-shoot at full range.");
+    lines.push("Hides in plain site when not shooting or near an enemy.");
+  }
+  if (type === "lightCavalry") {
+    lines.push("Not slowed by terrain; still cannot enter peaks.");
+    if (CONFIG.cavalryPackBonus > 0) {
+      lines.push(
+        `Pack bonus: +${pct(CONFIG.cavalryPackBonus)} melee damage per other friendly Light Cavalry in melee reach.`,
+      );
+    }
+  }
+  if (type === "horseGun") {
+    lines.push("Faster / lighter than Field Guns and Howitzers.");
+  }
+  if (type === "engineer") {
+    const paces = CONFIG.officerRestorePaces;
+    lines.push("Does not restore fatigue or health.");
+    lines.push(
+      `Within Officer range: unblocks LOS through terrain even without standing on it; rivers become pontoon bridges.`,
+    );
+    lines.push("Guns stranded when a pontoon drops peel back toward their own keep.");
+    lines.push("While this unit occupies a hill, friends in aura gain that hill's shooting-range bonus.");
   }
   if (base === "officer") {
     lines.push("Most units avoid shooting Officers while another unit type is in range.");

@@ -714,7 +714,7 @@ const pointerMethods = {
    * Returns -1 (left) or 1 (right), once past the drag threshold.
    */
   buyVariantFromSwipe(start, point) {
-    if (!UNIT_VARIANTS[start.type]) {
+    if (!(UNIT_VARIANTS[start.type] && UNIT_VARIANTS[start.type].length)) {
       return null;
     }
     const dx = point.x - start.x;

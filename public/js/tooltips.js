@@ -121,7 +121,7 @@ export function buildBuyHints(board, type, rect) {
     pushLabel(labels, "Deploy Top", ax, ay - oy, "top");
     pushLabel(labels, "Deploy Bottom", ax, ay + oy, "bottom");
   }
-  if (UNIT_VARIANTS[type]) {
+  if (UNIT_VARIANTS[type] && UNIT_VARIANTS[type].length) {
     pushLabel(labels, "Change Type", ax - ox, ay, "type-left");
     pushLabel(labels, "Change Type", ax + ox, ay, "type-right");
   }

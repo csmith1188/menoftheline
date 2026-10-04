@@ -1,5 +1,6 @@
 import { CONFIG } from "../../shared/config.js";
 import { UNIT_STATS, UNIT_VARIANTS, unitLandCost } from "../../shared/units.js";
+import { featuresOnMap } from "../../shared/terrain.js";
 import { BASE_TYPES, LANES, enemyRowCount, enemyShares, typeGold } from "./assess.js";
 
 /**
@@ -97,40 +98,74 @@ function countType(units, type) {
   return n;
 }
 
+function mapKinds(mapId) {
+  const features = featuresOnMap(mapId);
+  const kinds = { woodsOrPeaks: false, riverOrHill: false };
+  for (let i = 0; i < features.length; i += 1) {
+    const kind = features[i].kind;
+    if (kind === "woods" || kind === "peak") kinds.woodsOrPeaks = true;
+    if (kind === "river" || kind === "hill") kinds.riverOrHill = true;
+  }
+  return kinds;
+}
+
+function canBuyAlt(side, key, reserve) {
+  if (!key || !side.canAffordUnit(key)) return false;
+  if (unitLandCost(key) > 0 && landLeft(side, key) < reserve) return false;
+  return true;
+}
+
 /**
  * Alternate spawn key when Hard still wants that role and the land
  * cost does not eat the next upgrade. Otherwise the base unit.
  */
 export function chooseSpawnKey(side, base, profile, ctx) {
   if (!profile.alternates) return base;
-  const alt = UNIT_VARIANTS[base];
-  if (!alt || !side.canAffordUnit(alt)) return base;
+  const alts = UNIT_VARIANTS[base] || [];
+  const white = alts[0];
+  const yellow = alts[1];
   const reserve = upgradeReserve(side);
-  if (landLeft(side, alt) < reserve) return base;
   const laneUnits = ctx.laneUnits;
   const mods = ctx.mods;
+
+  if (yellow && canBuyAlt(side, yellow, reserve)) {
+    if (base === "troop"
+      && countType(laneUnits, "troop") >= CONFIG.botMinTroopsBeforeSupport
+      && side.gold < UNIT_STATS.troop.cost) {
+      return yellow;
+    }
+    if (base === "skirmisher" && ctx.mapHasWoodsOrPeaks) return yellow;
+    if (base === "dragoon" && ctx.frontSlowed) return yellow;
+    if (base === "cannon"
+      && (ctx.enemyRows >= CONFIG.botHowitzerMinRows || ctx.gunsBlocked)) {
+      return yellow;
+    }
+    if (base === "officer" && ctx.mapHasRiverOrHill) return yellow;
+  }
+
+  if (!white || !canBuyAlt(side, white, reserve)) return base;
   if (base === "troop") {
     if (countType(laneUnits, "troop") < CONFIG.botMinTroopsBeforeSupport) return base;
     if (ctx.posture !== "hold" && ctx.posture !== "defend") return base;
-    return alt;
+    return white;
   }
   if (base === "skirmisher") {
     if (!mods.skirmisherFromCavalry) return base;
     if (countType(ctx.allFriends, "skirmisher") < 1) return base;
-    return alt;
+    return white;
   }
   if (base === "dragoon") {
     if (!mods.dragoonFromSupport) return base;
-    return alt;
+    return white;
   }
   if (base === "cannon") {
     if (ctx.enemyRows < CONFIG.botHowitzerMinRows) return base;
-    return alt;
+    return white;
   }
   if (base === "officer") {
     if (countType(ctx.allFriends, "officer") < 1) return base;
     if (ctx.armyValue < CONFIG.botColorGuardMinValue) return base;
-    return alt;
+    return white;
   }
   return base;
 }
@@ -292,6 +327,7 @@ function buyAffordableDeficit(bot, sim, self, lane, profile, composed, info, all
 }
 
 function tryBuy(bot, sim, self, lane, base, profile, composed, info, allFriends) {
+  const kinds = mapKinds(sim.mapId);
   const key = chooseSpawnKey(self, base, profile, {
     laneUnits: info.friendlies,
     allFriends,
@@ -299,6 +335,10 @@ function tryBuy(bot, sim, self, lane, base, profile, composed, info, allFriends)
     posture: info.posture,
     enemyRows: enemyRowCount(info.enemies),
     armyValue: composed.friends.total,
+    mapHasWoodsOrPeaks: kinds.woodsOrPeaks,
+    mapHasRiverOrHill: kinds.riverOrHill,
+    frontSlowed: laneFrontMoveFactor(info) < 0.95,
+    gunsBlocked: kinds.woodsOrPeaks || kinds.riverOrHill,
   });
   if (!self.canAffordUnit(key)) {
     if (key !== base && self.canAffordUnit(base)) {

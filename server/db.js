@@ -467,7 +467,7 @@ export async function reopenSuggestion(id) {
 export const WIKI_TITLE_MAX = 80;
 export const WIKI_BODY_MAX = 20000;
 
-const HOME_SEED_BODY = `Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways for an alternate.
+const HOME_SEED_BODY = `Destroy the enemy keep. Buy from the bottom bar: drag up for the top lane, down for the bottom, sideways to cycle an alternate.
 
 - Click a unit to Halt. Click a Halted unit to Advance.
 - Long-press or right-click: select that unit alone.

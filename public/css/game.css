@@ -932,11 +932,27 @@ body {
   gap: 12px;
 }
 
+.unit-info-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .unit-info-head h2 {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: 0.03em;
+}
+
+.unit-info-economy {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--gold);
+  white-space: nowrap;
 }
 
 .unit-info-head .action {

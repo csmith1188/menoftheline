@@ -1,10 +1,11 @@
 import { CONFIG } from "../shared/config.js";
-import { UNIT_LABELS, isAlternateUnit, unitStats } from "../shared/units.js";
+import { UNIT_LABELS, unitStats, variantBadgeFill } from "../shared/units.js";
 import {
   UNIT_SUMMARIES,
   unitAbilityLines,
   unitArtType,
   unitBasicStats,
+  unitEconomy,
   unitIconType,
 } from "../shared/unitInfo.js";
 import { buyBgSrc } from "./buyArt.js";
@@ -20,6 +21,7 @@ export function bindUnitInfo(options) {
     return { open() {}, close() {}, isOpen() { return false; } };
   }
   const title = document.getElementById("unit-info-title");
+  const economyEl = document.getElementById("unit-info-economy");
   const art = document.getElementById("unit-info-art");
   const icon = document.getElementById("unit-info-icon");
   const summary = document.getElementById("unit-info-summary");
@@ -48,11 +50,10 @@ export function bindUnitInfo(options) {
     const x = css / 2;
     const y = css / 2;
     const color = CONFIG.colors.player;
-    const alternate = isAlternateUnit(type);
-
-    if (alternate) {
+    const badge = variantBadgeFill(type);
+    if (badge) {
       const pad = r + 4;
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = badge;
       ctx.fillRect(x - pad, y - pad, pad * 2, pad * 2);
     }
 
@@ -168,6 +169,12 @@ export function bindUnitInfo(options) {
   function populate(type) {
     const label = UNIT_LABELS[type] || type;
     if (title) title.textContent = label;
+    if (economyEl) {
+      const eco = unitEconomy(type);
+      economyEl.textContent = eco.landDisplay
+        ? `${eco.costDisplay} · ${eco.landDisplay}`
+        : eco.costDisplay;
+    }
     if (summary) summary.textContent = UNIT_SUMMARIES[type] || "";
     if (art) {
       const src = buyBgSrc(unitArtType(type));

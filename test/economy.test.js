@@ -32,7 +32,7 @@ describe("purchases", () => {
     }
   });
 
-  it("buys skirmishers and dragoons before field guns early", () => {
+  it("buys skirmishers before field guns early", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     sim.player.gold = 900;
@@ -43,7 +43,6 @@ describe("purchases", () => {
     assert.ok(valueOf(units) <= CONFIG.botCannonArmyValue);
     assert.equal(living(sim.player, "cannon").length, 0);
     assert.ok(living(sim.player, "skirmisher").length >= 1);
-    assert.ok(living(sim.player, "dragoon").length >= 1);
   });
 
   it("Hard buys a skirmisher against a dragoon and then stops", () => {

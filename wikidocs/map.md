@@ -36,17 +36,17 @@ Each player has one fort in each lane, at 250 paces from their own keep. The for
 
 Matches use a named map preset (default map below). Terrain footprints sit on specific rows and use the same footprint reach as forts (12 paces either side of the feature center). They are drawn over those rows. Emoji labels are off by default; turn them on in the settings menu, or see them during the training tutorial.
 
-**Hills** (⛰️). Block LOS. Units on a hill get +20% shooting range and fort-style cover against attackers off that hill. Movement is slower before the hill center (from your keep) and faster by the same amount after it.
+**Hills** (⛰️). Block LOS. Units on a hill get +20% shooting range and fort-style cover against attackers off that hill. While walking away from your keep, movement is slower before the hill center and faster by the same amount after it. Walking back toward your keep reverses that: faster before the center, slower after it.
 
-**Woods** (🌲). Hide units inside unless you also have a unit in that woods. A unit inside can see into and past the woods. Units in woods have cover. All units move slower in woods.
+**Woods** (🌲). Units in woods have cover and move slower. Guerillas in woods stay hidden unless you occupy that woods or are in melee with them (or they just shot). Other units in woods are visible through ordinary fog of war. A unit inside can see into and past the woods.
 
-**River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter. Broken artillery steps onto a clear adjacent row (the bridge row when present) to keep withdrawing.
+**River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter unless an Engineer pontoons that river (treated as a bridge while the Engineer's 60-pace aura overlaps it). Broken artillery steps onto a clear adjacent row (the bridge row when present) to keep withdrawing. Guns left on a river when a pontoon drops peel toward their own keep.
 
 **Peaks** (🗻). Block LOS. Slow infantry; cavalry and artillery cannot enter. Broken cavalry and artillery step to a clear adjacent row to keep withdrawing around the peak.
 
 **Bridge** (🌉). Normal movement; does not block LOS (cosmetic pathing on that row).
 
-**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Shots from a hidden enemy still appear in flight. Enemies you are in melee with are always shown. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Reveal and hide update each tick.
+**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Shots from a hidden enemy still appear in flight. Enemies you are in melee with are always shown. Guerillas are also hidden (and cannot be shot) unless within 50 paces, they shot within the last second, or you occupy their woods. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Stealthed Guerillas cannot. An Engineer within 60 paces of a terrain feature unblocks LOS through it for its side even without standing on it. Reveal and hide update each tick.
 
 **Cresting a segment.** Once any of your units on that lane is past the centerline of the terrain that closes off a gap (and not yet into the footprint of the terrain on the far side of that gap), you can see into that open segment on every row of the lane — not only the row your unit stands on. Example: a unit on the outer bottom row just past a forest toward the river can see the inner-row gap between the peak and the next forest, but not the earlier outer-row gap between the two forests behind it.
 

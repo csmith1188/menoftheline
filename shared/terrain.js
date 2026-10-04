@@ -7,7 +7,7 @@ import {
   Path,
   troopLaneT,
 } from "./path.js";
-import { mobilityClass } from "./units.js";
+import { mobilityClass, unitStats } from "./units.js";
 
 /** Kinds that block line of sight (fort is asymmetric). */
 const LOS_KINDS = new Set(["hill", "peak", "woods", "fort"]);
@@ -35,6 +35,71 @@ export const TERRAIN_TINT = {
 let _cachedMapId = null;
 let _cachedFeatures = null;
 
+function emptyTerrainFx() {
+  return {
+    pontoonIds: new Set(),
+    losCancel: { player: new Set(), enemy: new Set() },
+  };
+}
+
+let _terrainFx = emptyTerrainFx();
+
+/** Match overlay: pontoon rivers and Engineer LOS cancel. */
+export function setTerrainFx(fx) {
+  _terrainFx = fx || emptyTerrainFx();
+}
+
+export function getTerrainFx() {
+  return _terrainFx;
+}
+
+/** True when an Engineer aura overlaps this feature's footprint. */
+export function auraOverlapsFeature(unit, feature) {
+  if (!unit || !feature || unit.lane !== feature.lane || unit.hp <= 0) return false;
+  const paces = playerPacesOf(unit);
+  if (paces == null) return false;
+  const reach = CONFIG.officerRestorePaces;
+  const { minPaces, maxPaces } = featureInterval(feature);
+  return paces + reach >= minPaces && paces - reach <= maxPaces;
+}
+
+/** Rebuild pontoon / LOS-cancel overlay from living Engineers. */
+export function refreshTerrainFx(troopsBySide, mapId) {
+  const pontoonIds = new Set();
+  const losCancel = { player: new Set(), enemy: new Set() };
+  const features = featuresOnMap(mapId);
+  const sides = ["player", "enemy"];
+  for (let s = 0; s < sides.length; s += 1) {
+    const sideId = sides[s];
+    const list = living(troopsBySide && troopsBySide[sideId]);
+    for (let i = 0; i < list.length; i += 1) {
+      const unit = list[i];
+      if (unit.variant !== "engineer") continue;
+      for (let f = 0; f < features.length; f += 1) {
+        const feature = features[f];
+        if (!auraOverlapsFeature(unit, feature)) continue;
+        losCancel[sideId].add(feature.id);
+        if (feature.kind === "river") pontoonIds.add(feature.id);
+      }
+    }
+  }
+  _terrainFx = { pontoonIds, losCancel };
+}
+
+function riverIsPontoon(feature) {
+  return Boolean(feature && feature.kind === "river" && _terrainFx.pontoonIds.has(feature.id));
+}
+
+function sideCancelsLos(viewerSideId, feature) {
+  const set = _terrainFx.losCancel && _terrainFx.losCancel[viewerSideId];
+  return Boolean(set && feature && set.has(feature.id));
+}
+
+function featureOpenForSide(viewerSideId, feature, troopsBySide) {
+  return sideOccupiesFeature(viewerSideId, feature, troopsBySide)
+    || sideCancelsLos(viewerSideId, feature);
+}
+
 /** Active features for a map id (cached per id). */
 export function featuresOnMap(mapId) {
   const id = mapId || CONFIG.defaultMapId;
@@ -49,6 +114,7 @@ export function featuresOnMap(mapId) {
 export function clearTerrainCache() {
   _cachedMapId = null;
   _cachedFeatures = null;
+  _terrainFx = emptyTerrainFx();
 }
 
 /** Footprint interval in player-keep paces. */
@@ -132,7 +198,7 @@ export function canOccupy(unitType, lane, sublane, paces, mapId) {
   for (let i = 0; i < at.length; i += 1) {
     const kind = at[i].kind;
     if (kind === "peak" && mob !== "infantry") return false;
-    if (kind === "river" && mob === "artillery") return false;
+    if (kind === "river" && mob === "artillery" && !riverIsPontoon(at[i])) return false;
   }
   return true;
 }
@@ -147,10 +213,13 @@ export function unitCanOccupy(unit, mapId) {
 
 /**
  * Combined move-speed multiplier from overlapping terrain.
- * Hill slope is relative to the unit's own keep.
+ * Hill slope is relative to the unit's own keep. `backward` flips it
+ * for a step toward that keep (retreat, fall back, charge reverse, peel).
  */
-export function moveSpeedFactor(unit, mapId) {
+export function moveSpeedFactor(unit, mapId, backward = false) {
   if (!unit || !unit.lane) return 1;
+  const stats = unitStats(unitTypeKey(unit));
+  if (stats && stats.ignoreTerrainSlow) return 1;
   const under = featuresUnder(unit, mapId);
   if (!under.length) return 1;
   const mob = mobilityClass(unitTypeKey(unit));
@@ -162,19 +231,27 @@ export function moveSpeedFactor(unit, mapId) {
     if (f.kind === "woods") {
       factor *= CONFIG.woodsSlow;
     } else if (f.kind === "river") {
+      if (riverIsPontoon(f)) continue;
       if (mob === "infantry") factor *= CONFIG.riverInfantrySlow;
       else if (mob === "cavalry") factor *= CONFIG.riverCavalrySlow;
     } else if (f.kind === "peak") {
       if (mob === "infantry") factor *= CONFIG.peakSlow;
     } else if (f.kind === "hill" && paces != null && sideId) {
       const center = f.centerPaces;
-      // Before hill center from own keep → slow; after → fast.
       const fromOwn =
         sideId === "player" ? paces : Path.lanePaces(unit.lane) - paces;
       const centerFromOwn =
         sideId === "player" ? center : Path.lanePaces(unit.lane) - center;
-      if (fromOwn < centerFromOwn) factor *= 1 - CONFIG.hillSlope;
-      else if (fromOwn > centerFromOwn) factor *= 1 + CONFIG.hillSlope;
+      // Advancing away from own keep: before the crest is uphill.
+      // A step back toward own keep reverses that slope.
+      const climbing = backward
+        ? fromOwn > centerFromOwn
+        : fromOwn < centerFromOwn;
+      const descending = backward
+        ? fromOwn < centerFromOwn
+        : fromOwn > centerFromOwn;
+      if (climbing) factor *= 1 - CONFIG.hillSlope;
+      else if (descending) factor *= 1 + CONFIG.hillSlope;
     }
   }
   return factor;
@@ -182,9 +259,26 @@ export function moveSpeedFactor(unit, mapId) {
 
 /** Shoot range multiplier (hill +20%). */
 export function shootRangeFactor(unit, mapId) {
+  const bonus = 1 + CONFIG.hillRangeBonus;
   const under = featuresUnder(unit, mapId);
   for (let i = 0; i < under.length; i += 1) {
-    if (under[i].kind === "hill") return 1 + CONFIG.hillRangeBonus;
+    if (under[i].kind === "hill") return bonus;
+  }
+  const allies = unit && unit.side && unit.side.troops;
+  if (!allies || !unit.lane) return 1;
+  const selfPaces = playerPacesOf(unit);
+  if (selfPaces == null) return 1;
+  for (let i = 0; i < allies.length; i += 1) {
+    const source = allies[i];
+    if (!source || source.hp <= 0 || source.variant !== "engineer") continue;
+    if (source.lane !== unit.lane) continue;
+    const srcPaces = playerPacesOf(source);
+    if (srcPaces == null) continue;
+    if (Math.abs(srcPaces - selfPaces) > CONFIG.officerRestorePaces) continue;
+    const hills = featuresUnder(source, mapId);
+    for (let h = 0; h < hills.length; h += 1) {
+      if (hills[h].kind === "hill") return bonus;
+    }
   }
   return 1;
 }
@@ -317,15 +411,10 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
     fromPaces = keepSide === "player" ? 0 : Path.lanePaces(targetLane);
   }
 
-  // Woods: cannot see/shoot into woods unless the viewer occupies them.
-  // (Melee contact still reveals for fog; ranged fire is separately gated.)
-  if (target.hp !== undefined) {
-    const underTarget = featuresUnder(target, mapId);
-    for (let i = 0; i < underTarget.length; i += 1) {
-      const f = underTarget[i];
-      if (f.kind !== "woods") continue;
-      if (!sideOccupiesFeature(viewerSideId, f, troopsBySide)) return false;
-    }
+  // Guerilla stealth: no shot unless melee, recent fire, within stealth
+  // paces, or the viewer occupies (or an Engineer opens) their woods.
+  if (target.hp !== undefined && guerrillaConcealedFrom(viewerSideId, target, troopsBySide, mapId, true)) {
+    return false;
   }
 
   for (let i = 0; i < features.length; i += 1) {
@@ -333,7 +422,7 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
     if (f.lane !== targetLane) continue;
     if (targetSublane != null && f.sublanes.indexOf(targetSublane) < 0) continue;
     if (!featureBlocksLos(f, viewerSideId)) continue;
-    if (sideOccupiesFeature(viewerSideId, f, troopsBySide)) continue;
+    if (featureOpenForSide(viewerSideId, f, troopsBySide)) continue;
     // Shooters can always engage a unit whose centerline is on this footprint.
     if (target.hp !== undefined && onTerrain(target, f)) continue;
     if (intervalBlocksBetween(fromPaces, targetPaces, f)) return false;
@@ -488,26 +577,16 @@ export function sideCrestsSegment(viewerSideId, segment, troopsBySide) {
 
 /**
  * Fog visibility of an enemy unit for viewerSideId.
- * Melee contact always reveals. Woods hide unless occupied (or melee).
- * Open segments are visible when any same-lane friendly crests them (past the
- * near blocker centerline, before the far footprint), on any row.
- * Units on hill/peak/fort footprints stay visible only when LOS reaches that
- * footprint.
+ * Melee contact always reveals. Guerillas add stealth and woods hide.
+ * Other units in woods use ordinary fog/LOS. Open segments are visible when
+ * any same-lane friendly crests them. Units on hill/peak/fort footprints
+ * stay visible only when LOS reaches that footprint.
  */
 export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId) {
   if (!enemy || enemy.hp <= 0) return false;
 
-  // Always show enemies you are fighting in melee.
   if (inMeleeWithViewer(viewerSideId, enemy, troopsBySide)) return true;
-
-  const under = featuresUnder(enemy, mapId);
-
-  // Woods hide unless viewer also occupies that woods feature.
-  for (let i = 0; i < under.length; i += 1) {
-    if (under[i].kind === "woods") {
-      return sideOccupiesFeature(viewerSideId, under[i], troopsBySide);
-    }
-  }
+  if (guerrillaConcealedFrom(viewerSideId, enemy, troopsBySide, mapId)) return false;
 
   const paces = playerPacesOf(enemy);
   if (paces != null && enemy.lane != null && enemy.sublane != null) {
@@ -531,6 +610,44 @@ export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId) {
 }
 
 /**
+ * Guerillas stay concealed until melee (vision), a recent shot, a same-lane
+ * viewer within stealth paces, or the viewer opens woods they occupy.
+ * `forShot` keeps woods closed even when a friend is in melee, so only
+ * occupants (or Engineers) can fire into those woods.
+ */
+function guerrillaConcealedFrom(viewerSideId, enemy, troopsBySide, mapId, forShot = false) {
+  if (!enemy || enemy.variant !== "guerrilla") return false;
+  if (!forShot && inMeleeWithViewer(viewerSideId, enemy, troopsBySide)) return false;
+  if (guerrillaShotRevealed(enemy)) return false;
+  const under = featuresUnder(enemy, mapId);
+  for (let i = 0; i < under.length; i += 1) {
+    if (under[i].kind !== "woods") continue;
+    if (!featureOpenForSide(viewerSideId, under[i], troopsBySide)) return true;
+  }
+  return !guerrillaNearViewer(viewerSideId, enemy, troopsBySide);
+}
+
+function guerrillaShotRevealed(enemy) {
+  const sim = enemy.side && enemy.side.sim;
+  if (!sim || enemy.lastShotAt == null) return false;
+  return (sim.elapsed - enemy.lastShotAt) <= CONFIG.guerrillaShotRevealSec;
+}
+
+function guerrillaNearViewer(viewerSideId, enemy, troopsBySide) {
+  const limit = CONFIG.guerrillaStealthPaces;
+  const ePaces = playerPacesOf(enemy);
+  const friends = living(troopsBySide && troopsBySide[viewerSideId]);
+  for (let i = 0; i < friends.length; i += 1) {
+    const friend = friends[i];
+    if (!friend || friend.lane !== enemy.lane) continue;
+    const fp = playerPacesOf(friend);
+    if (fp == null || ePaces == null) continue;
+    if (Math.abs(fp - ePaces) <= limit) return true;
+  }
+  return false;
+}
+
+/**
  * Feature ids that still block LOS for this viewer (not cancelled by occupying).
  * Used for logic; lane darkening uses fogLaneRegions instead.
  */
@@ -540,7 +657,7 @@ export function foggedFeatureIds(viewerSideId, troopsBySide, mapId) {
   for (let i = 0; i < features.length; i += 1) {
     const f = features[i];
     if (!featureBlocksLos(f, viewerSideId)) continue;
-    if (sideOccupiesFeature(viewerSideId, f, troopsBySide)) continue;
+    if (featureOpenForSide(viewerSideId, f, troopsBySide)) continue;
     dark.push(f.id);
   }
   return dark;
@@ -622,7 +739,7 @@ export function clampPaceMove(unitType, lane, sublane, fromPaces, toPaces, mapId
     if (f.lane !== lane || f.sublanes.indexOf(sublane) < 0) continue;
     const blocked =
       (f.kind === "peak" && mob !== "infantry") ||
-      (f.kind === "river" && mob === "artillery");
+      (f.kind === "river" && mob === "artillery" && !riverIsPontoon(f));
     if (!blocked) continue;
     const { minPaces, maxPaces } = featureInterval(f);
     // Edge just outside the footprint in the approach direction.
@@ -635,7 +752,21 @@ export function clampPaceMove(unitType, lane, sublane, fromPaces, toPaces, mapId
     }
   }
   // If already inside somehow, hold position.
-  if (!canOccupy(unitType, lane, sublane, best, mapId)) return fromPaces;
+  if (!canOccupy(unitType, lane, sublane, best, mapId)) {
+    for (let i = 0; i < features.length; i += 1) {
+      const f = features[i];
+      if (f.lane !== lane || f.sublanes.indexOf(sublane) < 0) continue;
+      const blocked =
+        (f.kind === "peak" && mob !== "infantry") ||
+        (f.kind === "river" && mob === "artillery" && !riverIsPontoon(f));
+      if (!blocked) continue;
+      const { minPaces, maxPaces } = featureInterval(f);
+      if (fromPaces < minPaces || fromPaces > maxPaces) continue;
+      const exit = dir > 0 ? maxPaces + 1e-6 : minPaces - 1e-6;
+      if (canOccupy(unitType, lane, sublane, exit, mapId)) return exit;
+    }
+    return fromPaces;
+  }
   return best;
 }
 
@@ -654,9 +785,20 @@ export function playerPacesFromProgress(sideId, lane, progress) {
   return t * total;
 }
 
+/** True when artillery is standing on a river that is not currently a pontoon. */
+export function unitOnClosedRiver(unit, mapId) {
+  if (!unit || mobilityClass(unitTypeKey(unit)) !== "artillery") return false;
+  const under = featuresUnder(unit, mapId);
+  for (let i = 0; i < under.length; i += 1) {
+    if (under[i].kind === "river" && !riverIsPontoon(under[i])) return true;
+  }
+  return false;
+}
+
 /** Public snapshot fields for clients. */
 export function snapshotTerrain(viewerSideId, troopsBySide, mapId) {
   const id = mapId || CONFIG.defaultMapId;
+  refreshTerrainFx(troopsBySide, id);
   const features = featuresOnMap(id).map((f) => ({
     id: f.id,
     kind: f.kind,

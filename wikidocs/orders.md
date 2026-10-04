@@ -5,7 +5,7 @@ A unit is always under one order. Advance is the order units start with. How to 
 
 **Advance.** The unit marches forward. It shoots at engagement range, then keeps marching when it has nothing to shoot. If a friendly is close ahead on the same row, it stops; it does not switch rows to go around. In a line that is already Perfect Line, once any mate has opened fire the others that are Perfect Line with it hold and shoot with it. Units still closing up keep marching. Advance does not stop or dress the line just to square it when nobody is shooting. Engagement range and Perfect Line are on [[The Map]]. What they shoot is on [[Shooting]].
 
-**Halt.** The unit stops and shoots at full range. It recovers fatigue over time (blue + signs). See [[Shooting]] and [[Fatigue and Breaking]].
+**Halt.** The unit stops and shoots at full range. Guerillas Halted in the open only shoot enemies within stealth range (50 paces); occupying a terrain feature lets them Halt-shoot at full range. It recovers fatigue over time (blue + signs). See [[Shooting]] and [[Fatigue and Breaking]].
 
 **Charge.** The unit rushes forward at charge speed, seeking melee, and does not shoot until it is in contact. It ignores friendly footprints unless that friendly is also Charging or either unit is in melee. It gains fatigue while it moves. A charge hit in melee gains the unit's charge bonus. Charge does not end when fatigue is full. See [[Melee]] and [[Fatigue and Breaking]].
 

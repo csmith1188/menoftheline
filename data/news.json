@@ -1,6 +1,18 @@
 [
   {
     "date": "2026-10-04",
+    "title": "Light Alternate Units",
+    "summary": "Each buy type now has a second, light alternate. Swipe a buy button to cycle the standard unit, the yellow elite, and the new white light variant. Light alternates cost gold plus 10% of that gold price in land (elites still cost 20%).",
+    "items": [
+      "Militiamen (Troop): cheap line infantry with a Troop line bonus, but less damage, endurance, and discipline.",
+      "Guerillas (Skirmish): hidden until they fire or close in; they are not slowed by woods and stay stealthed unless you occupy their woods, get within 50 paces, or they shot in the last second.",
+      "Light Cavalry (Dragoon): ignore terrain slow (still blocked by peaks) and gain a melee pack bonus for every other friendly Light Cavalry in melee reach. Selected-unit info shows Pack +% the same way it shows Line +%.",
+      "Horse Guns (Cannon): faster field guns with less range and punch. They still cannot cross rivers unless an Engineer pontoons them.",
+      "Engineer (Officer): does not restore the line. Within 60 paces it opens LOS through terrain, pontoons overlapping rivers so artillery can cross, and while on a hill shares that hill's shooting-range bonus with nearby friends."
+    ]
+  },
+  {
+    "date": "2026-10-04",
     "title": "Unit Price Balance",
     "summary": "Increased prices on units to increase mass tax effect and reduce spam late game causing games to drag out.",
     "items": [
@@ -15,13 +27,13 @@
   {
     "date": "2026-10-03",
     "title": "Terrain and Line of Sight",
-    "summary": "Terrain features (hills, woods, rivers, peaks, bridges, forts) now block or reveal vision and line of sight (LOS) exactly as described in the Map rules. Enemy units in woods require you to also occupy that woods to see or shoot them. Forts and LOS-blocking terrain create fogged segments you can't see into unless a friendly unit has advanced past the terrain blocking that segment in any row. Units on fort, hill, peak, or bridge footprints are visible only if you have LOS to that feature; hills and peaks also boost range or restrict movement. The new LOS model means you will only see or target enemies your side can actually spot, and fog updates dynamically as units move. All terrain rules follow the complete descriptions in the in-game Map and the wiki. Tooltips and training mode improvements included.",
+    "summary": "Terrain such as hills, woods, rivers, forts, and bridges now hide or reveal units depending on where yours are. You can’t see or shoot at enemies hiding in woods unless you’re in the same woods. Some features, like forts and hills, make units easier or harder to see and hit, and also affect how far you can shoot or move. Fog clears as your troops move forward. It’s now much easier to tell which enemies you can see and target.",
     "items": [
-      "Terrain features now fully implement LOS and vision/fog: hills, woods, peaks, forts block vision (except to units standing on them); woods hide units unless your side occupies the same feature.",
-      "Cresting a segment (moving a unit past the center of blocking terrain) reveals that segment on all rows for your side.",
-      "Units behind their own fort have cover against shots from enemies past the fort. Hills and peaks grant cover and range bonuses, and restrict some unit types.",
-      "Bridges and rivers affect movement speed as described: infantry, cavalry, and artillery interact differently.",
-      "You only see enemy units your side could logically spot under these rules; fog of war now matches the map documentation."
+      "Terrain features now hide and reveal units more realistically—hills, woods, and forts block your view and fog the map, unless one of your units has advanced past them.",
+      "You can only see enemies that your own units could actually spot; the fog of war on the map now matches what you’d expect.",
+      "Units hiding behind their own fort get cover, and some terrain makes shooting easier or harder.",
+      "Different terrain changes how fast units can move depending on their type.",
+      "There are improvements to tooltips and training mode to help you learn these changes."
     ]
   },
   {

@@ -9,14 +9,17 @@ import {
 import {
   canOccupy,
   clampPaceMove,
+  featuresUnder,
   hasShotLos,
   isEnemyVisible,
   moveSpeedFactor,
   playerPacesFromProgress,
   progressFromPlayerPaces,
+  refreshTerrainFx,
   shootRangeFactor,
   snapshotTerrain,
   terrainCover,
+  unitOnClosedRiver,
 } from "../shared/terrain.js";
 
 /** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
@@ -44,6 +47,17 @@ function isValidRangedTarget(other) {
   if (other.hp <= 0) return false;
   if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) return false;
   return true;
+}
+
+/** Halted Guerillas in the open only shoot inside stealth paces. */
+function guerrillaHaltOpenStealthOnly(unit) {
+  if (!unit || unit.variant !== "guerrilla" || unit.order !== "halt") return false;
+  return featuresUnder(unit, unit.mapId()).length === 0;
+}
+
+function guerrillaHaltShotRangePaces(unit, weaponPaces) {
+  if (!guerrillaHaltOpenStealthOnly(unit)) return weaponPaces;
+  return Math.min(weaponPaces, CONFIG.guerrillaStealthPaces);
 }
 
 /**
@@ -364,6 +378,7 @@ class Unit {
     this.type = "troop";
     this.variant = null;
     this.alternate = false;
+    this.lastShotAt = null;
     this.applyStats(UNIT_STATS.troop);
     this.progress = 0;
     this.cooldown = 0;
@@ -1491,7 +1506,7 @@ class Unit {
     const stationSpan = Path.lanePaces(this.lane) * Path.stationPerPace(this.lane);
     if (!(stationSpan > 0)) return false;
 
-    const speed = this.marchSpeed(allies);
+    const speed = this.marchSpeed(allies, sign < 0);
     if (!(speed > 0)) return false;
     const delta = Math.min(this.alongDelta(speed, dt), need / stationSpan);
     if (!(delta > 0)) return false;
@@ -1949,9 +1964,12 @@ class Unit {
     return { player: sim.player.troops, enemy: sim.enemy.troops };
   }
 
-  /** Terrain move multiplier at the current footprint. */
-  terrainMoveFactor() {
-    return moveSpeedFactor(this, this.mapId());
+  /**
+   * Terrain move multiplier at the current footprint.
+   * `backward` flips hill slope for a step toward this side's keep.
+   */
+  terrainMoveFactor(backward = false) {
+    return moveSpeedFactor(this, this.mapId(), backward);
   }
 
   /**
@@ -2035,7 +2053,7 @@ class Unit {
    * Reform: the front stands still, the rearmost walks at full speed,
    * and everyone else walks at half speed until the line is square.
    */
-  marchSpeed(allies) {
+  marchSpeed(allies, backward = false) {
     const base = this.speed * this.side.speedMultiplier;
     let speed = base;
     if (this.order === "halt") {
@@ -2055,7 +2073,7 @@ class Unit {
         speed = base * CONFIG.reformSpeedFactor;
       }
     }
-    return speed * this.terrainMoveFactor();
+    return speed * this.terrainMoveFactor(backward);
   }
 
   /** True when this reforming unit is the furthest back in its formation. */
@@ -2087,8 +2105,9 @@ class Unit {
   }
 
   /**
-   * Halt shoots at full range. Advance and Fall Back use engageRange
-   * (fraction of weapon range). Hills add a range bonus when occupied.
+   * Halt shoots at full range (Guerillas Halted in the open cap at
+   * stealth paces). Advance and Fall Back use engageRange (fraction of
+   * weapon range). Hills add a range bonus when occupied.
    */
   relevantRangePaces() {
     let range;
@@ -2097,7 +2116,7 @@ class Unit {
       const fraction = this.engageRange == null ? 0.5 : this.engageRange;
       range = this.rangePaces() * fraction;
     }
-    return range * shootRangeFactor(this, this.mapId());
+    return guerrillaHaltShotRangePaces(this, range * shootRangeFactor(this, this.mapId()));
   }
 
   /** Distance along this lane from the named keep, in paces. */
@@ -2336,7 +2355,7 @@ class Unit {
         return false;
       }
     }
-    const speed = this.marchSpeed(allies);
+    const speed = this.marchSpeed(allies, sign < 0);
     const delta = this.alongDelta(speed, dt);
     if (!(delta > 0)) return false;
     let nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
@@ -3107,7 +3126,7 @@ class Unit {
         }
       }
     }
-    const speed = this.speed * this.side.speedMultiplier * this.terrainMoveFactor();
+    const speed = this.speed * this.side.speedMultiplier * this.terrainMoveFactor(sign < 0);
     const delta = this.alongDelta(speed, dt);
     let nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
     nextProgress = this.clampTerrainProgress(nextProgress);
@@ -3674,6 +3693,28 @@ class Unit {
     return mates * perMate * this.lineNeighborQuality(line);
   }
 
+  /**
+   * Light Cavalry melee pack: CONFIG.cavalryPackBonus per other friendly
+   * Light Cavalry whose body is in this unit's melee reach.
+   */
+  packDamagePercent(allies) {
+    const perMate = CONFIG.cavalryPackBonus || 0;
+    if (!(perMate > 0) || this.variant !== "lightCavalry") return 0;
+    const reach = this.bodyRadius() + CONFIG.meleeSlack;
+    const group = allies || (this.side ? this.side.troops : []);
+    let mates = 0;
+    for (let i = 0; i < group.length; i += 1) {
+      const ally = group[i];
+      if (!ally || ally === this || ally.hp <= 0) continue;
+      if (ally.variant !== "lightCavalry") continue;
+      if (ally.lane !== this.lane) continue;
+      const dist = distance(this, ally);
+      if (dist > reach + ally.bodyRadius()) continue;
+      mates += 1;
+    }
+    return mates * perMate;
+  }
+
   /** Shot falloff from 1 at point blank down to minDamageFactor at max range. */
   falloffTo(target) {
     const range = Math.max(this.rangePaces(), 1);
@@ -3732,6 +3773,7 @@ class Unit {
     if (!omitLine && strike !== "melee" && target.type !== "skirmisher") {
       sum += this.lineDamagePercent(allies);
     }
+    if (strike === "melee") sum += this.packDamagePercent(allies);
     if (this.side) sum += this.side.damageScale() - 1;
     if (target.type === "officer") sum += (this.officerDamageMultiplier || 1) - 1;
     sum += this.healthDamageFactor(allies) - 1;
@@ -3772,6 +3814,8 @@ class Unit {
     // 2) Melee-locked units are never valid ranged targets (Keep excepted).
     if (strike !== "melee") {
       if (this.cannotFireRanged()) return;
+      if (target && guerrillaHaltOpenStealthOnly(this)
+        && this.shotPaces(target) > CONFIG.guerrillaStealthPaces) return;
       if (target && !isValidRangedTarget(target)) return;
     }
     const shot = this.attackDamage(target, strike, allies);
@@ -3820,9 +3864,15 @@ class Unit {
     ));
     this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
+    this.markShotFired();
     if (this.type === "cannon") {
       this.applyPushback(this.shootingPushback, false);
     }
+  }
+
+  markShotFired() {
+    const sim = this.side && this.side.sim;
+    if (sim) this.lastShotAt = sim.elapsed;
   }
 
   /** Cooldown, flash, fatigue, and held-order release for one step. */
@@ -3924,6 +3974,16 @@ class Unit {
       if (!this.marchAlong(dt, allies, enemies, -1)) {
         this.tryWithdrawAroundTerrain(dt, allies, enemies);
       }
+      return;
+    }
+
+    if (unitOnClosedRiver(this, this.mapId())) {
+      const saved = this.order;
+      this.order = "retreat";
+      if (!this.marchAlong(dt, allies, enemies, -1)) {
+        this.tryWithdrawAroundTerrain(dt, allies, enemies);
+      }
+      this.order = saved;
       return;
     }
 
@@ -4318,6 +4378,7 @@ class Howitzer extends Cannon {
     }
     this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
+    this.markShotFired();
     this.applyPushback(this.shootingPushback, false);
   }
 }
@@ -4336,6 +4397,51 @@ class ColorGuard extends Officer {
   }
 }
 
+class Militia extends Troop {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "militia";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.militia);
+  }
+}
+
+class Guerrilla extends Skirmisher {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "guerrilla";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.guerrilla);
+  }
+}
+
+class LightCavalry extends Dragoon {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "lightCavalry";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.lightCavalry);
+  }
+}
+
+class HorseGun extends Cannon {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "horseGun";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.horseGun);
+  }
+}
+
+class Engineer extends Officer {
+  constructor(id, side, lane, sublane) {
+    super(id, side, lane, sublane);
+    this.variant = "engineer";
+    this.alternate = true;
+    this.applyStats(UNIT_STATS.engineer);
+  }
+}
+
 const UNIT_KINDS = {
   troop: Troop,
   skirmisher: Skirmisher,
@@ -4347,6 +4453,11 @@ const UNIT_KINDS = {
   lancer: Lancer,
   howitzer: Howitzer,
   colorGuard: ColorGuard,
+  militia: Militia,
+  guerrilla: Guerrilla,
+  lightCavalry: LightCavalry,
+  horseGun: HorseGun,
+  engineer: Engineer,
 };
 
 function createUnit(id, side, lane, sublane, type) {
@@ -4803,7 +4914,15 @@ export class GameSim {
     const troop = side.tryBuy(lane, this.nextTroopId, type);
     if (!troop) return null;
     this.nextTroopId += 1;
+    this.syncTerrainFx();
     return troop;
+  }
+
+  syncTerrainFx() {
+    refreshTerrainFx(
+      { player: this.player.troops, enemy: this.enemy.troops },
+      this.mapId,
+    );
   }
 
   /**
@@ -4880,6 +4999,7 @@ export class GameSim {
   /** Movement, capture, guns, and the capital win check. */
   finishStep(dt) {
     if (this.winner) return;
+    this.syncTerrainFx();
     this.clearPushbackTickFlags(this.player);
     this.clearPushbackTickFlags(this.enemy);
     // In-flight hits (and their pushback) resolve before anyone shoots so
@@ -5209,6 +5329,8 @@ export class GameSim {
       for (let j = 0; j < troops.length; j += 1) {
         const source = troops[j];
         if (source === unit || source.hp <= 0 || source.type !== "officer") continue;
+        if (source.variant === "engineer") continue;
+        if (!(source.restoreRate > 0)) continue;
         if (source.lane !== unit.lane) continue;
         const per = Path.stationPerPace(unit.lane);
         if (!(per > 0)) continue;

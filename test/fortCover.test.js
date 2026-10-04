@@ -70,7 +70,7 @@ describe("fort cover", () => {
       progress: 1 - progressAtPaces(fort),
       sublane: 2,
     });
-    assert.equal(attacker.pacesFromKeep("player"), fort);
+    assert.ok(Math.abs(attacker.pacesFromKeep("player") - fort) < 1e-6);
     assert.equal(hasFortCover(defender, attacker), false);
   });
 

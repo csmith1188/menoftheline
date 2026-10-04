@@ -127,7 +127,7 @@ export const UNIT_STATS = {
     restoreHealth: true,
     officerDamageMultiplier: 1,
   },
-  // Alternates (same base type in play; white square behind the icon)
+  // Alternates (same base type in play). Elite: yellow square. Light: white square.
   /** Troop with more hit points; takes half pushback; stronger melee push. */
   grenadier: {
     ...SHOT,
@@ -241,6 +241,107 @@ export const UNIT_STATS = {
     restoreHealth: true,
     officerDamageMultiplier: 1,
   },
+  militia: {
+    ...SHOT,
+    hp: 100,
+    rangedDamage: 5,
+    meleeDamage: 5,
+    range: 200,
+    engageRange: 0.5,
+    chargeSpeed: 1.5,
+    flankMultiplier: 1.2,
+    rangedCooldown: 1.5,
+    meleeCooldown: 1.5,
+    speed: 15,
+    cost: 75,
+    fightsMelee: true,
+    splash: 0,
+    restoreRange: 0,
+    restoreRate: 0,
+    officerDamageMultiplier: 1,
+    fatigue: 50,
+    pushbackTakenFactor: 1.5,
+  },
+  guerrilla: {
+    ...SHOT,
+    hp: 100,
+    rangedDamage: 7,
+    meleeDamage: 7,
+    range: 220,
+    engageRange: 0.5,
+    chargeSpeed: 1.5,
+    flankMultiplier: 1.2,
+    rangedCooldown: 1,
+    meleeCooldown: 1.5,
+    speed: 15,
+    cost: 100,
+    fightsMelee: true,
+    splash: 0,
+    restoreRange: 0,
+    restoreRate: 0,
+    officerDamageMultiplier: 1,
+    shootingPushback: 2,
+    ignoreTerrainSlow: true,
+  },
+  lightCavalry: {
+    ...SHOT,
+    hp: 100,
+    rangedDamage: 10,
+    meleeDamage: 10,
+    range: 100,
+    engageRange: 0.5,
+    chargeSpeed: 1.5,
+    flankMultiplier: 1.2,
+    rangedCooldown: 1.5,
+    meleeCooldown: 1.5,
+    speed: 25,
+    cost: 150,
+    fightsMelee: true,
+    splash: 0,
+    restoreRange: 0,
+    restoreRate: 0,
+    officerDamageMultiplier: 1,
+    ignoreTerrainSlow: true,
+  },
+  horseGun: {
+    ...SHOT,
+    hp: 100,
+    rangedDamage: 90,
+    meleeDamage: 10,
+    range: 250,
+    engageRange: 0.5,
+    chargeSpeed: 1,
+    flankMultiplier: 1.2,
+    rangedCooldown: 6,
+    meleeCooldown: 6,
+    speed: 20,
+    cost: 300,
+    fightsMelee: true,
+    splash: 0.5,
+    restoreRange: 0,
+    restoreRate: 0,
+    officerDamageMultiplier: 1,
+  },
+  engineer: {
+    ...SHOT,
+    hp: 50,
+    rangedDamage: 5,
+    meleeDamage: 5,
+    range: 100,
+    engageRange: 0.5,
+    chargeSpeed: 1.5,
+    flankMultiplier: 1.2,
+    rangedCooldown: 1.5,
+    meleeCooldown: 1.5,
+    speed: 15,
+    cost: 300,
+    fightsMelee: true,
+    splash: 0,
+    restoreRange: 0,
+    restoreRate: 0,
+    restoreHealth: false,
+    officerDamageMultiplier: 1,
+  },
 };
 export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
@@ -250,14 +351,19 @@ export function unitStats(type) {
 const MOBILITY_CLASS = {
   troop: "infantry",
   grenadier: "infantry",
+  militia: "infantry",
   skirmisher: "infantry",
   rifle: "infantry",
+  guerrilla: "infantry",
   officer: "infantry",
   colorGuard: "infantry",
+  engineer: "infantry",
   dragoon: "cavalry",
   lancer: "cavalry",
+  lightCavalry: "cavalry",
   cannon: "artillery",
   howitzer: "artillery",
+  horseGun: "artillery",
 };
 
 /** Mobility class for terrain rules (river/peak/etc.). */
@@ -265,20 +371,73 @@ export function mobilityClass(type) {
   return MOBILITY_CLASS[type] || "infantry";
 }
 
+/** Base buy type → yellow (elite) then white (light) alternate spawn keys. */
+export const UNIT_VARIANTS = {
+  troop: ["grenadier", "militia"],
+  skirmisher: ["rifle", "guerrilla"],
+  dragoon: ["lancer", "lightCavalry"],
+  cannon: ["howitzer", "horseGun"],
+  officer: ["colorGuard", "engineer"],
+};
+
+/** Alternate spawn key → base buy type. */
+export const VARIANT_OF_BASE = {};
+for (const [base, alts] of Object.entries(UNIT_VARIANTS)) {
+  for (let i = 0; i < alts.length; i += 1) {
+    VARIANT_OF_BASE[alts[i]] = base;
+  }
+}
+
+/** Spawn keys shown on a buy button: base, then each alternate. */
+export function variantOptions(base) {
+  const alts = UNIT_VARIANTS[base];
+  if (!alts || !alts.length) return [base];
+  return [base, ...alts];
+}
+
+/** Next spawn key when swiping a buy button. dir is -1 left or +1 right. */
+export function cycleVariantPick(base, current, dir) {
+  const options = variantOptions(base);
+  let idx = options.indexOf(current);
+  if (idx < 0) idx = 0;
+  const n = options.length;
+  const step = dir < 0 ? -1 : 1;
+  return options[(idx + step + n) % n];
+}
+
 /** True when `type` is an alternate spawn key (grenadier, rifle, …). */
 export function isAlternateUnit(type) {
   return Boolean(VARIANT_OF_BASE[type]);
 }
 
+/** True when `type` is the light (white) alternate of its base. */
+export function isLightAlternate(type) {
+  const base = VARIANT_OF_BASE[type];
+  if (!base) return false;
+  const alts = UNIT_VARIANTS[base] || [];
+  return alts[1] === type;
+}
+
+/** Badge fill behind an alternate silhouette, or null for base units. */
+export function variantBadgeFill(type) {
+  if (isLightAlternate(type)) return CONFIG.colors.whiteAlternate;
+  if (isAlternateUnit(type)) return CONFIG.colors.yellowAlternate;
+  return null;
+}
+
 /**
  * Land price to buy an alternate. Bases cost 0 land.
- * Defaults to unitLandCostRatio of the gold cost unless stats.landCost is set.
+ * Light (white) alternates use lightUnitLandCostRatio; elite (yellow) use unitLandCostRatio.
+ * stats.landCost overrides either ratio.
  */
 export function unitLandCost(type) {
   if (!isAlternateUnit(type)) return 0;
   const stats = unitStats(type);
   if (stats.landCost != null) return stats.landCost;
-  return Math.round(stats.cost * CONFIG.unitLandCostRatio);
+  const ratio = isLightAlternate(type)
+    ? CONFIG.lightUnitLandCostRatio
+    : CONFIG.unitLandCostRatio;
+  return Math.round(stats.cost * ratio);
 }
 
 /**
@@ -298,18 +457,6 @@ export function massTaxOf(troops) {
   return tax;
 }
 
-/** Base buy type → alternate spawn key. */
-export const UNIT_VARIANTS = {
-  troop: "grenadier",
-  skirmisher: "rifle",
-  dragoon: "lancer",
-  cannon: "howitzer",
-  officer: "colorGuard",
-};
-/** Alternate spawn key → base buy type. */
-export const VARIANT_OF_BASE = Object.fromEntries(
-  Object.entries(UNIT_VARIANTS).map(([base, variant]) => [variant, base]),
-);
 /** Short labels for buy buttons and inspect text. */
 export const UNIT_LABELS = {
   troop: "Troop",
@@ -322,6 +469,11 @@ export const UNIT_LABELS = {
   lancer: "Lancer",
   howitzer: "Howitzer",
   colorGuard: "Color Guard",
+  militia: "Militiamen",
+  guerrilla: "Guerillas",
+  lightCavalry: "Light Cavalry",
+  horseGun: "Horse Guns",
+  engineer: "Engineer",
 };
 /** Lane-buy catalog drawn on the canvas (base units only). */
 export const BUY_UNITS = [

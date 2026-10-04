@@ -69,6 +69,11 @@ describe("mobility classes", () => {
     assert.equal(mobilityClass("lancer"), "cavalry");
     assert.equal(mobilityClass("cannon"), "artillery");
     assert.equal(mobilityClass("howitzer"), "artillery");
+    assert.equal(mobilityClass("militia"), "infantry");
+    assert.equal(mobilityClass("guerrilla"), "infantry");
+    assert.equal(mobilityClass("lightCavalry"), "cavalry");
+    assert.equal(mobilityClass("horseGun"), "artillery");
+    assert.equal(mobilityClass("engineer"), "infantry");
   });
 });
 
@@ -102,6 +107,39 @@ describe("terrain movement", () => {
     });
     assert.ok(Math.abs(moveSpeedFactor(before) - (1 - CONFIG.hillSlope)) < 1e-9);
     assert.ok(Math.abs(moveSpeedFactor(after) - (1 + CONFIG.hillSlope)) < 1e-9);
+  });
+
+  it("flips hill slope while moving back toward own keep", () => {
+    const sim = makeTerrainSim();
+    const center = featureById("hill-top-nw").centerPaces;
+    const before = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", center - 6),
+      sublane: 0,
+      order: "retreat",
+    });
+    const after = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", center + 6),
+      sublane: 1,
+      order: "retreat",
+    });
+    const enemySim = makeTerrainSim();
+    const enemyBefore = spawn(enemySim, "enemy", "troop", "top", {
+      progress: progressFromPlayerPaces("enemy", "top", center + 6),
+      sublane: 0,
+      order: "retreat",
+    });
+    assert.ok(Math.abs(moveSpeedFactor(before, "default", true) - (1 + CONFIG.hillSlope)) < 1e-9);
+    assert.ok(Math.abs(moveSpeedFactor(after, "default", true) - (1 - CONFIG.hillSlope)) < 1e-9);
+    assert.ok(Math.abs(moveSpeedFactor(enemyBefore, "default", true) - (1 + CONFIG.hillSlope)) < 1e-9);
+
+    const beforeStart = before.progress;
+    const afterStart = after.progress;
+    stepSim(sim);
+    const nearDrop = beforeStart - before.progress;
+    const farDrop = afterStart - after.progress;
+    const ratio = (1 + CONFIG.hillSlope) / (1 - CONFIG.hillSlope);
+    assert.ok(nearDrop > farDrop);
+    assert.ok(Math.abs(nearDrop / farDrop - ratio) < 1e-6);
   });
 
   it("grants hill range bonus on the footprint", () => {
@@ -205,7 +243,7 @@ describe("terrain cover and LOS", () => {
       progress: progressFromPlayerPaces("player", "bottom", woods - half - 2),
       sublane: 0,
     });
-    const hidden = spawn(sim, "enemy", "troop", "bottom", {
+    const hidden = spawn(sim, "enemy", "guerrilla", "bottom", {
       progress: progressFromPlayerPaces("enemy", "bottom", woods - half + 2),
       sublane: 0,
     });
@@ -220,25 +258,32 @@ describe("terrain cover and LOS", () => {
     assert.ok(snap.sides.enemy.troops.some((t) => t.id === hidden.id));
   });
 
-  it("hides woods occupants unless the viewer also occupies that woods", () => {
+  it("shows woods occupants except Guerillas unless the viewer occupies that woods", () => {
     const sim = makeTerrainSim();
     const woods = featureById("woods-bottom-outer-a").centerPaces;
     const hidden = spawn(sim, "enemy", "troop", "bottom", {
       progress: progressFromPlayerPaces("enemy", "bottom", woods),
       sublane: 0,
     });
-    // Enemy progress: player paces = woods means enemy progress = 1 - woods/total
     hidden.progress = progressFromPlayerPaces("enemy", "bottom", woods);
     hidden.syncPosition();
 
     const tb = troopsBySide(sim);
-    assert.equal(isEnemyVisible("player", hidden, tb), false);
+    assert.equal(isEnemyVisible("player", hidden, tb), true);
+
+    const guerilla = spawn(sim, "enemy", "guerrilla", "bottom", {
+      progress: progressFromPlayerPaces("enemy", "bottom", woods),
+      sublane: 0,
+    });
+    guerilla.progress = progressFromPlayerPaces("enemy", "bottom", woods);
+    guerilla.syncPosition();
+    assert.equal(isEnemyVisible("player", guerilla, troopsBySide(sim)), false);
 
     spawn(sim, "player", "troop", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", woods),
       sublane: 0,
     });
-    assert.equal(isEnemyVisible("player", hidden, troopsBySide(sim)), true);
+    assert.equal(isEnemyVisible("player", guerilla, troopsBySide(sim)), true);
   });
 
   it("forts block LOS only for the non-owning side", () => {
@@ -303,7 +348,7 @@ describe("fog snapshot", () => {
   it("redacts hidden enemy troops from per-side snapshots", () => {
     const sim = makeTerrainSim();
     const woods = featureById("woods-bottom-outer-a").centerPaces;
-    const hidden = spawn(sim, "enemy", "troop", "bottom", {
+    const hidden = spawn(sim, "enemy", "guerrilla", "bottom", {
       progress: progressFromPlayerPaces("enemy", "bottom", woods),
       sublane: 0,
     });
@@ -325,18 +370,18 @@ describe("fog snapshot", () => {
 
   it("still shows projectiles fired by a fogged enemy attacker", () => {
     const sim = makeTerrainSim();
-    const woods = featureById("woods-bottom-outer-a").centerPaces;
-    const hidden = spawn(sim, "enemy", "troop", "bottom", {
-      progress: progressFromPlayerPaces("enemy", "bottom", woods),
+    const hill = featureById("hill-top-nw").centerPaces;
+    const hidden = spawn(sim, "enemy", "troop", "top", {
+      progress: progressFromPlayerPaces("enemy", "top", hill + 120),
       sublane: 0,
     });
-    hidden.progress = progressFromPlayerPaces("enemy", "bottom", woods);
+    hidden.progress = progressFromPlayerPaces("enemy", "top", hill + 120);
     hidden.syncPosition();
-    const target = spawn(sim, "player", "troop", "bottom", {
-      progress: progressFromPlayerPaces("player", "bottom", woods - 80),
+    const target = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", hill - 80),
       sublane: 0,
     });
-    target.progress = progressFromPlayerPaces("player", "bottom", woods - 80);
+    target.progress = progressFromPlayerPaces("player", "top", hill - 80);
     target.syncPosition();
 
     assert.equal(isEnemyVisible("player", hidden, troopsBySide(sim)), false);

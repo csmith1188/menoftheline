@@ -81,8 +81,16 @@ export const CONFIG = {
   armorPerUpgrade: 0.05,
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
-  /** Alternate unit land price as a fraction of its gold cost. */
+  /** Elite (yellow) alternate land price as a fraction of its gold cost. */
   unitLandCostRatio: 0.2,
+  /** Light (white) alternate land price as a fraction of its gold cost. */
+  lightUnitLandCostRatio: 0.1,
+  /** Light Cavalry melee pack bonus per other Light Cavalry in melee reach. */
+  cavalryPackBonus: 0.25,
+  /** Guerilla stealth: hidden unless a viewer is this close (paces). */
+  guerrillaStealthPaces: 50,
+  /** Guerilla stealth: remain revealed this long after shooting (seconds). */
+  guerrillaShotRevealSec: 1,
   /** Land invested per second by one producing town. */
   townProduceRate: 2,
 
@@ -208,8 +216,9 @@ export const CONFIG = {
   /** Named map preset used when a match does not pick another. */
   defaultMapId: "default",
   /**
-   * Hill slope speed delta: before hill center (from own keep) ×(1 − this),
-   * after ×(1 + this). At exact center ×1.
+   * Hill slope speed delta while walking away from own keep: before the
+   * hill center ×(1 − this), after ×(1 + this). A step back toward own
+   * keep flips those sides. At exact center ×1.
    */
   hillSlope: 0.5,
   /** Extra shoot range while a unit's centerline is on a hill footprint. */
@@ -307,6 +316,11 @@ export const CONFIG = {
     howitzer: 0.45,
     officer: 0.25,
     colorGuard: 0.25,
+    militia: 0.9,
+    guerrilla: 0.5,
+    lightCavalry: 1.15,
+    horseGun: 0.42,
+    engineer: 0.25,
   },
 
   // Bot — composition
@@ -475,6 +489,10 @@ export const CONFIG = {
     enemyDark: "#6e241c",
     /** Gold prices, income, and bank buttons. */
     gold: "#e8c36a",
+    /** Yellow (elite) alternate unit badge. */
+    yellowAlternate: "#e6c84a",
+    /** White (light) alternate unit badge. */
+    whiteAlternate: "#ffffff",
     /** Unowned checkpoint. */
     neutral: "#c4b48a",
     /** HUD and announcement text. */

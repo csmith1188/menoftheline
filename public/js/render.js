@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_TINT } from "../shared/terrain.js";
 import { drawDebugRanges } from "./debugRanges.js";
@@ -90,15 +90,16 @@ const viewTroopMethods = {
     ctx.lineWidth = ordered ? 3 : 2;
 
     const r = this.bodyRadius();
-    if (this.alternate) {
+    const badge = variantBadgeFill(this.variant || this.type);
+    if (badge) {
       const pad = r - 1;
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = badge;
       ctx.fillRect(this.x - pad, this.y - pad, pad * 2, pad * 2);
     }
     ctx.fillStyle = fill;
     if (this.type === "cannon") {
       ctx.beginPath();
-      ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+      ctx.arc(this.x, this.y, r * 0.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     } else if (this.type === "skirmisher") {
@@ -973,6 +974,7 @@ const boardMethods = {
       const unit = BUY_UNITS[i];
       const variant = UNIT_VARIANTS[unit.type];
       const spawn = this.selectedBuyUnit(unit.type);
+      const badge = variantBadgeFill(spawn);
       const stats = unitStats(spawn);
       const box = this.buyButtonRect(i);
       const cost = stats.cost;
@@ -994,9 +996,9 @@ const boardMethods = {
       ctx.globalAlpha = can ? 1 : 0.45;
       ctx.fillStyle = unit.fill;
       ctx.fillRect(box.x, box.y, box.w, box.h);
-      if (spawn !== unit.type) {
+      if (badge) {
         const pad = 5 * CONFIG.uiScale;
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = badge;
         ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, box.h - pad * 2);
       }
       const unitBg = buyBgImage(unit.type);
@@ -1007,9 +1009,9 @@ const boardMethods = {
         ctx.drawImage(unitBg, box.x + (box.w - iw) / 2, box.y + (box.h - ih) / 2, iw, ih);
         ctx.globalAlpha = can ? 1 : 0.45;
       }
-      if (spawn !== unit.type) {
+      if (badge) {
         const pad = 5 * CONFIG.uiScale;
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = badge;
         ctx.fillRect(box.x + pad, box.y + pad, box.w - pad * 2, 2);
         ctx.fillRect(box.x + pad, box.y + box.h - pad - 2, box.w - pad * 2, 2);
         ctx.fillRect(box.x + pad, box.y + pad, 2, box.h - pad * 2);
@@ -1035,7 +1037,7 @@ const boardMethods = {
       fillChevron(ctx, cx, box.y + box.h * 0.14, true);
       ctx.fillStyle = lane === "bottom" ? "#ffffff" : "#e8c36a";
       fillChevron(ctx, cx, box.y + box.h * 0.86, false);
-      if (variant) {
+      if (variant && variant.length) {
         const edge = 7 * CONFIG.uiScale;
         ctx.fillStyle = typeSwipe === -1 ? "#ffffff" : "#c8d2dc";
         fillSideArrow(ctx, box.x + edge, mid, false);

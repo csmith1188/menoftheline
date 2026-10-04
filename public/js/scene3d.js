@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
+import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
 import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
 import { showTerrainLabels } from "./board.js";
@@ -652,7 +652,9 @@ export function createScene(canvas) {
       ? "#fff4d2"
       : troop.side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
     mesh.userData.mat.color.set(troop.broken ? "#8d97a3" : color);
-    mesh.userData.plate.visible = Boolean(troop.alternate);
+    mesh.userData.plate.visible = Boolean(variantBadgeFill(troop.variant || troop.type));
+    const plateFill = variantBadgeFill(troop.variant || troop.type);
+    if (plateFill) mesh.userData.plate.material.color.set(plateFill);
     const shown = troop.givenOrder === undefined ? troop.order : troop.givenOrder;
     const ordered = shown === "halt" || shown === "reform"
       || shown === "charge" || shown === "fallback"
@@ -931,15 +933,16 @@ export function createScene(canvas) {
         : null;
       const armed = Boolean(lane || typeSwipe);
       const alt = spawn !== unit.type;
+      const badge = variantBadgeFill(spawn);
       const unitBg = buyBgImage(unit.type);
-      mesh.material.color.set(alt ? "#ffffff" : unit.fill);
+      mesh.material.color.set(badge || unit.fill);
       mesh.material.opacity = can ? 1 : 0.45;
       mesh.material.transparent = true;
       mesh.material.emissive.set(armed ? "#ffffff" : "#000000");
       mesh.material.emissiveIntensity = armed ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
-      const hasVariant = Boolean(UNIT_VARIANTS[unit.type]);
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${typeSwipe || ""}:${alt}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
+      const hasVariant = Boolean(UNIT_VARIANTS[unit.type] && UNIT_VARIANTS[unit.type].length);
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${typeSwipe || ""}:${badge || ""}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
           { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
@@ -948,7 +951,7 @@ export function createScene(canvas) {
         ], {
           width: 256,
           height: 192,
-          fill: alt ? "#ffffff" : unit.fill,
+          fill: badge || unit.fill,
           bgImage: unitBg || undefined,
           stroke: can ? "#ffffff" : unit.stroke,
           textOutline: "#000000",

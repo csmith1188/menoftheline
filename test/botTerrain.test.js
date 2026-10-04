@@ -34,7 +34,7 @@ function setupWoodsLosBlock(sim) {
     sublane: 0,
     order: "halt",
   });
-  const foe = spawn(sim, "enemy", "troop", "bottom", {
+  const foe = spawn(sim, "enemy", "guerrilla", "bottom", {
     progress: progressFromPlayerPaces("enemy", "bottom", woods.centerPaces - half + 2),
     sublane: 0,
     order: "halt",

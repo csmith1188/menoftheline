@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { UNIT_STATS, unitStats } from "../shared/units.js";
+import { UNIT_STATS, unitStats, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { applySouthpaw, readSouthpaw } from "./render.js";
 
@@ -188,9 +188,10 @@ function drawUnit(ctx, unit) {
   const stats = unitStats(unit.variant || unit.type);
   const r = stats.radius;
 
-  if (unit.alternate) {
+  const badge = variantBadgeFill(unit.variant || unit.type);
+  if (badge) {
     const pad = r + 3;
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = badge;
     ctx.fillRect(x - pad, y - pad, pad * 2, pad * 2);
   }
   ctx.fillStyle = color;
@@ -620,7 +621,7 @@ function drawHowtoButtons(ctx, w, h) {
     worldArrow(ctx, bx, by + bh / 2 + 6, bx, by + bh / 2 + 28, CONFIG.colors.gold);
   });
 
-  vignette(ctx, panels[2], { l: 430, t: 120, r: 560, b: 220 }, "Swipe unit · left/right type", () => {
+  vignette(ctx, panels[2], { l: 430, t: 120, r: 560, b: 220 }, "Swipe unit · cycle types", () => {
     drawGround(ctx);
     const bx = 495;
     const by = 170;
@@ -628,10 +629,10 @@ function drawHowtoButtons(ctx, w, h) {
     const bh = 36;
     ctx.fillStyle = "#243246";
     ctx.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
-    ctx.strokeStyle = "#ffffff";
+    ctx.strokeStyle = CONFIG.colors.whiteAlternate;
     ctx.lineWidth = 2;
     ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
-    drawUnit(ctx, { x: bx, y: by, side: "player", type: "grenadier", alternate: true });
+    drawUnit(ctx, { x: bx, y: by, side: "player", type: "troop", variant: "militia", alternate: true });
     worldArrow(ctx, bx - bw / 2 - 6, by, bx - bw / 2 - 28, by, CONFIG.colors.gold);
     worldArrow(ctx, bx + bw / 2 + 6, by, bx + bw / 2 + 28, by, CONFIG.colors.gold);
   });
@@ -880,7 +881,7 @@ const howtoPages = [
         items: [
           "Click Banks to buy them.",
           "Swipe Unit Buttons up/down to purchase for the top/bottom lane.",
-          "Swipe Unit Buttons left/right to change the unit type.",
+          "Swipe Unit Buttons left/right to cycle the unit type (base, yellow elite, white light).",
           "Click a Town you control to enable/disable researching in that town.",
         ],
       },
@@ -935,6 +936,7 @@ const howtoPages = [
           "Troop line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
           "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
           "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
+          "Guerillas Halted in the open only shoot enemies within stealth range; occupying terrain lets them Halt-shoot at full range.",
         ],
       },
     ],

@@ -7,8 +7,9 @@ It may also shoot an enemy in the other lane when both of these are true: the pa
 The enemy keep can be shot whenever it is within the shooter's current weapon range and line of sight is clear along the shooter's own row from the shooter to the keep (the keep counts as being in that row). Terrain still blocks shots *past* it the usual way, so an enemy fort between you and the keep stops fire until you pass or occupy it. For choosing which target to aim at, the keep counts as 50 paces closer than it really is; range checks and damage falloff still use the real distance. See [[Units]].
 
 - Advancing and Falling Back units use engagement range.
-- Halted units use full range.
+- Halted units use full range. Guerillas Halted in the open only shoot inside stealth range (50 paces) unless they occupy a terrain feature.
 - Units do not shoot while in [[Melee]], and they do not aim at a unit that is already in melee. The Keep is the exception: it may be shot even while friendlies are meleeing it. A shot already in the air still lands.
+- Guerillas cannot be shot while stealthed (outside 50 paces, not in melee, and they have not shot in the last second). Woods still block shots at them unless you occupy that woods.
 - Guns do not shoot in melee. They still fight in melee with their melee damage.
 
 Which range an order uses is on [[Orders]].

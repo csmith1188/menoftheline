@@ -466,6 +466,17 @@ export class GameRoom {
     }
   }
 
+  /** Match state for one seat (terrain fog filtered to that side). */
+  publicStateFor(seat) {
+    const sideId = seat && seat.sideId ? seat.sideId : "player";
+    const snap = this.sim.snapshot({ forSideId: sideId });
+    snap.status = this.status;
+    snap.countdownEnds = this.countdownEnds;
+    snap.countdownLeft = this.countdownLeftMs();
+    return snap;
+  }
+
+  /** Omniscient snapshot (tests / spectators). Prefer publicStateFor. */
   publicState() {
     const snap = this.sim.snapshot();
     snap.status = this.status;
@@ -476,7 +487,12 @@ export class GameRoom {
 
   broadcastState() {
     this.noteOutcome();
-    this.io.to(this.roomName).emit("state", this.publicState());
+    const seats = [this.seat.a, this.seat.b];
+    for (let i = 0; i < seats.length; i += 1) {
+      const seat = seats[i];
+      if (!seat.socket) continue;
+      seat.socket.emit("state", this.publicStateFor(seat));
+    }
   }
 
   noteOutcome() {

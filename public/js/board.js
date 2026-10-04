@@ -7,6 +7,7 @@ import {
   inOwnFortCoverZone,
   pointToSegment,
 } from "../shared/path.js";
+import { TERRAIN_EMOJI } from "../shared/terrain.js";
 
 /** Per-lane grand strategy cycle (Bastion → Attrition → Terror). */
 export const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -1383,6 +1384,7 @@ function orderAnnouncement(troop, action) {
 }
 
 const SOUTHPAW_KEY = "motl-southpaw";
+const TERRAIN_LABELS_KEY = "motl-terrain-labels";
 
 export function readSouthpaw() {
   try {
@@ -1398,6 +1400,28 @@ export function writeSouthpaw(on) {
   } catch (err) {
     // Storage can be blocked; the in-memory flag still applies this session.
   }
+}
+
+/** Terrain emoji labels; off by default. */
+export function readTerrainLabels() {
+  try {
+    return localStorage.getItem(TERRAIN_LABELS_KEY) === "1";
+  } catch (err) {
+    return false;
+  }
+}
+
+export function writeTerrainLabels(on) {
+  try {
+    localStorage.setItem(TERRAIN_LABELS_KEY, on ? "1" : "0");
+  } catch (err) {
+    // Storage can be blocked; the in-memory flag still applies this session.
+  }
+}
+
+/** True when terrain emojis should draw (settings toggle or training tutorial). */
+export function showTerrainLabels(board) {
+  return Boolean(board && (board.terrainLabels || board.trainingMode));
 }
 
 let troopProto = troopStateMethods;
@@ -1546,6 +1570,42 @@ export function applySnapshot(board, snap, seat, controlSide) {
     kind: splat.kind,
     age: splat.age,
   }));
+  board.mapId = snap.mapId || snap.terrain && snap.terrain.mapId || CONFIG.defaultMapId;
+  const rawFeatures = (snap.terrain && snap.terrain.features) || [];
+  board.terrainFeatures = rawFeatures.map((f) => {
+    const total = Path.lanePaces(f.lane);
+    const centerPaces = mirror ? total - f.centerPaces : f.centerPaces;
+    return {
+      id: f.id,
+      kind: f.kind,
+      lane: f.lane,
+      sublanes: f.sublanes.slice(),
+      centerPaces,
+      halfWidthPaces: f.halfWidthPaces,
+      sideId: f.sideId,
+      emoji: TERRAIN_EMOJI[f.kind] || "",
+    };
+  });
+  const rawFog = (snap.terrain && snap.terrain.fogRegions) || [];
+  board.fogRegions = rawFog.map((r) => {
+    const total = Path.lanePaces(r.lane);
+    if (!mirror) {
+      return {
+        lane: r.lane,
+        sublane: r.sublane,
+        minPaces: r.minPaces,
+        maxPaces: r.maxPaces,
+        fogged: Boolean(r.fogged),
+      };
+    }
+    return {
+      lane: r.lane,
+      sublane: r.sublane,
+      minPaces: total - r.maxPaces,
+      maxPaces: total - r.minPaces,
+      fogged: Boolean(r.fogged),
+    };
+  });
   if (board.drag) {
     const next = board.player.troops.find((troop) => troop.id === board.drag.troop.id);
     if (!next) board.drag = null;
@@ -1580,6 +1640,9 @@ export function createBoardState(canvas) {
     checkpoints: [],
     projectiles: [],
     splats: [],
+    mapId: CONFIG.defaultMapId,
+    terrainFeatures: [],
+    fogRegions: [],
     drag: null,
     buyDrag: null,
     strategyDrag: null,
@@ -1604,6 +1667,7 @@ export function createBoardState(canvas) {
     countdownLocalEnd: null,
     cssScale: 1,
     southpaw: readSouthpaw(),
+    terrainLabels: readTerrainLabels(),
     topCenter: 0.5,
     bottomCenter: 0.5,
     topCenterTo: 0.5,

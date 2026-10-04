@@ -246,6 +246,25 @@ export function unitStats(type) {
   return UNIT_STATS[type] || UNIT_STATS.troop;
 }
 
+/** Terrain mobility: infantry / cavalry / artillery. */
+const MOBILITY_CLASS = {
+  troop: "infantry",
+  grenadier: "infantry",
+  skirmisher: "infantry",
+  rifle: "infantry",
+  officer: "infantry",
+  colorGuard: "infantry",
+  dragoon: "cavalry",
+  lancer: "cavalry",
+  cannon: "artillery",
+  howitzer: "artillery",
+};
+
+/** Mobility class for terrain rules (river/peak/etc.). */
+export function mobilityClass(type) {
+  return MOBILITY_CLASS[type] || "infantry";
+}
+
 /** True when `type` is an alternate spawn key (grenadier, rifle, …). */
 export function isAlternateUnit(type) {
   return Boolean(VARIANT_OF_BASE[type]);

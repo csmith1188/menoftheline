@@ -1,5 +1,6 @@
 import { CONFIG } from "../../shared/config.js";
 import { Path } from "../../shared/path.js";
+import { canOccupy, playerPacesOf } from "../../shared/terrain.js";
 
 /**
  * Troop geometry only. A Reform issued while the partner is still outside
@@ -148,12 +149,15 @@ function rowBlockedTowardFront(troop, occupants) {
   return false;
 }
 
-/** Paces per second along the lane, matching Unit.alongDelta. */
+/** Paces per second along the lane, matching Unit.alongDelta (incl. terrain). */
 function paceSpeed(troop) {
   const span = Path.topSpanPx();
   if (!(span > 0)) return 0;
   const mult = troop.side && troop.side.speedMultiplier ? troop.side.speedMultiplier : 1;
-  return troop.speed * mult * (CONFIG.topLanePaces / span);
+  const terrain = typeof troop.terrainMoveFactor === "function"
+    ? troop.terrainMoveFactor()
+    : 1;
+  return troop.speed * mult * (CONFIG.topLanePaces / span) * terrain;
 }
 
 /**
@@ -228,6 +232,12 @@ function rowFreeFor(troop, occupants, sublane) {
   if (sublane < 0 || sublane >= count) return false;
   for (let i = 0; i < occupants.length; i += 1) {
     if (occupants[i] !== troop && occupants[i].sublane === sublane) return false;
+  }
+  const mapId = typeof troop.mapId === "function" ? troop.mapId() : CONFIG.defaultMapId;
+  const paces = playerPacesOf(troop);
+  if (paces != null
+    && !canOccupy(troop.variant || troop.type, troop.lane, sublane, paces, mapId)) {
+    return false;
   }
   return true;
 }

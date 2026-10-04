@@ -2,8 +2,21 @@ import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost } from "../shared/units.js";
 import { Path, quarterSegments } from "../shared/path.js";
+import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
+import { showTerrainLabels } from "./board.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
+
+/** Parse rgba(...) tint into a hex-ish color + opacity for 3D materials. */
+function terrainColor(kind) {
+  const tint = TERRAIN_TINT[kind] || "rgba(80,80,80,0.5)";
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(tint);
+  const r = m ? Number(m[1]) : 80;
+  const g = m ? Number(m[2]) : 80;
+  const b = m ? Number(m[3]) : 80;
+  const hex = (r << 16) | (g << 8) | b;
+  return { color: hex, opacity: 0.45 };
+}
 
 function labelTexture(lines, opts = {}) {
   const width = opts.width || 256;
@@ -404,6 +417,12 @@ export function createScene(canvas) {
     mesh.material.opacity = 0.45;
     world.add(mesh);
   }
+
+  const terrainGroup = new THREE.Group();
+  world.add(terrainGroup);
+  const fogGroup = new THREE.Group();
+  world.add(fogGroup);
+  let terrainKey = "";
 
   const topCenter = lineMesh(left.x, left.y - CONFIG.topLaneHeight / 2, left.x, left.y + CONFIG.topLaneHeight / 2, CONFIG.colors.laneCenter, 12);
   world.add(topCenter);
@@ -1017,6 +1036,99 @@ export function createScene(canvas) {
     }
   }
 
+  function clearGroup(group) {
+    while (group.children.length) {
+      const child = group.children.pop();
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    }
+  }
+
+  function addPaceInterval(group, lane, sublane, minPaces, maxPaces, color, lift, thickness, opacity) {
+    const total = Path.lanePaces(lane);
+    if (!(total > 0) || !(maxPaces > minPaces)) return;
+    const t0 = Math.max(0, minPaces / total);
+    const t1 = Math.min(1, maxPaces / total);
+    const pts = Path.worldPoints(lane, sublane);
+    const steps = lane === "bottom" ? Math.max(2, Math.ceil((t1 - t0) * 20)) : 1;
+    let prev = null;
+    for (let k = 0; k <= steps; k += 1) {
+      const t = t0 + ((t1 - t0) * k) / steps;
+      const p = Path.pointAt(pts, t);
+      if (prev) {
+        const mesh = lineMesh(prev.x, prev.y, p.x, p.y, color, lift, thickness);
+        mesh.material.transparent = true;
+        mesh.material.opacity = opacity;
+        group.add(mesh);
+      }
+      prev = p;
+    }
+  }
+
+  function syncTerrain(board) {
+    const features = board.terrainFeatures || [];
+    const fogRegions = board.fogRegions || [];
+    const labelsOn = showTerrainLabels(board);
+    const key = [
+      features.map((f) => `${f.id}:${f.centerPaces}`).join("|"),
+      fogRegions.map((r) => `${r.lane}:${r.sublane}:${r.minPaces}:${r.maxPaces}:${r.fogged ? 1 : 0}`).join(";"),
+      labelsOn ? "1" : "0",
+    ].join("::");
+    if (key === terrainKey) return;
+    terrainKey = key;
+    clearGroup(terrainGroup);
+    clearGroup(fogGroup);
+
+    // Darken open row segments with no LOS (not terrain footprints).
+    for (let i = 0; i < fogRegions.length; i += 1) {
+      const r = fogRegions[i];
+      if (!r.fogged) continue;
+      const color = r.lane === "top" ? 0x1a2e28 : 0x2a2218;
+      addPaceInterval(fogGroup, r.lane, r.sublane, r.minPaces, r.maxPaces, color, 10, 12, 0.85);
+    }
+
+    for (let i = 0; i < features.length; i += 1) {
+      const f = features[i];
+      const total = Path.lanePaces(f.lane);
+      if (!(total > 0)) continue;
+      const half = f.halfWidthPaces || 0;
+      const { color, opacity } = terrainColor(f.kind);
+      for (let s = 0; s < f.sublanes.length; s += 1) {
+        addPaceInterval(
+          terrainGroup,
+          f.lane,
+          f.sublanes[s],
+          f.centerPaces - half,
+          f.centerPaces + half,
+          color,
+          9,
+          10,
+          opacity,
+        );
+        if (!labelsOn) continue;
+        const mid = Path.pointAt(
+          Path.worldPoints(f.lane, f.sublanes[s]),
+          Math.max(0, Math.min(1, f.centerPaces / total)),
+        );
+        const emoji = f.emoji || TERRAIN_EMOJI[f.kind] || "";
+        if (emoji) {
+          const bill = makeBillboard(28, 28);
+          bill.position.set(mid.x, 22, mid.y);
+          setBillboard(bill, emoji, {
+            font: "bold 40px serif",
+            color: "#111111",
+            width: 64,
+            height: 64,
+          });
+          terrainGroup.add(bill);
+        }
+      }
+    }
+  }
+
   function syncScene(board) {
     if (!board.player) return;
     if (board.presentLaneCenters) board.presentLaneCenters();
@@ -1025,6 +1137,7 @@ export function createScene(canvas) {
     frameCamera(board);
     syncCenters(board);
     syncHover(board);
+    syncTerrain(board);
     syncKeeps(board);
     syncBuysUi(board);
     syncUpgradeUi(board);

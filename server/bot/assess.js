@@ -1,5 +1,11 @@
 import { CONFIG } from "../../shared/config.js";
 import { Path } from "../../shared/path.js";
+import {
+  hasShotLos,
+  isEnemyVisible,
+  moveSpeedFactor,
+  shootRangeFactor,
+} from "../../shared/terrain.js";
 import { UNIT_STATS, unitStats } from "../../shared/units.js";
 
 const LANES = ["top", "bottom"];
@@ -142,11 +148,14 @@ export function assessBattlefield(sim, sideId, profile) {
   const self = sim.side(sideId);
   const foe = sim.side(sideId === "player" ? "enemy" : "player");
   const hpFrac = self.capitalHP / CONFIG.capitalHP;
+  const troopsBySide = { player: sim.player.troops, enemy: sim.enemy.troops };
+  const mapId = sim.mapId || CONFIG.defaultMapId;
   const lanes = {};
   for (let i = 0; i < LANES.length; i += 1) {
     const lane = LANES[i];
     const friendlies = living(self, lane);
-    const enemies = living(foe, lane);
+    const enemies = living(foe, lane).filter((unit) =>
+      isEnemyVisible(sideId, unit, troopsBySide, mapId));
     const friendValue = armyStrength(friendlies, profile);
     const enemyValue = armyStrength(enemies, profile);
     let advantage = friendValue / Math.max(enemyValue, 1);
@@ -179,6 +188,8 @@ export function assessBattlefield(sim, sideId, profile) {
     hpFrac,
     keepDesperate: hpFrac < CONFIG.botDesperateKeepHp,
     lanes,
+    mapId,
+    troopsBySide,
   };
 }
 
@@ -228,9 +239,19 @@ function bandSum(units, origin, radius, profile, band, pred) {
 }
 
 /**
- * What is happening near one unit. Scans that lane's snapshot only.
+ * Weapon reach used for bot "halt and shoot" decisions: full range with
+ * hill bonus, ignoring the temporary engage-range cut while advancing.
  */
-export function localSituation(unit, laneSnap, profile) {
+export function botWeaponRangePaces(unit, mapId) {
+  if (!unit || typeof unit.rangePaces !== "function") return 0;
+  return unit.rangePaces() * shootRangeFactor(unit, mapId);
+}
+
+/**
+ * What is happening near one unit. Scans that lane's snapshot only.
+ * `fog` carries mapId / sideId / troopsBySide for LOS checks.
+ */
+export function localSituation(unit, laneSnap, profile, fog = null) {
   const friendlies = laneSnap ? laneSnap.friendlies : [];
   const enemies = laneSnap ? laneSnap.enemies : [];
   const contact = CONFIG.botContactPaces;
@@ -239,11 +260,28 @@ export function localSituation(unit, laneSnap, profile) {
   const contactEnemy = localStrength(enemies, unit, contact, profile, "contact");
   const supportFriendly = localStrength(friendlies, unit, support, profile, "support");
   const supportEnemy = localStrength(enemies, unit, support, profile, "support");
+  const mapId = fog && fog.mapId;
+  const sideId = fog && fog.sideId;
+  const troopsBySide = fog && fog.troopsBySide;
   let nearestEnemyPaces = null;
+  let nearestShootablePaces = null;
   for (let i = 0; i < enemies.length; i += 1) {
-    const dist = alongPaces(unit, enemies[i]);
+    const foe = enemies[i];
+    const dist = alongPaces(unit, foe);
     if (nearestEnemyPaces == null || dist < nearestEnemyPaces) nearestEnemyPaces = dist;
+    const clear = !mapId || !sideId || !troopsBySide
+      || hasShotLos(unit, foe, sideId, troopsBySide, mapId);
+    if (clear && (nearestShootablePaces == null || dist < nearestShootablePaces)) {
+      nearestShootablePaces = dist;
+    }
   }
+  const weaponRange = botWeaponRangePaces(unit, mapId);
+  const shootableInRange = nearestShootablePaces != null
+    && nearestShootablePaces <= weaponRange;
+  // Visible enemy in weapon range but terrain blocks the shot.
+  const losBlocked = !shootableInRange
+    && nearestEnemyPaces != null
+    && nearestEnemyPaces <= weaponRange;
   let infantryAhead = false;
   let infantryBehind = false;
   let infantrySupport = false;
@@ -263,6 +301,10 @@ export function localSituation(unit, laneSnap, profile) {
     supportEnemy,
     supportRatio: supportFriendly / Math.max(supportEnemy, 1),
     nearestEnemyPaces,
+    nearestShootablePaces,
+    shootableInRange,
+    losBlocked,
+    moveFactor: moveSpeedFactor(unit, mapId),
     enemyTroopContact: bandSum(enemies, unit, contact, profile, "support", (u) => u.type === "troop"),
     enemyCavalryContact: bandSum(enemies, unit, contact, profile, "support", (u) => u.type === "dragoon"),
     infantryAhead,

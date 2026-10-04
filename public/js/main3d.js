@@ -1,5 +1,13 @@
 import { CONFIG } from "../shared/config.js";
-import { applySnapshot, createBoardState, applyCountdownTiming, countdownSecondsLeft, inspectReadout, writeSouthpaw } from "./board.js";
+import {
+  applySnapshot,
+  createBoardState,
+  applyCountdownTiming,
+  countdownSecondsLeft,
+  inspectReadout,
+  writeSouthpaw,
+  writeTerrainLabels,
+} from "./board.js";
 import { bindInput } from "./input.js";
 import { getSoundVolume, playCountdownBeep, playSounds, setSoundVolume, unlockAudio } from "./audio.js";
 import { bindRules } from "./rules.js";
@@ -26,6 +34,7 @@ const concedeYes = document.getElementById("concede-yes");
 const concedeNo = document.getElementById("concede-no");
 const southpawBtn = document.getElementById("southpaw");
 const tooltipsBtn = document.getElementById("tooltips");
+const terrainLabelsBtn = document.getElementById("terrain-labels");
 const soundVolume = document.getElementById("sound-volume");
 const soundMute = document.getElementById("sound-mute");
 const training = document.getElementById("training");
@@ -101,6 +110,12 @@ tooltipsBtn.addEventListener("click", () => {
   tooltipsBtn.setAttribute("aria-pressed", board.tooltips ? "true" : "false");
   if (!board.tooltips) board.gestureHints = null;
   socket.emit("tooltips", board.tooltips);
+});
+terrainLabelsBtn.setAttribute("aria-pressed", board.terrainLabels ? "true" : "false");
+terrainLabelsBtn.addEventListener("click", () => {
+  board.terrainLabels = !board.terrainLabels;
+  writeTerrainLabels(board.terrainLabels);
+  terrainLabelsBtn.setAttribute("aria-pressed", board.terrainLabels ? "true" : "false");
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;
@@ -378,6 +393,7 @@ socket.on("lobby", (lobbyState) => {
   applyDebugPlayUi(lobbyState.debugPlay || null);
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
+  board.trainingMode = lobbyState.mode === "training";
   applyCountdownTiming(board, lobbyState);
   if (lobbyState.status === "waiting") {
     board.winner = null;

@@ -1,4 +1,4 @@
-import { applySnapshot, createBoard, writeSouthpaw } from "./render.js";
+import { applySnapshot, createBoard, writeSouthpaw, writeTerrainLabels } from "./render.js";
 import { applyCountdownTiming, countdownSecondsLeft } from "./board.js";
 import { bindInput } from "./input.js";
 import { getSoundVolume, playCountdownBeep, playSounds, setSoundVolume, unlockAudio } from "./audio.js";
@@ -26,6 +26,7 @@ const concedeYes = document.getElementById("concede-yes");
 const concedeNo = document.getElementById("concede-no");
 const southpawBtn = document.getElementById("southpaw");
 const tooltipsBtn = document.getElementById("tooltips");
+const terrainLabelsBtn = document.getElementById("terrain-labels");
 const soundVolume = document.getElementById("sound-volume");
 const soundMute = document.getElementById("sound-mute");
 const training = document.getElementById("training");
@@ -65,6 +66,12 @@ tooltipsBtn.addEventListener("click", () => {
   tooltipsBtn.setAttribute("aria-pressed", board.tooltips ? "true" : "false");
   if (!board.tooltips) board.gestureHints = null;
   socket.emit("tooltips", board.tooltips);
+});
+terrainLabelsBtn.setAttribute("aria-pressed", board.terrainLabels ? "true" : "false");
+terrainLabelsBtn.addEventListener("click", () => {
+  board.terrainLabels = !board.terrainLabels;
+  writeTerrainLabels(board.terrainLabels);
+  terrainLabelsBtn.setAttribute("aria-pressed", board.terrainLabels ? "true" : "false");
 });
 
 let soundBeforeMute = getSoundVolume() > 0 ? getSoundVolume() : 1;

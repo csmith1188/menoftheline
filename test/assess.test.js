@@ -23,7 +23,9 @@ describe("battlefield assessment", () => {
     const nearEnemy = sim.enemy.troops[0];
     nearEnemy.progress = 0.75;
     nearEnemy.syncPosition();
-    const near = localSituation(friend, snap.lanes.top, botProfile("simple"));
+    // Re-assess: fog visibility (and the filtered enemy list) is per snapshot.
+    const snapNear = assessBattlefield(sim, "player", botProfile("simple"));
+    const near = localSituation(friend, snapNear.lanes.top, botProfile("simple"));
     assert.ok(near.supportEnemy > 0);
   });
 

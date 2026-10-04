@@ -2,8 +2,11 @@ import { GameSim } from "../server/sim.js";
 import { unitLandCost, unitStats } from "../shared/units.js";
 import { BotController } from "../server/bot.js";
 
-export function makeSim() {
-  return new GameSim();
+/** Fresh sim. Defaults to the empty map so combat tests ignore terrain LOS. */
+export function makeSim(opts = {}) {
+  const sim = new GameSim();
+  sim.mapId = opts.mapId || "empty";
+  return sim;
 }
 
 export function makeBot(difficulty = "simple", sideId = "player") {

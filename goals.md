@@ -32,20 +32,20 @@
 # Units
 
 # Roadmap
-- terrain:
+- ~~terrain:~~ (shipped: named map presets, LOS/fog, hills/woods/river/peaks/bridge/fort; bridge is cosmetic — not lane-lock)
     - Blocked LOS creates fog of war in that lane (server/client comms about unit position)
     - hills -> neutral forts
-    - woods -> block LoS unless inside, cover and slow
-    - river -> allow infantry, blocks horse and gun
-    - peaks -> block los unless inside, slow infantry, blocks horse and gun
-    - bridge -> cannot switch lanes
-    - fort blocks los
+    - woods -> hide inside unless you occupy; cover and slow; see past when inside
+    - river -> infantry half / cavalry quarter / artillery blocked
+    - peaks -> block LOS; slow infantry; block horse and gun
+    - bridge -> cosmetic (normal move, no LOS block)
+    - fort blocks LOS to enemy only
 - Bottom Lane Units
     - Militiamen
         - Cheap troop for spam with poor endurance and discipline
     - Guerillas
         - Not shown to enemy (server side) unless within 10 paces or shot within the last second
-        - Terrain ambush (always flanking when in terrain. move full speed?)
+        - Can see through
     - Light Calvary
         - Raiding towns
         - Must attack single units in packs

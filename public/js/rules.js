@@ -567,6 +567,11 @@ function drawLanes(ctx, w, h) {
   const cover = quarterSegments()[0];
   const at = toScreen(frame, cover.x1, (cover.y1 + cover.y2) / 2);
   ink(ctx, "cover", Math.max(36, at.x - 8), at.y, CONFIG.colors.player, 12, "right");
+  const hillPaces = CONFIG.topLanePaces / 3;
+  const hillT = hillPaces / CONFIG.topLanePaces;
+  const hillPt = Path.pointAt(Path.worldPoints("top", 0), hillT);
+  const hillAt = toScreen(frame, hillPt.x, hillPt.y);
+  ink(ctx, "terrain ⛰️", hillAt.x, Math.max(14, hillAt.y - 16), CONFIG.colors.text, 11);
   const town = townSpots()[2];
   const townAt = toScreen(frame, town.x, town.y);
   ink(ctx, "towns", townAt.x, Math.min(h - 12, townAt.y + 22), CONFIG.colors.text, 12);

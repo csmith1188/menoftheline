@@ -65,8 +65,7 @@ function troopIntent(unit, local, info, profile, mem) {
   const retreating = mem
     && (mem.intent === "fallback" || mem.intent === "retreat")
     && mem.reason !== "vitality";
-  const range = unit.rangePaces();
-  const inRange = local.nearestEnemyPaces != null && local.nearestEnemyPaces <= range;
+  const inRange = Boolean(local.shootableInRange);
 
   if (info.commit === "keepAttack") return { intent: "advance", reason: "keep" };
   if (retreating) {
@@ -85,9 +84,12 @@ function troopIntent(unit, local, info, profile, mem) {
     && info.posture === "attack"
     && local.nearestEnemyPaces != null
     && local.nearestEnemyPaces <= CONFIG.botContactPaces
-    && ratio >= CONFIG.botInfantryChargeRatio) {
+    && ratio >= CONFIG.botInfantryChargeRatio
+    && !(local.moveFactor < 0.75)) {
     return { intent: "charge", reason: "charge" };
   }
+  // Close to clear LOS instead of halting for an unshootable target.
+  if (local.losBlocked) return { intent: "advance", reason: "los" };
   if (inRange) return { intent: "halt", reason: "range" };
   return { intent: "advance", reason: "march" };
 }
@@ -170,6 +172,10 @@ function skirmisherIntent(unit, local, info, mem, troopDecisions) {
 function bestChargeScore(unit, enemies, local) {
   const support = CONFIG.botSupportPaces;
   const blob = local.enemyTroopContact > local.supportFriendly;
+  // Slow terrain makes charges less attractive (woods / uphill / river).
+  const movePenalty = local.moveFactor < 1
+    ? Math.max(0.55, local.moveFactor)
+    : 1;
   let best = 0;
   for (let i = 0; i < enemies.length; i += 1) {
     const foe = enemies[i];
@@ -187,7 +193,7 @@ function bestChargeScore(unit, enemies, local) {
     }
     if (!supported) score += CONFIG.botChargeIsolatedBonus;
     if (blob) score -= CONFIG.botChargeBlobPenalty;
-    score *= Math.max(0, 1 - dist / support);
+    score *= Math.max(0, 1 - dist / support) * movePenalty;
     if (score > best) best = score;
   }
   return best;
@@ -201,7 +207,10 @@ function cavalryIntent(unit, local, info, profile, mem) {
     if (!charging && score >= CONFIG.botChargeScore) return { intent: "charge", reason: "charge" };
   } else if (!profile.chargeScoring && local.infantrySupport && local.nearestEnemyPaces != null) {
     const engage = unit.rangePaces() * (unit.engageRange == null ? 0.5 : unit.engageRange);
-    if (local.nearestEnemyPaces <= engage) return { intent: "charge", reason: "charge" };
+    // Avoid charging through slow terrain (woods / river / uphill).
+    if (local.nearestEnemyPaces <= engage && !(local.moveFactor < 0.75)) {
+      return { intent: "charge", reason: "charge" };
+    }
   }
   if (local.infantryAhead) return { intent: "advance", reason: "leash" };
   let hasInfantry = false;
@@ -216,15 +225,23 @@ function cavalryIntent(unit, local, info, profile, mem) {
 
 function cannonIntent(unit, local, mem) {
   const range = unit.rangePaces();
-  const nearest = local.nearestEnemyPaces;
+  // Shootable distance for ranging; geometric distance for contact panic.
+  const nearestGeo = local.nearestEnemyPaces;
+  const nearest = local.nearestShootablePaces != null
+    ? local.nearestShootablePaces
+    : null;
   const inner = range * CONFIG.botCannonHaltBand;
   const outer = range * CONFIG.botCannonAdvanceBand;
   const clear = CONFIG.botContactPaces * CONFIG.botCannonFallbackClear;
   if (local.aheadOfInfantry) return { intent: "fallback", reason: "gun" };
-  if (nearest != null && nearest <= CONFIG.botContactPaces) return { intent: "fallback", reason: "gun" };
-  if (mem && mem.intent === "fallback" && mem.reason === "gun") {
-    if (nearest != null && nearest < clear) return { intent: "fallback", reason: "gun" };
+  if (nearestGeo != null && nearestGeo <= CONFIG.botContactPaces) {
+    return { intent: "fallback", reason: "gun" };
   }
+  if (mem && mem.intent === "fallback" && mem.reason === "gun") {
+    if (nearestGeo != null && nearestGeo < clear) return { intent: "fallback", reason: "gun" };
+  }
+  // Advance to clear LOS when a nearby enemy cannot be shot.
+  if (local.losBlocked) return { intent: "advance", reason: "los" };
   if (mem && mem.intent === "halt" && mem.reason === "gun") {
     if (nearest == null || nearest > outer) return { intent: "advance", reason: "gun" };
     return { intent: "halt", reason: "gun" };
@@ -268,13 +285,18 @@ function blank(unit, intent, reason) {
 export function decideIntents(bot, snapshot, profile) {
   const out = [];
   const lanes = ["top", "bottom"];
+  const fog = {
+    mapId: snapshot.mapId,
+    sideId: snapshot.sideId,
+    troopsBySide: snapshot.troopsBySide,
+  };
   for (let L = 0; L < lanes.length; L += 1) {
     const info = snapshot.lanes[lanes[L]];
     const troopDecisions = [];
     for (let i = 0; i < info.friendlies.length; i += 1) {
       const unit = info.friendlies[i];
       if (unit.broken || unit.type !== "troop") continue;
-      const local = localSituation(unit, info, profile);
+      const local = localSituation(unit, info, profile, fog);
       const mem = memoryOf(bot, unit);
       const decision = blank(unit, "advance", "march");
       const next = troopIntent(unit, local, info, profile, mem);
@@ -297,7 +319,7 @@ export function decideIntents(bot, snapshot, profile) {
     for (let i = 0; i < info.friendlies.length; i += 1) {
       const unit = info.friendlies[i];
       if (unit.broken || unit.type === "troop") continue;
-      const local = localSituation(unit, info, profile);
+      const local = localSituation(unit, info, profile, fog);
       const mem = memoryOf(bot, unit);
       let decision;
       if (unit.type === "skirmisher") {

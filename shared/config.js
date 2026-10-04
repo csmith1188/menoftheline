@@ -199,8 +199,29 @@ export const CONFIG = {
   /**
    * Incoming damage removed by fort cover: unit at or behind its fort
    * while the attacker is past that fort (outside the fort footprint).
+   * Also used for hill (neutral fort) and woods cover.
    */
   quarterArmor: 0.2,
+
+  // Terrain
+
+  /** Named map preset used when a match does not pick another. */
+  defaultMapId: "default",
+  /**
+   * Hill slope speed delta: before hill center (from own keep) ×(1 − this),
+   * after ×(1 + this). At exact center ×1.
+   */
+  hillSlope: 0.5,
+  /** Extra shoot range while a unit's centerline is on a hill footprint. */
+  hillRangeBonus: 0.1,
+  /** Move speed multiplier while on woods. */
+  woodsSlow: 0.5,
+  /** Move speed multiplier for infantry on peaks (cavalry/artillery blocked). */
+  peakSlow: 0.5,
+  /** Move speed multiplier for infantry crossing a river. */
+  riverInfantrySlow: 0.5,
+  /** Move speed multiplier for cavalry crossing a river (artillery blocked). */
+  riverCavalrySlow: 0.25,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,
   /** Pixels per second the splat rises. */

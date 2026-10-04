@@ -10,9 +10,9 @@ Attacker percentage modifiers include the random roll of plus or minus 10%, char
 
 Defensive modifiers multiply separately: defense ranks and cover. Rank 3 defense is one ×0.7 factor, not three stacked ×0.9 factors. Cover multiplies on top of that. Defense ranks apply to units only; hits on the Keep are not reduced by Defense research. Cover does not protect the Keep.
 
-**Cover.** Fort cover is a ×0.8 factor when the target is at or behind its own fort and the attacker is past that fort (outside the fort footprint). Units past their fort, and hits from attackers in or behind the fort, get no cover. Full geometry is on [[The Map]].
+**Cover.** Fort cover is a ×0.8 factor when the target is at or behind its own fort and the attacker is past that fort (outside the fort footprint). Units past their fort, and hits from attackers in or behind the fort, get no cover. Hills grant the same factor while the defender stands on the hill and the attacker does not. Woods grant cover while the defender is in the woods. Full geometry is on [[The Map]].
 
 - Troop line bonus: [[Units]] and [[Lines]].
 - Damage ranks and defense ranks: [[Towns]].
-- Cover: forts on [[The Map]].
+- Cover: forts, hills, and woods on [[The Map]].
 - Per-unit modifiers (including Rifles vs Officers): [[Units]].

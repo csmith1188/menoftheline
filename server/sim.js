@@ -4,9 +4,20 @@ import {
   Path,
   distance,
   fortsClearOfEnemies as fortsClearOfEnemiesShared,
-  hasFortCover,
   touchesQuarterLine,
 } from "../shared/path.js";
+import {
+  canOccupy,
+  clampPaceMove,
+  hasShotLos,
+  isEnemyVisible,
+  moveSpeedFactor,
+  playerPacesFromProgress,
+  progressFromPlayerPaces,
+  shootRangeFactor,
+  snapshotTerrain,
+  terrainCover,
+} from "../shared/terrain.js";
 
 /** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -1909,31 +1920,63 @@ class Unit {
     }
   }
 
+  /** Active map id from the owning sim. */
+  mapId() {
+    const sim = this.side && this.side.sim;
+    return (sim && sim.mapId) || CONFIG.defaultMapId;
+  }
+
+  /** Living troops keyed by side id (for LOS / fog helpers). */
+  troopsBySide() {
+    const sim = this.side && this.side.sim;
+    if (!sim) {
+      return { player: [], enemy: [] };
+    }
+    return { player: sim.player.troops, enemy: sim.enemy.troops };
+  }
+
+  /** Terrain move multiplier at the current footprint. */
+  terrainMoveFactor() {
+    return moveSpeedFactor(this, this.mapId());
+  }
+
+  /**
+   * Clamp a proposed progress so this unit does not enter impassable terrain.
+   */
+  clampTerrainProgress(nextProgress) {
+    if (nextProgress == null || !this.side || !this.lane) return nextProgress;
+    const type = this.variant || this.type;
+    const from = playerPacesFromProgress(this.side.id, this.lane, this.progress);
+    const to = playerPacesFromProgress(this.side.id, this.lane, nextProgress);
+    const clamped = clampPaceMove(type, this.lane, this.sublane, from, to, this.mapId());
+    return progressFromPlayerPaces(this.side.id, this.lane, clamped);
+  }
+
   /**
    * Reform: the front stands still, the rearmost walks at full speed,
    * and everyone else walks at half speed until the line is square.
    */
   marchSpeed(allies) {
     const base = this.speed * this.side.speedMultiplier;
+    let speed = base;
     if (this.order === "halt") {
       return 0;
     }
     if (this.order === "fallback") {
-      return base * CONFIG.reformSpeedFactor;
-    }
-    if (this.order === "charge" || this.order === "retreat") {
-      return base * this.chargeSpeedScale();
-    }
-    if (this.order === "reform") {
+      speed = base * CONFIG.reformSpeedFactor;
+    } else if (this.order === "charge" || this.order === "retreat") {
+      speed = base * this.chargeSpeedScale();
+    } else if (this.order === "reform") {
       if (this.reformHold) {
         return 0;
       }
       if (this.reformIsRearmost(allies)) {
-        return base;
+        speed = base;
+      } else {
+        speed = base * CONFIG.reformSpeedFactor;
       }
-      return base * CONFIG.reformSpeedFactor;
     }
-    return base;
+    return speed * this.terrainMoveFactor();
   }
 
   /** True when this reforming unit is the furthest back in its formation. */
@@ -1966,12 +2009,16 @@ class Unit {
 
   /**
    * Halt shoots at full range. Advance and Fall Back use engageRange
-   * (fraction of weapon range).
+   * (fraction of weapon range). Hills add a range bonus when occupied.
    */
   relevantRangePaces() {
-    if (this.order === "halt") return this.rangePaces();
-    const fraction = this.engageRange == null ? 0.5 : this.engageRange;
-    return this.rangePaces() * fraction;
+    let range;
+    if (this.order === "halt") range = this.rangePaces();
+    else {
+      const fraction = this.engageRange == null ? 0.5 : this.engageRange;
+      range = this.rangePaces() * fraction;
+    }
+    return range * shootRangeFactor(this, this.mapId());
   }
 
   /** Distance along this lane from the named keep, in paces. */
@@ -2005,17 +2052,23 @@ class Unit {
     return fortsClearOfEnemiesShared(this.side.id, this.enemyTroops());
   }
 
-  /** True when other is a legal shot at this pace range. */
+  /** True when other is a legal shot at this pace range and LOS is clear. */
   inShotRange(other, rangePaces) {
     if (!other) return false;
     if (other.capitalHP !== undefined) {
       if (other.capitalHP <= 0) return false;
-      return this.shotPaces(other) <= rangePaces;
+      if (!(this.shotPaces(other) <= rangePaces)) return false;
+    } else {
+      if (other.hp <= 0) return false;
+      if (other.lane === this.lane) {
+        if (!(this.shotPaces(other) <= rangePaces)) return false;
+      } else {
+        const cross = this.shotPaces(other);
+        if (!(cross < CONFIG.crossLaneMaxPaces && cross <= rangePaces)) return false;
+      }
     }
-    if (other.hp <= 0) return false;
-    if (other.lane === this.lane) return this.shotPaces(other) <= rangePaces;
-    const cross = this.shotPaces(other);
-    return cross < CONFIG.crossLaneMaxPaces && cross <= rangePaces;
+    const sideId = this.side && this.side.id;
+    return hasShotLos(this, other, sideId, this.troopsBySide(), this.mapId());
   }
 
   /** Range used to open fire on your own. Values are paces. */
@@ -2123,6 +2176,10 @@ class Unit {
     if (this.sublaneHasCollidableInBlockGap(sublane, allies)) {
       return false;
     }
+    const paces = playerPacesFromProgress(this.side.id, this.lane, this.progress);
+    if (!canOccupy(this.variant || this.type, this.lane, sublane, paces, this.mapId())) {
+      return false;
+    }
     const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, sublane), this.progress);
     return !this.overlapsEnemyAt(dest.x, dest.y, enemies, sublane);
   }
@@ -2203,7 +2260,8 @@ class Unit {
     const speed = this.marchSpeed(allies);
     const delta = this.alongDelta(speed, dt);
     if (!(delta > 0)) return false;
-    const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    let nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    nextProgress = this.clampTerrainProgress(nextProgress);
     if (nextProgress === this.progress) return false;
 
     if (!this.passesThroughEnemies()) {
@@ -2215,7 +2273,7 @@ class Unit {
       if (allyClamped == null) return false;
       if (allyClamped !== nextProgress) {
         if (allyClamped === this.progress) return false;
-        this.progress = allyClamped;
+        this.progress = this.clampTerrainProgress(allyClamped);
         this.syncPosition();
         if (sign < 0) this.movingBackward = true;
         return true;
@@ -2227,8 +2285,9 @@ class Unit {
         allies,
       );
       if (clamped == null) return false;
-      if (clamped === this.progress) return false;
-      this.progress = clamped;
+      const terrainClamped = this.clampTerrainProgress(clamped);
+      if (terrainClamped === this.progress) return false;
+      this.progress = terrainClamped;
       this.syncPosition();
       if (sign < 0) this.movingBackward = true;
       return true;
@@ -2969,9 +3028,10 @@ class Unit {
         }
       }
     }
-    const speed = this.speed * this.side.speedMultiplier;
+    const speed = this.speed * this.side.speedMultiplier * this.terrainMoveFactor();
     const delta = this.alongDelta(speed, dt);
-    const nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    let nextProgress = Math.max(0, Math.min(1, this.progress + sign * delta));
+    nextProgress = this.clampTerrainProgress(nextProgress);
     if (nextProgress === this.progress) {
       return false;
     }
@@ -2987,7 +3047,9 @@ class Unit {
         ignoreFriendlies ? [] : allies,
       );
       if (clamped == null || clamped === this.progress) return false;
-      this.progress = clamped;
+      const terrainClamped = this.clampTerrainProgress(clamped);
+      if (terrainClamped === this.progress) return false;
+      this.progress = terrainClamped;
       this.syncPosition();
       if (sign < 0) this.movingBackward = true;
       return true;
@@ -3461,14 +3523,15 @@ class Unit {
     const pace = this.pushbackQueue.shift();
     this.pushbackAppliedThisTick = true;
     const delta = this.pushbackPaceDelta();
-    const to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
+    let to = delta > 0 ? Math.max(0, this.progress - delta) : this.progress;
+    to = this.clampTerrainProgress(to);
     // Already touching behind, or this pace would land inside a friendly.
     if (this.pushbackStepBlocked(to, allies)) {
       this.consumeBlockedPushbackPace(pace.fatigueOnBlock);
       return;
     }
-    if (!(delta > 0) || this.progress <= 0) {
-      if (pace.fatigueOnBlock && this.progress <= 0) {
+    if (!(delta > 0) || this.progress <= 0 || to === this.progress) {
+      if (pace.fatigueOnBlock && (this.progress <= 0 || to === this.progress)) {
         this.fatigue = Math.min(
           this.maxFatigue,
           this.fatigue + CONFIG.fatiguePerPace,
@@ -3497,11 +3560,11 @@ class Unit {
   }
 
   /**
-   * Fort cover when at or behind own fort and the attacker is past that
-   * fort (outside the footprint). The keep does not grant cover.
+   * Fort / hill / woods cover. Side forts stay directional; hills and
+   * woods use shared terrain rules. The keep does not grant cover.
    */
   hasCover(attacker) {
-    return hasFortCover(this, attacker);
+    return terrainCover(this, attacker, this.mapId());
   }
 
   /**
@@ -3865,6 +3928,7 @@ class Unit {
       }
       const reformSpeed = this.marchSpeed(allies);
       let reformProgress = Math.min(1, this.progress + this.alongDelta(reformSpeed, dt));
+      reformProgress = this.clampTerrainProgress(reformProgress);
       // Do not walk past the holding front (that would make a new head).
       const front = this.reformFront(allies);
       if (front && front !== this && reformProgress > front.progress) {
@@ -3874,7 +3938,9 @@ class Unit {
       if (clamped == null || clamped === this.progress) {
         return;
       }
-      this.progress = clamped;
+      const terrainClamped = this.clampTerrainProgress(clamped);
+      if (terrainClamped === this.progress) return;
+      this.progress = terrainClamped;
       this.syncPosition();
       return;
     }
@@ -3911,13 +3977,16 @@ class Unit {
     }
 
     const speed = this.marchSpeed(allies);
-    const nextProgress = Math.min(1, this.progress + this.alongDelta(speed, dt));
+    let nextProgress = Math.min(1, this.progress + this.alongDelta(speed, dt));
+    nextProgress = this.clampTerrainProgress(nextProgress);
     if (nextProgress === this.progress) return;
     const clamped = this.clampProgressFromSameRowEnemy(nextProgress, enemies, false);
     if (clamped == null || clamped === this.progress) {
       return;
     }
-    this.progress = clamped;
+    const terrainClamped = this.clampTerrainProgress(clamped);
+    if (terrainClamped === this.progress) return;
+    this.progress = terrainClamped;
     this.syncPosition();
     this.tryJoinAhead(allies);
   }
@@ -4502,6 +4571,10 @@ class Side {
     let bestOfficer = null;
     let bestOfficerD = Infinity;
     let bestOfficerVit = 0;
+    const troopsBySide = this.sim
+      ? { player: this.sim.player.troops, enemy: this.sim.enemy.troops }
+      : { player: [], enemy: [] };
+    const mapId = (this.sim && this.sim.mapId) || CONFIG.defaultMapId;
     for (let i = 0; i < enemies.length; i += 1) {
       const other = enemies[i];
       if (other.hp <= 0) {
@@ -4509,6 +4582,9 @@ class Side {
       }
       const d = other.pacesFromKeep(this.id);
       if (d > Path.pacesFromPx(CONFIG.capitalCannonRange)) {
+        continue;
+      }
+      if (!hasShotLos(this, other, this.id, troopsBySide, mapId)) {
         continue;
       }
       const vit = targetVitality(other);
@@ -4604,6 +4680,8 @@ export class GameSim {
     this.winReason = null;
     this.elapsed = 0;
     this.tick = 0;
+    /** Named map preset (terrain layout). */
+    this.mapId = CONFIG.defaultMapId;
     /** Eased lane shares. Income and the drawn line both use these. */
     this.shownTop = 0.5;
     this.shownBottom = 0.5;
@@ -4751,7 +4829,102 @@ export class GameSim {
     }
   }
 
-  snapshot() {
+  /**
+   * Public match state. When `forSideId` is set, enemy troops / shots /
+   * sounds are filtered by terrain fog of war.
+   */
+  snapshot(opts = {}) {
+    const forSideId = opts.forSideId || null;
+    const troopsBySide = {
+      player: this.player.troops,
+      enemy: this.enemy.troops,
+    };
+    const terrain = forSideId
+      ? snapshotTerrain(forSideId, troopsBySide, this.mapId)
+      : snapshotTerrain("player", troopsBySide, this.mapId);
+
+    const visibleEnemyIds = new Set();
+    if (forSideId) {
+      const foe = forSideId === "player" ? this.enemy : this.player;
+      for (let i = 0; i < foe.troops.length; i += 1) {
+        const troop = foe.troops[i];
+        if (troop.hp <= 0) continue;
+        if (isEnemyVisible(forSideId, troop, troopsBySide, this.mapId)) {
+          visibleEnemyIds.add(troop.id);
+        }
+      }
+    }
+
+    const sounds = this.sounds.filter((sound) => {
+      if (!forSideId || !sound) return true;
+      if (sound.sideId === forSideId) return true;
+      if (sound.type === "keep") return true;
+      // Enemy combat audio only if a visible foe sits on that row (or any foe).
+      if (sound.type === "shoot" || sound.type === "melee" || sound.type === "hit") {
+        if (visibleEnemyIds.size === 0) return false;
+        if (sound.lane == null) return visibleEnemyIds.size > 0;
+        for (const id of visibleEnemyIds) {
+          const foe = forSideId === "player" ? this.enemy : this.player;
+          const troop = foe.troops.find((t) => t.id === id);
+          if (!troop) continue;
+          if (troop.lane === sound.lane
+            && (sound.sublane == null || troop.sublane === sound.sublane)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      return true;
+    }).map((sound) => ({ ...sound }));
+
+    const projectiles = this.projectiles.filter((shot) => {
+      if (!forSideId) return true;
+      const target = shot.target;
+      if (target && target.hp !== undefined && target.side && target.side.id !== forSideId) {
+        if (!visibleEnemyIds.has(target.id)) return false;
+      }
+      if (shot.attacker && shot.attacker.hp !== undefined
+        && shot.attacker.side && shot.attacker.side.id !== forSideId) {
+        if (!visibleEnemyIds.has(shot.attacker.id)) return false;
+      }
+      // Enemy-fired shell with no unit attacker id (keep): allow.
+      return true;
+    }).map((shot) => ({
+      x: shot.x,
+      y: shot.y,
+      size: shot.size,
+      color: shot.color,
+    }));
+
+    const splats = this.splats.filter((splat) => {
+      if (!forSideId) return true;
+      // Hide splats near invisible enemies (approximate by nearest foe).
+      const foe = forSideId === "player" ? this.enemy : this.player;
+      for (let i = 0; i < foe.troops.length; i += 1) {
+        const troop = foe.troops[i];
+        if (troop.hp <= 0 || visibleEnemyIds.has(troop.id)) continue;
+        const dx = splat.x - troop.x;
+        const dy = splat.y - troop.y;
+        if (dx * dx + dy * dy < 40 * 40) return false;
+      }
+      return true;
+    }).map((splat) => ({
+      x: splat.x,
+      y: splat.y,
+      amount: splat.amount,
+      kind: splat.kind,
+      age: splat.age,
+    }));
+
+    // Without forSideId (tests / omniscient), clear fog darkening.
+    if (!forSideId) {
+      terrain.foggedFeatureIds = [];
+      terrain.fogRegions = (terrain.fogRegions || []).map((r) => ({
+        ...r,
+        fogged: false,
+      }));
+    }
+
     return {
       tick: this.tick,
       elapsed: this.elapsed,
@@ -4759,7 +4932,9 @@ export class GameSim {
       winReason: this.winReason,
       topCenter: this.shownTop,
       bottomCenter: this.shownBottom,
-      sounds: this.sounds.map((sound) => ({ ...sound })),
+      mapId: this.mapId,
+      terrain,
+      sounds,
       checkpoints: this.checkpoints.map((town) => ({
         index: town.index,
         x: town.x,
@@ -4767,27 +4942,41 @@ export class GameSim {
         owner: town.owner,
         producing: Boolean(town.producing),
       })),
-      projectiles: this.projectiles.map((shot) => ({
-        x: shot.x,
-        y: shot.y,
-        size: shot.size,
-        color: shot.color,
-      })),
-      splats: this.splats.map((splat) => ({
-        x: splat.x,
-        y: splat.y,
-        amount: splat.amount,
-        kind: splat.kind,
-        age: splat.age,
-      })),
+      projectiles,
+      splats,
       sides: {
-        player: this.snapshotSide(this.player),
-        enemy: this.snapshotSide(this.enemy),
+        player: this.snapshotSide(this.player, forSideId, visibleEnemyIds),
+        enemy: this.snapshotSide(this.enemy, forSideId, visibleEnemyIds),
       },
     };
   }
 
-  snapshotSide(side) {
+  snapshotSide(side, forSideId, visibleEnemyIds) {
+    const troops = side.troops.filter((troop) => {
+      if (troop.hp <= 0) return false;
+      if (!forSideId || side.id === forSideId) return true;
+      return visibleEnemyIds && visibleEnemyIds.has(troop.id);
+    }).map((troop) => ({
+      id: troop.id,
+      lane: troop.lane,
+      sublane: troop.sublane,
+      type: troop.type,
+      variant: troop.variant,
+      alternate: Boolean(troop.alternate),
+      hp: troop.hp,
+      maxHp: troop.maxHp,
+      fatigue: troop.fatigue,
+      maxFatigue: troop.maxFatigue,
+      broken: troop.broken,
+      priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
+      radius: troop.radius,
+      x: troop.x,
+      y: troop.y,
+      order: troop.order,
+      squared: Boolean(troop.squared),
+      flash: troop.flash,
+      progress: troop.progress,
+    }));
     return {
       id: side.id,
       gold: side.gold,
@@ -4804,27 +4993,7 @@ export class GameSim {
         top: side.targeting.top,
         bottom: side.targeting.bottom,
       },
-      troops: side.troops.filter((troop) => troop.hp > 0).map((troop) => ({
-        id: troop.id,
-        lane: troop.lane,
-        sublane: troop.sublane,
-        type: troop.type,
-        variant: troop.variant,
-        alternate: Boolean(troop.alternate),
-        hp: troop.hp,
-        maxHp: troop.maxHp,
-        fatigue: troop.fatigue,
-        maxFatigue: troop.maxFatigue,
-        broken: troop.broken,
-        priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
-        radius: troop.radius,
-        x: troop.x,
-        y: troop.y,
-        order: troop.order,
-        squared: Boolean(troop.squared),
-        flash: troop.flash,
-        progress: troop.progress,
-      })),
+      troops,
     };
   }
 

@@ -1,8 +1,8 @@
 # Shooting
 
-A unit shoots enemies in its own lane whose centers are within its current range. Ranges are on [[The Map]]. Each unit's range is on [[Units]].
+A unit shoots enemies in its own lane whose centers are within its current range **and** that have clear [[The Map|line of sight]] (terrain such as hills, woods, peaks, and enemy forts can block shots past them and hide units). A unit standing on a terrain footprint can still be shot if you can see it — that footprint does not block fire *onto* it. Ranges are on [[The Map]]. Each unit's range is on [[Units]]. Units on a hill gain +20% shooting range.
 
-It may also shoot an enemy in the other lane when both of these are true: the path from the shooter back to its own keep, plus the path from that keep out to the target, is shorter than 200 paces; and that same path fits inside the shooter's current range.
+It may also shoot an enemy in the other lane when both of these are true: the path from the shooter back to its own keep, plus the path from that keep out to the target, is shorter than 200 paces; that same path fits inside the shooter's current range; and LOS is clear on the outbound leg from the keep to the target.
 
 The enemy keep can be shot whenever it is within the shooter's current weapon range. For choosing which target to aim at, the keep counts as 50 paces closer than it really is; range checks and damage falloff still use the real distance. See [[Units]].
 

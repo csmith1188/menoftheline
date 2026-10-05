@@ -285,8 +285,9 @@ export const Path = {
 
 
   /**
-   * Cover bars 250 paces from each keep: vertical on top, radial on the
-   * bottom rings. Each bar belongs to the keep it sits in front of.
+   * Colored fort bars at fortDistancePaces from each keep: vertical on
+   * top, radial on the bottom rings. Each bar belongs to the keep it
+   * sits in front of. Stroke thickness is the colored band.
    */
 export function quarterSegments() {
     const left = CONFIG.playerCapital;
@@ -337,9 +338,28 @@ export function quarterThickness() {
   }
 
 
-/** Footprint reach used for fort overlap, in paces from the fort center. */
-export function fortFootprintPaces() {
+/**
+ * Half-width of woods, hills, peaks, rivers, and bridges, in paces from
+ * the feature center.
+ */
+export function terrainFootprintPaces() {
   return CONFIG.footprintPaces * 2;
+}
+
+/**
+ * Fort footprint half-width, in paces from the fort center.
+ * Twice the previous fort reach (and twice other terrain).
+ */
+export function fortFootprintPaces() {
+  return terrainFootprintPaces() * 2;
+}
+
+/**
+ * Half-width of the colored fort stroke, in paces on the top-lane ruler.
+ * Enemies whose centers are in this band move at half speed.
+ */
+export function fortColorHalfPaces() {
+  return CONFIG.footprintPaces;
 }
 
 /** Shared 0..1 coordinate from the player keep (server Unit or client troop). */
@@ -363,7 +383,7 @@ export function touchesQuarterLine(troop) {
     // Client troops: compare along-lane paces to the fort.
     const paces = pacesFromKeepOf(troop, sideId);
     if (paces == null) return false;
-    return Math.abs(paces - CONFIG.fortDistancePaces) <= fortFootprintPaces();
+    return Math.abs(paces - CONFIG.fortDistancePaces) <= terrainFootprintPaces();
   }
 
 /**
@@ -406,35 +426,3 @@ export function fortsClearOfEnemies(sideId, foes) {
   return true;
 }
 
-/**
- * True when the defender is at or behind its own fort and the attacker
- * is past that fort (outside the fort footprint, toward the enemy).
- * Shooting into or through a fort from in front grants cover; standing
- * in the fort with the attacker, or being shot from behind it, does not.
- */
-export function hasFortCover(defender, attacker) {
-  const sideId = defender && defender.side && defender.side.id;
-  if (!sideId || !defender.lane || !attacker) return false;
-
-  const fort = CONFIG.fortDistancePaces;
-  const slack = fortFootprintPaces();
-  const defPaces = pacesFromKeepOf(defender, sideId);
-  // At or behind: inside the fort footprint, or closer to own keep.
-  if (defPaces == null || !(defPaces <= fort + slack)) return false;
-
-  const atkPaces = pacesFromKeepOf(attacker, sideId, defender.lane);
-  if (atkPaces == null) return false;
-  // Attacker must be strictly past the fort footprint.
-  return atkPaces > fort + slack;
-}
-
-/** True when this body is at or behind its own fort (cover zone). */
-export function inOwnFortCoverZone(troop) {
-  const sideId = troop && troop.side && troop.side.id;
-  if (!sideId || !troop.lane) return false;
-  const paces = pacesFromKeepOf(troop, sideId);
-  if (paces == null) return false;
-  const fort = CONFIG.fortDistancePaces;
-  const slack = fortFootprintPaces();
-  return paces <= fort + slack;
-}

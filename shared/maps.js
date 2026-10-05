@@ -1,6 +1,6 @@
 import { CONFIG } from "./config.js";
 import { Path } from "./path.js";
-import { fortFootprintPaces } from "./path.js";
+import { fortFootprintPaces, terrainFootprintPaces } from "./path.js";
 
 /**
  * Named map presets. Features use paces from the player keep.
@@ -9,7 +9,7 @@ import { fortFootprintPaces } from "./path.js";
 
 function feature(partial) {
   return {
-    halfWidthPaces: fortFootprintPaces(),
+    halfWidthPaces: terrainFootprintPaces(),
     ...partial,
   };
 }

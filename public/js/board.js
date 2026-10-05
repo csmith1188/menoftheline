@@ -3,11 +3,68 @@ import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, cycleVariantPick, massTaxOf, unitSt
 import {
   Path,
   distance,
-  fortsClearOfEnemies,
-  inOwnFortCoverZone,
   pointToSegment,
 } from "../shared/path.js";
-import { TERRAIN_EMOJI } from "../shared/terrain.js";
+import { TERRAIN_EMOJI, terrainCoverParts } from "../shared/terrain.js";
+
+/** Display face for titles. Body copy and bullets use IM Fell English. */
+export const FONT_HEADER = "Cinzel";
+export const FONT_TEXT = "IM Fell English";
+
+export function canvasFont(px, weight = "bold", role = "text") {
+  const name = role === "header" ? FONT_HEADER : FONT_TEXT;
+  return `${weight} ${Math.round(px)}px "${name}", Palatino, serif`;
+}
+
+let uiFontState = "pending";
+const uiFontWaiters = [];
+
+function finishUiFonts() {
+  if (uiFontState === "ready") return;
+  uiFontState = "ready";
+  const waiters = uiFontWaiters.splice(0);
+  for (let i = 0; i < waiters.length; i += 1) waiters[i]();
+}
+
+function facesReady() {
+  return document.fonts.check(`16px "${FONT_HEADER}"`)
+    && document.fonts.check(`16px "${FONT_TEXT}"`);
+}
+
+function settleUiFonts(triesLeft) {
+  if (facesReady() || triesLeft <= 0) {
+    finishUiFonts();
+    return;
+  }
+  setTimeout(() => settleUiFonts(triesLeft - 1), 150);
+}
+
+/** True once Cinzel and IM Fell English can be drawn, or the load has settled. */
+export function uiFontsReady() {
+  if (uiFontState === "ready") return true;
+  if (typeof document === "undefined" || !document.fonts) {
+    finishUiFonts();
+    return true;
+  }
+  if (facesReady()) {
+    finishUiFonts();
+    return true;
+  }
+  if (uiFontState === "pending") {
+    uiFontState = "loading";
+    Promise.all([
+      document.fonts.load(`700 32px "${FONT_HEADER}"`),
+      document.fonts.load(`400 32px "${FONT_TEXT}"`),
+      document.fonts.load(`700 32px "${FONT_TEXT}"`),
+    ]).then(() => settleUiFonts(20)).catch(() => settleUiFonts(20));
+  }
+  return false;
+}
+
+export function whenUiFontsReady(fn) {
+  if (uiFontsReady()) fn();
+  else uiFontWaiters.push(fn);
+}
 
 /** Per-lane grand strategy cycle (Bastion → Attrition → Terror). */
 export const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -205,9 +262,8 @@ export const boardStateMethods = {
     return Math.min(raw, this.isTouchUi() ? 1.5 : 2);
   },
 
-  uiFont(px, weight) {
-    const size = Math.round(px * CONFIG.uiScale);
-    return `${weight || "bold"} ${size}px Trebuchet MS, sans-serif`;
+  uiFont(px, weight, role) {
+    return canvasFont(px * CONFIG.uiScale, weight || "bold", role);
   },
 
   /**
@@ -1170,8 +1226,8 @@ function hasChargeSpeed(troop) {
   return true;
 }
 
-/** Other living Light Cavalry whose bodies sit in this unit's melee reach. */
-function lightCavalryPackMates(troop, allies) {
+/** Other living Hussar whose bodies sit in this unit's melee reach. */
+function hussarPackMates(troop, allies) {
   const radius = typeof troop.bodyRadius === "function"
     ? troop.bodyRadius()
     : (troop.radius || troopKindStats(troop).radius);
@@ -1180,7 +1236,7 @@ function lightCavalryPackMates(troop, allies) {
   for (let i = 0; i < allies.length; i += 1) {
     const ally = allies[i];
     if (!ally || ally === troop || ally.hp <= 0) continue;
-    if (ally.variant !== "lightCavalry") continue;
+    if (ally.variant !== "hussar") continue;
     if (ally.lane !== troop.lane) continue;
     const allyRadius = typeof ally.bodyRadius === "function"
       ? ally.bodyRadius()
@@ -1267,8 +1323,8 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Line +${Math.round(pct * 100)}%`);
   }
 
-  if (troop.variant === "lightCavalry" && CONFIG.cavalryPackBonus > 0) {
-    const packMates = lightCavalryPackMates(troop, allies);
+  if (troop.variant === "hussar" && CONFIG.cavalryPackBonus > 0) {
+    const packMates = hussarPackMates(troop, allies);
     if (packMates > 0) {
       labels.push(`Pack +${Math.round(packMates * CONFIG.cavalryPackBonus * 100)}%`);
     }
@@ -1294,9 +1350,10 @@ function activeBonuses(board, troop, allies) {
     labels.push(`Flank ${multText(stats.flankMultiplier)}`);
   }
 
-  // Cover while at/behind own fort and no enemy has crossed either fort line.
-  if (side && inOwnFortCoverZone(troop) && fortsClearOfEnemies(side.id, enemies)) {
-    labels.push(`Cover +${Math.round(CONFIG.quarterArmor * 100)}%`);
+  // Standing in woods, a peak, a hill, or your own fort footprint.
+  const terrainCover = terrainCoverParts(troop, null, board.mapId);
+  for (let i = 0; i < terrainCover.length; i += 1) {
+    labels.push(`Cover +${Math.round(terrainCover[i] * 100)}%`);
   }
 
   // if (side) {

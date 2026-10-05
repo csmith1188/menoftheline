@@ -60,7 +60,7 @@ describe("alternate catalog", () => {
     assert.equal(unitLandCost("militia"), Math.round(unitStats("militia").cost * CONFIG.lightUnitLandCostRatio));
     assert.equal(unitLandCost("troop"), 0);
     assert.equal(mobilityClass("horseGun"), "artillery");
-    assert.equal(mobilityClass("lightCavalry"), "cavalry");
+    assert.equal(mobilityClass("hussar"), "cavalry");
   });
 });
 
@@ -172,29 +172,29 @@ describe("guerrilla stealth", () => {
   });
 });
 
-describe("light cavalry", () => {
+describe("Hussar", () => {
   it("is not slowed by woods and is blocked by peaks", () => {
     const sim = makeSim({ mapId: "default" });
     const woods = featuresOnMap("default").find((f) => f.id === "woods-bottom-outer-a");
-    const horse = spawn(sim, "player", "lightCavalry", "bottom", {
+    const horse = spawn(sim, "player", "hussar", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", woods.centerPaces),
       sublane: 0,
     });
     assert.equal(moveSpeedFactor(horse), 1);
     const peak = featuresOnMap("default").find((f) => f.id === "peak-bottom-inner-a");
-    assert.equal(canOccupy("lightCavalry", "bottom", 2, peak.centerPaces), false);
+    assert.equal(canOccupy("hussar", "bottom", 2, peak.centerPaces), false);
   });
 
-  it("gets pack bonus from other Light Cavalry in melee reach, not Dragoons", () => {
+  it("gets pack bonus from other Hussar in melee reach, not Dragoons", () => {
     const sim = makeSim();
-    const lc = spawn(sim, "player", "lightCavalry", "top", {
+    const lc = spawn(sim, "player", "hussar", "top", {
       progress: 0.5,
       sublane: 1,
       order: "charge",
     });
     spawn(sim, "player", "dragoon", "top", { progress: 0.5, sublane: 2, order: "charge" });
     assert.equal(lc.packDamagePercent(sim.player.troops), 0);
-    spawn(sim, "player", "lightCavalry", "top", { progress: 0.5, sublane: 2, order: "charge" });
+    spawn(sim, "player", "hussar", "top", { progress: 0.5, sublane: 2, order: "charge" });
     assert.ok(lc.packDamagePercent(sim.player.troops) >= CONFIG.cavalryPackBonus - 1e-9);
   });
 });

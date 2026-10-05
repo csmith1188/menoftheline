@@ -4,6 +4,8 @@
   --line: #314257;
   --text: #e7eef6;
   --gold: #e8c36a;
+  --font-header: "Cinzel", "Palatino Linotype", Palatino, serif;
+  --font-text: "IM Fell English", "Palatino Linotype", Palatino, serif;
 }
 
 * {
@@ -18,7 +20,28 @@ body {
     radial-gradient(1200px 500px at 50% -10%, #24344a 0%, transparent 55%),
     var(--ink);
   color: var(--text);
-  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  font-family: var(--font-text);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.brand,
+.title,
+label:not(.check-row),
+.stats dt,
+.suggest-meta .bug-tag {
+  font-family: var(--font-header);
+}
+
+ul,
+ol,
+li,
+li::marker {
+  font-family: var(--font-text);
 }
 
 body {

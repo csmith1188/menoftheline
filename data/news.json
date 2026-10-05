@@ -6,7 +6,7 @@
     "items": [
       "Militiamen (Troop): cheap line infantry with a Troop line bonus, but less damage, endurance, and discipline.",
       "Guerillas (Skirmish): hidden until they fire or close in; they are not slowed by woods and stay stealthed unless you occupy their woods, get within 50 paces, or they shot in the last second.",
-      "Light Cavalry (Dragoon): ignore terrain slow (still blocked by peaks) and gain a melee pack bonus for every other friendly Light Cavalry in melee reach. Selected-unit info shows Pack +% the same way it shows Line +%.",
+      "Hussar (Dragoon): ignore terrain slow (still blocked by peaks) and gain a melee pack bonus for every other friendly Hussar in melee reach. Selected-unit info shows Pack +% the same way it shows Line +%.",
       "Horse Guns (Cannon): faster field guns with less range and punch. They still cannot cross rivers unless an Engineer pontoons them.",
       "Engineer (Officer): does not restore the line. Within 60 paces it opens LOS through terrain, pontoons overlapping rivers so artillery can cross, and while on a hill shares that hill's shooting-range bonus with nearby friends."
     ]

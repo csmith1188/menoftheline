@@ -1,6 +1,6 @@
 ## Units
 
-Each unit has its own health, ranges, damage, speeds, and pushback. Each type has two alternates that count as the same type for forming a line, with their own name, numbers, and ability. Elite alternates show a yellow square on the unit and buy button; light alternates show a white square. Swipe a buy button left or right to cycle base → yellow (elite) → white (light). Elite alternates are Grenadiers, Rifles, Lancers, Howitzers, and the Color Guard. Light alternates are Militiamen, Guerillas, Light Cavalry, Horse Guns, and Engineers. Alternates cost land as well as gold. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
+Each unit has its own health, ranges, damage, speeds, and pushback. Each type has two alternates that count as the same type for forming a line, with their own name, numbers, and ability. Elite alternates show a yellow square on the unit and buy button; light alternates show a white square. Swipe a buy button left or right to cycle base → yellow (elite) → white (light). Elite alternates are Grenadiers, Rifles, Lancers, Howitzers, and the Color Guard. Light alternates are Militiamen, Guerillas, Hussar, Horse Guns, and Engineers. Alternates cost land as well as gold. How a line is chosen is on [[Lines]]. Pushback is on [[Shooting]] and [[Melee]].
 
 - **Troop:** Troops gain a line bonus on shooting only: +20% for each other troop in the line that is not in melee and can see a target under its current order. That total is then scaled by how Perfect the shooter is with its immediate adjacent-row neighbors in the line: full bonus in Perfect Line, nearly none at the edge of In Line, linear between (average of those neighbor overlaps). Four eligible troops in a Perfect Line are +60% for each of them. The line bonus does not apply when shooting Skirmishers or Rifles. Advancing Troops that newly walk into Perfect Line with a Halted or Reforming Troop on an adjacent row take that Halt or Reform on themselves alone (order passing). See [[Shooting]], [[Melee]], [[Orders]], [[Lines]], [[The Map]], and [[Damage]].
 
@@ -16,7 +16,7 @@ Each unit has its own health, ranges, damage, speeds, and pushback. Each type ha
 
 - **Dragoon:** A larger flank bonus while charging and flanking. Lancers keep a normal flank bonus and use a 1.8× charge bonus with stronger melee pushback on the charge. See [[Melee]] and [[Orders]].
 
-- **Light Cavalry:** cheaper horsemen that are not slowed by terrain but still cannot enter peaks. In melee they gain a pack bonus for every other friendly Light Cavalry in melee reach.
+- **Hussar:** cheaper horsemen that are not slowed by terrain but still cannot enter peaks. In melee they gain a pack bonus for every other friendly Hussar in melee reach.
 
 - **Gun:** A hit can strike up to two more units behind the first, as described under [[Shooting]]. Firing recoils the gun itself.
 

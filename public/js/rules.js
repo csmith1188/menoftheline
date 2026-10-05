@@ -2,11 +2,12 @@ import { CONFIG } from "../shared/config.js";
 import { UNIT_STATS, unitStats, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { applySouthpaw, readSouthpaw } from "./render.js";
+import { canvasFont, uiFontsReady, whenUiFontsReady } from "./board.js";
 
 /** In-match how-to guide. Diagrams read live values from config.js and units.js. */
 
 function ink(ctx, text, x, y, color, size, align, baseline) {
-  ctx.font = `${size}px Trebuchet MS, Segoe UI, sans-serif`;
+  ctx.font = canvasFont(size, "normal");
   ctx.textAlign = align || "center";
   ctx.textBaseline = baseline || "middle";
   ctx.lineWidth = Math.max(2, size / 5);
@@ -20,10 +21,10 @@ function inkFit(ctx, text, x, y, color, size, maxWidth) {
   let px = size;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = `${px}px Trebuchet MS, Segoe UI, sans-serif`;
+  ctx.font = canvasFont(px, "normal");
   while (px > 10 && maxWidth && ctx.measureText(text).width > maxWidth) {
     px -= 1;
-    ctx.font = `${px}px Trebuchet MS, Segoe UI, sans-serif`;
+    ctx.font = canvasFont(px, "normal");
   }
   ctx.lineWidth = 3;
   ctx.strokeStyle = "#0d1218";
@@ -34,7 +35,7 @@ function inkFit(ctx, text, x, y, color, size, maxWidth) {
 
 function zoomInk(ctx, frame, text, x, y, color, px, align, baseline) {
   ctx.save();
-  ctx.font = `${px / frame.scale}px Trebuchet MS, Segoe UI, sans-serif`;
+  ctx.font = canvasFont(px / frame.scale, "normal");
   ctx.textAlign = align || "center";
   ctx.textBaseline = baseline || "middle";
   ctx.lineWidth = 3 / frame.scale;
@@ -567,7 +568,7 @@ function drawLanes(ctx, w, h) {
   });
   const cover = quarterSegments()[0];
   const at = toScreen(frame, cover.x1, (cover.y1 + cover.y2) / 2);
-  ink(ctx, "cover", Math.max(36, at.x - 8), at.y, CONFIG.colors.player, 12, "right");
+  ink(ctx, "fort", Math.max(36, at.x - 8), at.y, CONFIG.colors.player, 12, "right");
   const hillPaces = CONFIG.topLanePaces / 3;
   const hillT = hillPaces / CONFIG.topLanePaces;
   const hillPt = Path.pointAt(Path.worldPoints("top", 0), hillT);
@@ -866,7 +867,8 @@ const howtoPages = [
         items: [
           "Push the line in the top lane to gain more gold and build more units.",
           "Push the line in the bottom lane to gain more land and build better units and upgrades.",
-          "Forts grant cover to units at or behind them against attackers past the fort (selected-unit Cover shows while your fort lines are clear).",
+          "Friendly units in a fort footprint have 20% cover against attackers outside it. Enemies move at half speed through the colored fort band.",
+          "Woods, peaks, and hills grant cover (+10%, +30%, and +20%) only against attackers outside that same footprint.",
         ],
       },
     ],
@@ -1035,6 +1037,11 @@ export function bindRules(options) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     applySouthpaw(ctx, w, readSouthpaw());
     howtoPages[index].draw(ctx, w, h);
+    if (!uiFontsReady()) {
+      whenUiFontsReady(() => {
+        if (!overlay.classList.contains("hidden")) paint();
+      });
+    }
   }
 
   function render() {

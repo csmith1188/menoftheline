@@ -33,7 +33,7 @@ export const UNIT_SUMMARIES = {
     "Cheap levied infantry. Fill the line quickly, but they break sooner and hit lighter.",
   guerrilla:
     "Civilians who take up arms and hide in terrain and open fields, ambushing and harassing enemies.",
-  lightCavalry:
+  hussar:
     "Horsemen who counter their lack of endurance by hunting in packs.",
   horseGun:
     "Guns light enough for the crew to be carried on them, making them faster but reducing their efectiveness.",
@@ -279,11 +279,11 @@ export function unitAbilityLines(type) {
     lines.push("Do not volley while Halted in the open except at enemies within stealth range; occupying a terrain feature lets them Halt-shoot at full range.");
     lines.push("Hides in plain site when not shooting or near an enemy.");
   }
-  if (type === "lightCavalry") {
+  if (type === "hussar") {
     lines.push("Not slowed by terrain; still cannot enter peaks.");
     if (CONFIG.cavalryPackBonus > 0) {
       lines.push(
-        `Pack bonus: +${pct(CONFIG.cavalryPackBonus)} melee damage per other friendly Light Cavalry in melee reach.`,
+        `Pack bonus: +${pct(CONFIG.cavalryPackBonus)} melee damage per other friendly Hussar in melee reach.`,
       );
     }
   }

@@ -7,6 +7,7 @@ import { buyBgImage } from "./buyArt.js";
 import {
   applySnapshot,
   boardStateMethods,
+  canvasFont,
   createBoardState,
   inspectReadout,
   readSouthpaw,
@@ -52,7 +53,7 @@ function drawSplat(ctx, splat) {
         : CONFIG.colors.splatShoot;
   ctx.save();
   ctx.globalAlpha = fade;
-  ctx.font = "bold 14px Trebuchet MS, sans-serif";
+  ctx.font = canvasFont(14);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 3;
@@ -750,7 +751,7 @@ const boardMethods = {
     ctx.textBaseline = "bottom";
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
-    ctx.font = this.uiFont(16);
+    ctx.font = this.uiFont(16, "bold", "header");
     ctx.strokeText(info.main, CONFIG.canvasWidth / 2, yMain);
     ctx.fillStyle = CONFIG.colors.text;
     ctx.fillText(info.main, CONFIG.canvasWidth / 2, yMain);
@@ -790,7 +791,7 @@ const boardMethods = {
     if (info) {
       const yMain = info.bonuses ? bottom - 20 * CONFIG.uiScale : bottom;
       ctx.textAlign = "center";
-      ctx.font = this.uiFont(16);
+      ctx.font = this.uiFont(16, "bold", "header");
       ctx.strokeText(info.main, leftX, yMain);
       ctx.fillStyle = CONFIG.colors.text;
       ctx.fillText(info.main, leftX, yMain);
@@ -809,7 +810,7 @@ const boardMethods = {
         : null;
     if (order) {
       ctx.globalAlpha = order.fade;
-      ctx.font = this.uiFont(18);
+      ctx.font = this.uiFont(18, "bold", "header");
       ctx.strokeText(order.text, rightX, bottom);
       ctx.fillStyle = order.color;
       ctx.fillText(order.text, rightX, bottom);
@@ -845,7 +846,7 @@ const boardMethods = {
     ctx.globalAlpha = fade;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    ctx.font = this.uiFont(18);
+    ctx.font = this.uiFont(18, "bold", "header");
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
     ctx.strokeText(call.text, CONFIG.canvasWidth / 2, y);
@@ -1057,7 +1058,7 @@ const boardMethods = {
       ctx.textBaseline = "middle";
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#000000";
-      ctx.font = this.uiFont(12);
+      ctx.font = this.uiFont(12, "bold", "header");
       const label = UNIT_LABELS[spawn] || unit.label;
       ctx.strokeText(label, cx, mid - 8 * CONFIG.uiScale);
       ctx.fillStyle = CONFIG.colors.text;

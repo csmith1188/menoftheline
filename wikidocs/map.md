@@ -15,7 +15,7 @@ Distances along a lane are measured from a unit's center. Each figure below is a
 
 - **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot, and for Troop order passing.
 - **In Line:** 8 paces either side. [[Lines]] form inside this reach.
-- **Footprint:** 12 paces either side. Footprints that meet are touching. Friendly blocking and the fort's cover zone use this reach.
+- **Footprint:** 12 paces either side. Footprints that meet are touching. Friendly blocking uses this reach.
 - **Melee reach:** footprint plus 6 paces of slack either side. Same-row or adjacent-row contact inside this reach is [[Melee]]. Chargers stop just outside the hard footprint and lock in that slack ring.
 - **Shooting range:** each unit has its own, measured either way along the lane. See [[Shooting]] and [[Units]].
 - **Engagement range:** half of that unit's shooting range.
@@ -24,25 +24,29 @@ A unit is **ahead** of another when it is closer to the enemy keep. It is **behi
 
 ## Forts
 
-Each player has one fort in each lane, at 250 paces from their own keep. The fort's cover zone uses the same footprint reach as units (12 paces either side of the fort center).
+Each player has one fort in each lane, at 200 paces from their own keep. The fort footprint is 48 paces either side of that center (twice the width of other terrain). The colored band drawn across the lane is narrower: 12 paces either side of the center.
 
-**Cover.** A unit at or behind its own fort (footprint on the fort, or closer to its keep) has cover against attackers who are past that fort — outside the fort footprint, toward the enemy. Attackers standing in the fort or behind it with you do not grant cover. Cover reduces incoming [[Damage]] by 20%. The Keep is never protected by cover.
+**Cover.** A friendly unit standing in its fort footprint has 20% cover against attackers who are not also inside that same footprint. Units outside the footprint have no fort cover, including units closer to their keep than the fort. An enemy standing in your fort does not get your cover. The Keep is never protected by cover.
 
-**Selected unit.** While you inspect a unit at or behind its fort, its info shows Cover when no enemy stands at or behind either of your forts (the same clear-fort check that allows keep health restore).
+**Colored band.** An enemy whose center is in the colored band moves at half speed. Friendlies are not slowed by their own fort. The wider footprint does not slow movement.
+
+**Selected unit.** While you inspect a unit standing in cover terrain, its info shows that Cover bonus.
 
 **Line of sight.** Forts block enemy vision through them, but not your own. Standing on a fort footprint lets you see through it. Units on a fort, hill, or peak footprint are visible only if you have LOS to that footprint — intervening blockers (for example a hill before the enemy fort) still hide them.
 
 ## Terrain
 
-Matches use a named map preset (default map below). Terrain footprints sit on specific rows and use the same footprint reach as forts (12 paces either side of the feature center). They are drawn over those rows. Emoji labels are off by default; turn them on in the settings menu, or see them during the training tutorial.
+Matches use a named map preset (default map below). Terrain footprints sit on specific rows and are 24 paces either side of the feature center. They are drawn over those rows. Emoji labels are off by default; turn them on in the settings menu, or see them during the training tutorial.
 
-**Hills** (⛰️). Block LOS. Units on a hill get +20% shooting range and fort-style cover against attackers off that hill. While walking away from your keep, movement is slower before the hill center and faster by the same amount after it. Walking back toward your keep reverses that: faster before the center, slower after it.
+Cover from a footprint applies only against attackers who are not also standing in that same footprint.
 
-**Woods** (🌲). Units in woods have cover and move slower. Guerillas in woods stay hidden unless you occupy that woods or are in melee with them (or they just shot). Other units in woods are visible through ordinary fog of war. A unit inside can see into and past the woods.
+**Hills** (⛰️). Block LOS. Units standing on a hill get +20% shooting range and 20% cover against attackers outside that hill. While walking away from your keep, movement is slower before the hill center and faster by the same amount after it. Walking back toward your keep reverses that: faster before the center, slower after it.
+
+**Woods** (🌲). Units standing in woods have 10% cover against attackers outside those woods, and move slower. Standing on the woods is what removes their line-of-sight block. Guerillas in woods stay hidden unless you occupy that woods or are in melee with them (or they just shot). Other units in woods are visible through ordinary fog of war. A unit inside can see into and past the woods.
 
 **River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter unless an Engineer pontoons that river (treated as a bridge while the Engineer's 60-pace aura overlaps it). Broken artillery steps onto a clear adjacent row (the bridge row when present) to keep withdrawing. Guns left on a river when a pontoon drops peel toward their own keep.
 
-**Peaks** (🗻). Block LOS. Slow infantry; cavalry and artillery cannot enter. Broken cavalry and artillery step to a clear adjacent row to keep withdrawing around the peak.
+**Peaks** (🗻). Block LOS. Units standing on a peak have 30% cover against attackers outside that peak; standing on it also removes the peak's line-of-sight block. Slow infantry; cavalry and artillery cannot enter. Broken cavalry and artillery step to a clear adjacent row to keep withdrawing around the peak.
 
 **Bridge** (🌉). Normal movement; does not block LOS (cosmetic pathing on that row).
 
@@ -53,4 +57,4 @@ Matches use a named map preset (default map below). Terrain footprints sit on sp
 ### Default map
 
 - **Top lane:** hill on the top two rows at one-third from the left keep; hill on the bottom two rows at one-third from the right keep.
-- **Bottom lane:** forts stay at 250 paces from each keep. Between them (outer / middle / inner rows): woods and a peak on the left half; river / bridge / river at center; more woods and a peak on the right half (see the default map preset).
+- **Bottom lane:** forts stay at 200 paces from each keep. Between them (outer / middle / inner rows): woods and a peak on the left half; river / bridge / river at center; more woods and a peak on the right half (see the default map preset).

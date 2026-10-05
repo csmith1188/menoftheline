@@ -283,7 +283,7 @@ export const UNIT_STATS = {
     shootingPushback: 2,
     ignoreTerrainSlow: true,
   },
-  lightCavalry: {
+  hussar: {
     ...SHOT,
     hp: 100,
     rangedDamage: 10,
@@ -360,7 +360,7 @@ const MOBILITY_CLASS = {
   engineer: "infantry",
   dragoon: "cavalry",
   lancer: "cavalry",
-  lightCavalry: "cavalry",
+  hussar: "cavalry",
   cannon: "artillery",
   howitzer: "artillery",
   horseGun: "artillery",
@@ -375,7 +375,7 @@ export function mobilityClass(type) {
 export const UNIT_VARIANTS = {
   troop: ["grenadier", "militia"],
   skirmisher: ["rifle", "guerrilla"],
-  dragoon: ["lancer", "lightCavalry"],
+  dragoon: ["lancer", "hussar"],
   cannon: ["howitzer", "horseGun"],
   officer: ["colorGuard", "engineer"],
 };
@@ -471,7 +471,7 @@ export const UNIT_LABELS = {
   colorGuard: "Color Guard",
   militia: "Militiamen",
   guerrilla: "Guerillas",
-  lightCavalry: "Light Cavalry",
+  hussar: "Hussar",
   horseGun: "Horse Guns",
   engineer: "Engineer",
 };

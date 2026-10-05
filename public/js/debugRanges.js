@@ -1,6 +1,6 @@
 import { CONFIG } from "../shared/config.js";
 import { unitStats } from "../shared/units.js";
-import { Path } from "../shared/path.js";
+import { fortFootprintPaces, Path } from "../shared/path.js";
 
 /** True when the server was started with the debug script. */
 export function debugRangesOn() {
@@ -121,7 +121,7 @@ export function collectDebugMarks(board) {
     }
     for (let s = 0; s < sides.length; s += 1) {
       const center = Path.fortStation(lane, sides[s]) / (Path.lanePaces(lane) * Path.stationPerPace(lane));
-      const [t0, t1] = clampSpan(lane, center, CONFIG.footprintPaces);
+      const [t0, t1] = clampSpan(lane, center, fortFootprintPaces());
       for (let row = 0; row < rows; row += 1) {
         pushSpan(marks, lane, row, t0, t1, sides[s] === "player" ? "#4aa3ff" : "#e85d4c", 0.35, 3);
       }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { CONFIG } from "../shared/config.js";
-import { fortFootprintPaces } from "../shared/path.js";
+import { fortFootprintPaces, terrainFootprintPaces } from "../shared/path.js";
 import {
   canOccupy,
   clearTerrainCache,
@@ -17,6 +17,8 @@ import {
   playerPacesOf,
   shootRangeFactor,
   terrainCover,
+  terrainCoverFactor,
+  terrainCoverParts,
   unitsInMeleeContact,
 } from "../shared/terrain.js";
 import { mobilityClass } from "../shared/units.js";
@@ -55,6 +57,9 @@ describe("terrain map preset", () => {
     assert.ok(kinds.includes("woods"));
     assert.ok(kinds.includes("peak"));
     assert.ok(kinds.includes("fort"));
+    assert.equal(features.find((f) => f.id === "woods-bottom-outer-a").halfWidthPaces, terrainFootprintPaces());
+    assert.equal(features.find((f) => f.id === "fort-player-top").halfWidthPaces, fortFootprintPaces());
+    assert.equal(fortFootprintPaces(), terrainFootprintPaces() * 2);
     const hillNw = features.find((f) => f.id === "hill-top-nw");
     assert.ok(hillNw);
     assert.deepEqual(hillNw.sublanes, [0, 1]);
@@ -71,7 +76,7 @@ describe("mobility classes", () => {
     assert.equal(mobilityClass("howitzer"), "artillery");
     assert.equal(mobilityClass("militia"), "infantry");
     assert.equal(mobilityClass("guerrilla"), "infantry");
-    assert.equal(mobilityClass("lightCavalry"), "cavalry");
+    assert.equal(mobilityClass("hussar"), "cavalry");
     assert.equal(mobilityClass("horseGun"), "artillery");
     assert.equal(mobilityClass("engineer"), "infantry");
   });
@@ -172,6 +177,20 @@ describe("terrain cover and LOS", () => {
       sublane: 0,
     });
     assert.equal(terrainCover(def, atk), true);
+    assert.deepEqual(terrainCoverParts(def, atk), [CONFIG.woodsCover]);
+    assert.equal(def.incomingMultiplier("shoot", atk), 1 - CONFIG.woodsCover);
+    const inWoods = spawn(sim, "enemy", "troop", "bottom", {
+      progress: progressFromPlayerPaces("enemy", "bottom", woods),
+      sublane: 0,
+    });
+    assert.equal(terrainCover(def, inWoods), false);
+
+    const outside = spawn(sim, "player", "troop", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", woods + 80),
+      sublane: 0,
+    });
+    assert.equal(terrainCover(outside, atk), false);
+    assert.equal(outside.incomingMultiplier("shoot", atk), 1);
 
     const hill = featureById("hill-top-nw").centerPaces;
     const hillDef = spawn(sim, "player", "skirmisher", "top", {
@@ -183,13 +202,74 @@ describe("terrain cover and LOS", () => {
       sublane: 0,
     });
     assert.equal(terrainCover(hillDef, hillAtk), true);
+    assert.deepEqual(terrainCoverParts(hillDef, hillAtk), [CONFIG.hillCover]);
+    assert.equal(hillDef.incomingMultiplier("shoot", hillAtk), 1 - CONFIG.hillCover);
     assert.equal(terrainCover(hillDef, hillDef), false);
+    assert.equal(hillDef.incomingMultiplier("shoot", hillDef), 1);
+  });
+
+  it("gives peak cover only to units standing on the peak", () => {
+    const sim = makeTerrainSim();
+    const peak = featureById("peak-bottom-inner-a");
+    const def = spawn(sim, "player", "troop", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", peak.centerPaces),
+      sublane: peak.sublanes[0],
+    });
+    const atk = spawn(sim, "enemy", "troop", "bottom", {
+      progress: progressFromPlayerPaces("enemy", "bottom", peak.centerPaces + 80),
+      sublane: peak.sublanes[0],
+    });
+    assert.equal(onTerrain(def, peak), true);
+    assert.deepEqual(terrainCoverParts(def, atk), [CONFIG.peakCover]);
+    assert.equal(terrainCoverFactor(def, atk), 1 - CONFIG.peakCover);
+    assert.equal(def.incomingMultiplier("shoot", atk), 1 - CONFIG.peakCover);
+    assert.equal(terrainCover(atk, def), false);
+    const sharing = spawn(sim, "enemy", "troop", "bottom", {
+      progress: progressFromPlayerPaces("enemy", "bottom", peak.centerPaces),
+      sublane: peak.sublanes[0],
+    });
+    assert.equal(terrainCover(def, sharing), false);
+  });
+
+  it("gives friendly fort cover only inside the footprint against outsiders", () => {
+    const sim = makeTerrainSim();
+    const fort = featureById("fort-player-top");
+    const center = fort.centerPaces;
+    const half = fort.halfWidthPaces;
+    const def = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", center),
+      sublane: 2,
+    });
+    const outside = spawn(sim, "enemy", "troop", "top", {
+      progress: progressFromPlayerPaces("enemy", "top", center + half + 30),
+      sublane: 2,
+    });
+    assert.deepEqual(terrainCoverParts(def, outside), [CONFIG.quarterArmor]);
+    assert.equal(def.incomingMultiplier("shoot", outside), 1 - CONFIG.quarterArmor);
+
+    const behind = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", center - half - 20),
+      sublane: 4,
+    });
+    assert.equal(terrainCover(behind, outside), false);
+
+    const inside = spawn(sim, "enemy", "troop", "top", {
+      progress: progressFromPlayerPaces("enemy", "top", center + half - 4),
+      sublane: 1,
+    });
+    assert.equal(terrainCover(def, inside), false);
+
+    const foe = spawn(sim, "enemy", "troop", "top", {
+      progress: progressFromPlayerPaces("enemy", "top", center),
+      sublane: 3,
+    });
+    assert.equal(terrainCover(foe, outside), false);
   });
 
   it("blocks LOS past a hill unless the viewer occupies it", () => {
     const sim = makeTerrainSim();
     const hill = featureById("hill-top-nw").centerPaces;
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     const observer = spawn(sim, "player", "troop", "top", {
       progress: progressFromPlayerPaces("player", "top", hill - half - 40),
       sublane: 0,
@@ -214,7 +294,7 @@ describe("terrain cover and LOS", () => {
   it("allows shooting a unit standing on a hill footprint", () => {
     const sim = makeTerrainSim();
     const hill = featureById("hill-top-nw").centerPaces;
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     const observer = spawn(sim, "player", "troop", "top", {
       progress: progressFromPlayerPaces("player", "top", hill - half - 40),
       sublane: 0,
@@ -237,7 +317,7 @@ describe("terrain cover and LOS", () => {
     const sim = makeTerrainSim();
     const woodsFeat = featureById("woods-bottom-outer-a");
     const woods = woodsFeat.centerPaces;
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     // Friend just outside the woods; enemy just inside — melee contact, no occupy.
     const friend = spawn(sim, "player", "troop", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", woods - half - 2),
@@ -454,7 +534,7 @@ describe("fog snapshot", () => {
     const peak = featureById("peak-bottom-inner-a");
     const woodsInner = featureById("woods-bottom-inner-b");
     const woodsOuterA = featureById("woods-bottom-outer-a");
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     // Outer row, player side: just past the forest toward the river (still
     // before the inner forest footprint that closes the peak–forest gap).
     const between = woodsAb.centerPaces + half + 10;
@@ -513,7 +593,7 @@ describe("broken terrain bypass", () => {
   it("routes a broken dragoon around a peak onto another row", () => {
     const sim = makeTerrainSim();
     const peak = featureById("peak-bottom-inner-a");
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     // Far side of the peak (toward the enemy keep), retreating home.
     const startPaces = peak.centerPaces + half + 8;
     const horse = spawn(sim, "player", "dragoon", "bottom", {
@@ -544,7 +624,7 @@ describe("broken terrain bypass", () => {
   it("routes a broken cannon onto the bridge row past a river", () => {
     const sim = makeTerrainSim();
     const river = featureById("river-bottom-outer");
-    const half = fortFootprintPaces();
+    const half = terrainFootprintPaces();
     const startPaces = river.centerPaces + half + 8;
     const gun = spawn(sim, "player", "cannon", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", startPaces),

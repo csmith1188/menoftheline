@@ -5,7 +5,7 @@
 ## Secondary Objectives
 - Push the line in the top lane to gain more gold and build more units. See [[The Middle Line]] and [[Gold, Land, and Banks]].
 - Push the line in the bottom lane to gain more land and build better units and upgrades. See [[Towns]].
-- Forts grant cover to units at or behind them against attackers past the fort. See [[The Map]] and [[Damage]].
+- A friendly unit in its fort footprint has 20% cover against attackers outside that footprint. Enemies move at half speed through the colored fort band. See [[The Map]] and [[Damage]].
 ## Button Controls
 - Click Banks to buy them. See [[Gold, Land, and Banks]].
 - Swipe Unit Buttons up/down to purchase for the top/bottom lane. See [[Units]].

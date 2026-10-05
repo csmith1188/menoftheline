@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { CONFIG } from "../shared/config.js";
-import { fortFootprintPaces } from "../shared/path.js";
+import { terrainFootprintPaces } from "../shared/path.js";
 import { clearTerrainCache, featuresOnMap } from "../shared/terrain.js";
 import { assessBattlefield, localSituation } from "../server/bot/assess.js";
 import { botProfile } from "../server/bot/controller.js";
@@ -28,7 +28,7 @@ function woodsFeature() {
  */
 function setupWoodsLosBlock(sim) {
   const woods = woodsFeature();
-  const half = fortFootprintPaces();
+  const half = terrainFootprintPaces();
   const grappler = spawn(sim, "player", "troop", "bottom", {
     progress: progressFromPlayerPaces("player", "bottom", woods.centerPaces - half - 2),
     sublane: 0,

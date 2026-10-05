@@ -6,6 +6,8 @@
   --line: #314257;
   --text: #e7eef6;
   --gold: #e8c36a;
+  --font-header: "Cinzel", "Palatino Linotype", Palatino, serif;
+  --font-text: "IM Fell English", "Palatino Linotype", Palatino, serif;
 }
 
 * {
@@ -25,7 +27,32 @@ body {
     radial-gradient(1200px 500px at 50% -10%, #24344a 0%, transparent 55%),
     var(--ink);
   color: var(--text);
-  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  font-family: var(--font-text);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.tutorial-title,
+.banner p,
+.menu .label,
+.cam-debug-title,
+.order-flash {
+  font-family: var(--font-header);
+}
+
+.banner .sub {
+  font-family: var(--font-text);
+}
+
+ul,
+ol,
+li,
+li::marker {
+  font-family: var(--font-text);
 }
 
 .shell {

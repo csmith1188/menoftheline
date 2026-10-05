@@ -68,7 +68,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 |-----------------|------------|--------------|
 | Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
 | Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
-| Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `server/sim.js` (cover via `hasFortCover`), `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
+| Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `shared/terrain.js` (cover and fort slow), `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
 | Terrain / fog / map presets | `shared/terrain.js`, `shared/maps.js` | `shared/config.js` tunables, `server/sim.js` + per-seat `server/room.js` snapshots, `public/js/render.js` / `scene3d.js`, `wikidocs/map.md`, `test/terrain.test.js` |
 | Combat, orders, fatigue, pushback, keeps, towns | `server/sim.js` (`GameSim`, `Unit`, `applyCommand`) | `test/*.test.js`, matching `wikidocs/*.md` |
 | Player commands (buy, order, bank, upgrade, …) | `GameSim.applyCommand` in `server/sim.js` | `server/room.js` (queue), `public/js/input.js` (emit), bot `server/bot/commands.js` / `economy.js` |

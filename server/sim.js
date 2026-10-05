@@ -20,6 +20,7 @@ import {
   shootRangeFactor,
   snapshotTerrain,
   terrainCover,
+  terrainCoverFactor,
   unitOnClosedRiver,
 } from "../shared/terrain.js";
 
@@ -3512,9 +3513,10 @@ class Unit {
 
   /**
    * Apply raw (base × falloff), the attacker's percent sum, then defensive
-   * multipliers (armor, cover) one after another. Optional pushAmount is
-   * shooting/melee pushback from the attacker. attacker is the striking
-   * unit or keep Side, used for directional fort cover.
+   * multipliers (armor, then cover) one after another. Optional
+   * pushAmount is shooting/melee pushback from the attacker. attacker
+   * is the striking unit or keep Side, used to skip cover when they
+   * share the defender's footprint.
    */
   takeDamage(raw, kind, attackerSum, pushAmount, attacker) {
     const hit = truncateDamage(Math.max(
@@ -3648,13 +3650,13 @@ class Unit {
   }
 
   /**
-   * Product of defensive factors: armor ranks and fort cover. Each stacks
-   * by multiplying, not by adding percents.
+   * Product of defensive factors: armor ranks and each cover source.
+   * Each stacks by multiplying, not by adding percents.
    */
   incomingMultiplier(kind, attacker) {
     let mult = 1;
     if (this.side) mult *= 1 - this.side.armorReduction();
-    if (this.hasCover(attacker)) mult *= 1 - CONFIG.quarterArmor;
+    mult *= terrainCoverFactor(this, attacker, this.mapId());
     return Math.max(0, mult);
   }
 
@@ -3664,8 +3666,9 @@ class Unit {
   }
 
   /**
-   * Fort / hill / woods cover. Side forts stay directional; hills and
-   * woods use shared terrain rules. The keep does not grant cover.
+   * Woods, peaks, hills, and an owned fort grant cover while this unit
+   * stands in the footprint, against attackers outside that footprint.
+   * The keep does not grant cover.
    */
   hasCover(attacker) {
     return terrainCover(this, attacker, this.mapId());
@@ -3695,19 +3698,19 @@ class Unit {
   }
 
   /**
-   * Light Cavalry melee pack: CONFIG.cavalryPackBonus per other friendly
-   * Light Cavalry whose body is in this unit's melee reach.
+   * Hussar melee pack: CONFIG.cavalryPackBonus per other friendly
+   * Hussar whose body is in this unit's melee reach.
    */
   packDamagePercent(allies) {
     const perMate = CONFIG.cavalryPackBonus || 0;
-    if (!(perMate > 0) || this.variant !== "lightCavalry") return 0;
+    if (!(perMate > 0) || this.variant !== "hussar") return 0;
     const reach = this.bodyRadius() + CONFIG.meleeSlack;
     const group = allies || (this.side ? this.side.troops : []);
     let mates = 0;
     for (let i = 0; i < group.length; i += 1) {
       const ally = group[i];
       if (!ally || ally === this || ally.hp <= 0) continue;
-      if (ally.variant !== "lightCavalry") continue;
+      if (ally.variant !== "hussar") continue;
       if (ally.lane !== this.lane) continue;
       const dist = distance(this, ally);
       if (dist > reach + ally.bodyRadius()) continue;
@@ -4416,12 +4419,12 @@ class Guerrilla extends Skirmisher {
   }
 }
 
-class LightCavalry extends Dragoon {
+class hussar extends Dragoon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "lightCavalry";
+    this.variant = "hussar";
     this.alternate = true;
-    this.applyStats(UNIT_STATS.lightCavalry);
+    this.applyStats(UNIT_STATS.hussar);
   }
 }
 
@@ -4456,7 +4459,7 @@ const UNIT_KINDS = {
   colorGuard: ColorGuard,
   militia: Militia,
   guerrilla: Guerrilla,
-  lightCavalry: LightCavalry,
+  hussar: hussar,
   horseGun: HorseGun,
   engineer: Engineer,
 };

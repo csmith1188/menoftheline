@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
-import { Path, quarterSegments } from "../shared/path.js";
+import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
-import { showTerrainLabels } from "./board.js";
+import { canvasFont, showTerrainLabels, uiFontsReady } from "./board.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
 
@@ -50,7 +50,7 @@ function labelTexture(lines, opts = {}) {
     const row = list[i];
     const x = width / 2;
     const y = step * (i + 1);
-    ctx.font = row.font || opts.font || "bold 36px Trebuchet MS, sans-serif";
+    ctx.font = row.font || opts.font || canvasFont(36);
     if (opts.textOutline) {
       ctx.lineWidth = opts.textOutlineWidth || 6;
       ctx.strokeStyle = opts.textOutline;
@@ -104,7 +104,7 @@ function makeBillboard(scaleX, scaleY) {
 }
 
 function setBillboard(sprite, text, opts = {}) {
-  const key = `${text}:${opts.color || ""}:${opts.font || ""}`;
+  const key = `${text}:${opts.color || ""}:${opts.font || ""}:${uiFontsReady() ? "1" : "0"}`;
   if (sprite.userData.key === key) return;
   const width = opts.width || 160;
   const height = opts.height || 64;
@@ -113,7 +113,7 @@ function setBillboard(sprite, text, opts = {}) {
   pad.height = height;
   const ctx = pad.getContext("2d");
   ctx.clearRect(0, 0, width, height);
-  ctx.font = opts.font || "bold 36px Trebuchet MS, sans-serif";
+  ctx.font = opts.font || canvasFont(36);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = opts.outlineWidth || 6;
@@ -414,7 +414,7 @@ export function createScene(canvas) {
   const covers = quarterSegments();
   for (let i = 0; i < covers.length; i += 1) {
     const seg = covers[i];
-    const mesh = lineMesh(seg.x1, seg.y1, seg.x2, seg.y2, seg.color, 11);
+    const mesh = lineMesh(seg.x1, seg.y1, seg.x2, seg.y2, seg.color, 11, quarterThickness());
     mesh.material.transparent = true;
     mesh.material.opacity = 0.45;
     world.add(mesh);
@@ -594,7 +594,7 @@ export function createScene(canvas) {
     const playerGps = Math.round(CONFIG.centerIncome * t);
     setBillboard(topBonus, `+${playerGps}💰`, {
       color: CONFIG.colors.player,
-      font: "bold 34px Trebuchet MS, sans-serif",
+      font: canvasFont(34),
       width: 180,
       height: 64,
     });
@@ -619,7 +619,7 @@ export function createScene(canvas) {
     const landBonus = Math.round(CONFIG.centerLand * board.bottomCenter);
     setBillboard(bottomBonus, `+${landBonus}🌿`, {
       color: CONFIG.colors.player,
-      font: "bold 34px Trebuchet MS, sans-serif",
+      font: canvasFont(34),
       width: 180,
       height: 64,
     });
@@ -765,7 +765,7 @@ export function createScene(canvas) {
       const kind = town.upgradeKind();
       const kindMark = kind === "speed" ? "⚡" : kind === "armor" ? "🛡️" : "⚔️";
       setBillboard(mesh.userData.kindLabel, kindMark, {
-        font: "bold 42px Trebuchet MS, sans-serif",
+        font: canvasFont(42),
         color: "#0d1218",
         outline: "#ffffff",
         outlineWidth: 4,
@@ -779,7 +779,7 @@ export function createScene(canvas) {
         const remain = Math.ceil(board.player.upgradeRemaining(kind));
         const cost = maxed ? "MAX" : `${remain}🌿`;
         setBillboard(mesh.userData.costLabel, cost, {
-          font: "bold 32px Trebuchet MS, sans-serif",
+          font: canvasFont(32),
           color: town.producing ? "#ffffff" : CONFIG.colors.gold,
           width: 160,
           height: 64,
@@ -830,14 +830,14 @@ export function createScene(canvas) {
       const num = shown % 1 === 0 ? String(shown) : shown.toFixed(1);
       const restore = splat.kind === "heal" || splat.kind === "fatigue";
       const text = restore ? "+" : num;
-      const key = `${text}:${splat.kind}`;
+      const key = `${text}:${splat.kind}:${uiFontsReady() ? "1" : "0"}`;
       if (sprite.userData.key !== key) {
         const pad = document.createElement("canvas");
         pad.width = 128;
         pad.height = 64;
         const ctx = pad.getContext("2d");
         ctx.clearRect(0, 0, 128, 64);
-        ctx.font = "bold 42px Trebuchet MS, sans-serif";
+        ctx.font = canvasFont(42);
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.lineWidth = 8;
@@ -944,12 +944,12 @@ export function createScene(canvas) {
       mesh.material.emissiveIntensity = armed ? 0.22 : 0;
       const label = UNIT_LABELS[spawn] || unit.label;
       const hasVariant = Boolean(UNIT_VARIANTS[unit.type] && UNIT_VARIANTS[unit.type].length);
-      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${typeSwipe || ""}:${badge || ""}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}`;
+      const key = `${label}:${stats.cost}:${land}:${can}:${lane || ""}:${typeSwipe || ""}:${badge || ""}:${unitBg ? "bg" : ""}:${hasVariant ? "v" : ""}:${uiFontsReady() ? "1" : "0"}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, [
-          { text: label, font: "bold 34px Trebuchet MS, sans-serif", color: alt ? unit.fill : CONFIG.colors.text },
-          { text: `${stats.cost} gold`, font: "bold 28px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
-          { text: lane === "top" ? "▲ top" : lane === "bottom" ? "▼ bottom" : "▲ / ▼", font: "24px Trebuchet MS, sans-serif", color: "#9ee8c8" },
+          { text: label, font: canvasFont(34, "bold", "header"), color: alt ? unit.fill : CONFIG.colors.text },
+          { text: `${stats.cost} gold`, font: canvasFont(28), color: CONFIG.colors.gold },
+          { text: lane === "top" ? "▲ top" : lane === "bottom" ? "▼ bottom" : "▲ / ▼", font: canvasFont(24, "normal"), color: "#9ee8c8" },
         ], {
           width: 256,
           height: 192,
@@ -976,10 +976,10 @@ export function createScene(canvas) {
       const canLand = !over && board.player.land >= land;
       unlock.material.opacity = canLand ? 1 : 0.45;
       unlock.material.transparent = true;
-      const uKey = `${land}:${canLand}`;
+      const uKey = `${land}:${canLand}:${uiFontsReady() ? "1" : "0"}`;
       if (unlock.userData.face.userData.key !== uKey) {
         setLabel(unlock.userData.face, [
-          { text: `+${land} land`, font: "bold 28px Trebuchet MS, sans-serif", color: CONFIG.colors.gold },
+          { text: `+${land} land`, font: canvasFont(28), color: CONFIG.colors.gold },
         ], {
           width: 256,
           height: 96,
@@ -1022,11 +1022,11 @@ export function createScene(canvas) {
       mesh.material.opacity = 1;
       mesh.material.transparent = true;
       const lines = owner.upgradeLines();
-      const key = `${lines.join("|")}:${side.id}`;
+      const key = `${lines.join("|")}:${side.id}:${uiFontsReady() ? "1" : "0"}`;
       if (mesh.userData.face.userData.key !== key) {
         setLabel(mesh.userData.face, lines.map((text) => ({
           text,
-          font: "bold 28px Trebuchet MS, sans-serif",
+          font: canvasFont(28),
           color: side.stroke,
         })), {
           width: 256,
@@ -1081,6 +1081,7 @@ export function createScene(canvas) {
       features.map((f) => `${f.id}:${f.centerPaces}`).join("|"),
       fogRegions.map((r) => `${r.lane}:${r.sublane}:${r.minPaces}:${r.maxPaces}:${r.fogged ? 1 : 0}`).join(";"),
       labelsOn ? "1" : "0",
+      uiFontsReady() ? "f1" : "f0",
     ].join("::");
     if (key === terrainKey) return;
     terrainKey = key;
@@ -1123,7 +1124,7 @@ export function createScene(canvas) {
           const bill = makeBillboard(28, 28);
           bill.position.set(mid.x, 22, mid.y);
           setBillboard(bill, emoji, {
-            font: "bold 40px serif",
+            font: canvasFont(40),
             color: "#111111",
             width: 64,
             height: 64,
@@ -1135,6 +1136,7 @@ export function createScene(canvas) {
   }
 
   function syncScene(board) {
+    uiFontsReady();
     if (!board.player) return;
     if (board.presentLaneCenters) board.presentLaneCenters();
     if (board.refreshHoldSelect) board.refreshHoldSelect();

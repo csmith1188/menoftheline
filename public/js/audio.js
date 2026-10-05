@@ -72,7 +72,7 @@ const VOLUME_KEY = "motl-sound-volume";
 const BGM_VOLUME_KEY = "motl-bgm-volume";
 const BGM_BASE = "/bgm/HTL";
 /** Slider at 100% plays the file at this gain. */
-const BGM_MAX_GAIN = 0.5;
+const BGM_MAX_GAIN = 0.25;
 
 function clampVolume(value) {
   const n = Number(value);

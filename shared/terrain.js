@@ -1,10 +1,10 @@
 import { CONFIG } from "./config.js";
 import { resolveMapFeatures } from "./maps.js";
 import {
-  fortFootprintPaces,
-  hasFortCover,
+  fortColorHalfPaces,
   pacesFromKeepOf,
   Path,
+  terrainFootprintPaces,
   troopLaneT,
 } from "./path.js";
 import { mobilityClass, unitStats } from "./units.js";
@@ -128,7 +128,7 @@ export function clearTerrainCache() {
 
 /** Footprint interval in player-keep paces. */
 export function featureInterval(feature) {
-  const half = feature.halfWidthPaces != null ? feature.halfWidthPaces : fortFootprintPaces();
+  const half = feature.halfWidthPaces != null ? feature.halfWidthPaces : terrainFootprintPaces();
   return {
     minPaces: feature.centerPaces - half,
     maxPaces: feature.centerPaces + half,
@@ -221,16 +221,39 @@ export function unitCanOccupy(unit, mapId) {
 }
 
 /**
+ * Half speed while this unit's center is in an enemy fort's colored band.
+ * Friendlies are not slowed by their own fort. Applies even to units that
+ * ignore other terrain slows.
+ */
+function enemyFortColorFactor(unit, mapId) {
+  const sideId = sideIdOf(unit);
+  const paces = playerPacesOf(unit);
+  if (!sideId || paces == null || unit.sublane == null) return 1;
+  const half = fortColorHalfPaces();
+  const features = featuresOnMap(mapId);
+  for (let i = 0; i < features.length; i += 1) {
+    const f = features[i];
+    if (f.kind !== "fort" || f.lane !== unit.lane) continue;
+    if (!f.sideId || f.sideId === sideId) continue;
+    if (f.sublanes.indexOf(unit.sublane) < 0) continue;
+    if (Math.abs(paces - f.centerPaces) <= half) return CONFIG.fortColorSlow;
+  }
+  return 1;
+}
+
+/**
  * Combined move-speed multiplier from overlapping terrain.
  * Hill slope is relative to the unit's own keep. `backward` flips it
  * for a step toward that keep (retreat, fall back, charge reverse, peel).
+ * An enemy fort's colored band slows on top of that.
  */
 export function moveSpeedFactor(unit, mapId, backward = false) {
   if (!unit || !unit.lane) return 1;
+  const fortSlow = enemyFortColorFactor(unit, mapId);
   const stats = unitStats(unitTypeKey(unit));
-  if (stats && stats.ignoreTerrainSlow) return 1;
+  if (stats && stats.ignoreTerrainSlow) return fortSlow;
   const under = featuresUnder(unit, mapId);
-  if (!under.length) return 1;
+  if (!under.length) return fortSlow;
   const mob = mobilityClass(unitTypeKey(unit));
   const sideId = sideIdOf(unit);
   const paces = playerPacesOf(unit);
@@ -263,7 +286,7 @@ export function moveSpeedFactor(unit, mapId, backward = false) {
       else if (descending) factor *= 1 + CONFIG.hillSlope;
     }
   }
-  return factor;
+  return factor * fortSlow;
 }
 
 /** Shoot range multiplier (hill +20%). */
@@ -293,20 +316,45 @@ export function shootRangeFactor(unit, mapId) {
 }
 
 /**
- * Terrain cover beyond classic side-fort cover.
- * Woods: defender on woods.
- * Hill: defender on hill, attacker not on that same hill feature.
+ * Cover fractions from standing on woods, a peak, a hill, or a friendly fort.
+ * Each applies only when the attacker is not also inside that same footprint.
+ * Fort cover is only for the side that owns the fort.
  */
-export function terrainCover(defender, attacker, mapId) {
-  if (!defender || !attacker) return false;
-  if (hasFortCover(defender, attacker)) return true;
+export function terrainCoverParts(defender, attacker, mapId) {
+  const parts = [];
+  if (!defender) return parts;
   const under = featuresUnder(defender, mapId);
+  const sideId = sideIdOf(defender);
+  let woods = false;
+  let peak = false;
+  let hill = false;
+  let fort = false;
   for (let i = 0; i < under.length; i += 1) {
     const f = under[i];
-    if (f.kind === "woods") return true;
-    if (f.kind === "hill" && !onTerrain(attacker, f)) return true;
+    if (attacker && onTerrain(attacker, f)) continue;
+    if (f.kind === "woods") woods = true;
+    else if (f.kind === "peak") peak = true;
+    else if (f.kind === "hill") hill = true;
+    else if (f.kind === "fort" && f.sideId && f.sideId === sideId) fort = true;
   }
-  return false;
+  if (woods && CONFIG.woodsCover > 0) parts.push(CONFIG.woodsCover);
+  if (peak && CONFIG.peakCover > 0) parts.push(CONFIG.peakCover);
+  if (hill && CONFIG.hillCover > 0) parts.push(CONFIG.hillCover);
+  if (fort && CONFIG.quarterArmor > 0) parts.push(CONFIG.quarterArmor);
+  return parts;
+}
+
+/** Product of terrain-cover factors (1 when the unit has none). */
+export function terrainCoverFactor(defender, attacker, mapId) {
+  const parts = terrainCoverParts(defender, attacker, mapId);
+  let factor = 1;
+  for (let i = 0; i < parts.length; i += 1) factor *= 1 - parts[i];
+  return factor;
+}
+
+/** True when woods, peak, hill, or friendly-fort cover applies. */
+export function terrainCover(defender, attacker, mapId) {
+  return terrainCoverFactor(defender, attacker, mapId) < 1;
 }
 
 /** Does this feature block LOS for this viewer side? */
@@ -835,7 +883,7 @@ export function snapshotTerrain(viewerSideId, troopsBySide, mapId, opts = {}) {
     lane: f.lane,
     sublanes: f.sublanes.slice(),
     centerPaces: f.centerPaces,
-    halfWidthPaces: f.halfWidthPaces != null ? f.halfWidthPaces : fortFootprintPaces(),
+    halfWidthPaces: f.halfWidthPaces != null ? f.halfWidthPaces : terrainFootprintPaces(),
     sideId: f.sideId || null,
   }));
   return {

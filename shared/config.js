@@ -85,7 +85,7 @@ export const CONFIG = {
   unitLandCostRatio: 0.2,
   /** Light (white) alternate land price as a fraction of its gold cost. */
   lightUnitLandCostRatio: 0.1,
-  /** Light Cavalry melee pack bonus per other Light Cavalry in melee reach. */
+  /** Hussar melee pack bonus per other Hussar in melee reach. */
   cavalryPackBonus: 0.25,
   /** Guerilla stealth: hidden unless a viewer is this close (paces). */
   guerrillaStealthPaces: 50,
@@ -205,9 +205,8 @@ export const CONFIG = {
   /** Progress from each keep to that side's cover line on the top lane (250/1000). */
   quarterMark: 0.25,
   /**
-   * Incoming damage removed by fort cover: unit at or behind its fort
-   * while the attacker is past that fort (outside the fort footprint).
-   * Also used for hill (neutral fort) and woods cover.
+   * Incoming damage removed while a friendly unit stands in its own fort
+   * footprint and the attacker is outside that same footprint.
    */
   quarterArmor: 0.2,
 
@@ -223,6 +222,15 @@ export const CONFIG = {
   hillSlope: 0.5,
   /** Extra shoot range while a unit's centerline is on a hill footprint. */
   hillRangeBonus: 0.1,
+  /**
+   * Cover while a unit's centerline is on woods, a peak, or a hill.
+   * Each applies only against an attacker outside that same footprint.
+   */
+  woodsCover: 0.1,
+  hillCover: 0.2,
+  peakCover: 0.3,
+  /** Move speed while an enemy's center is in a fort's colored band. */
+  fortColorSlow: 0.5,
   /** Move speed multiplier while on woods. */
   woodsSlow: 0.5,
   /** Move speed multiplier for infantry on peaks (cavalry/artillery blocked). */
@@ -318,7 +326,7 @@ export const CONFIG = {
     colorGuard: 0.25,
     militia: 0.9,
     guerrilla: 0.5,
-    lightCavalry: 1.15,
+    hussar: 1.15,
     horseGun: 0.42,
     engineer: 0.25,
   },

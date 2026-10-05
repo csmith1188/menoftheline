@@ -1,4 +1,3 @@
-[[Gold, Land, and Banks]]
 # Gold, Land, and Banks
 
 Each player starts with 600 gold and 0 land.

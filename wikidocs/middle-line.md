@@ -1,4 +1,3 @@
-[[The Middle Line]]
 # The Middle Line
 
 Each lane has a middle line. Lanes are described on [[The Map]].

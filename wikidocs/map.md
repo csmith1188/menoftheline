@@ -1,4 +1,3 @@
-[[The Map]]
 # The Map
 
 There are two lanes, Top and Bottom. Each lane is a line of paces with parallel rows.

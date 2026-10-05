@@ -1,7 +1,8 @@
 # Bugs (Will fix first)
+- easy bot doesn't buy upgraded units
 
 # Feature (Will add to game)
-- Music
+- mouseover unit stats. red dot one one selected. all empty dot when line
 - Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
 - Fog in lanes in 3d

@@ -1,4 +1,3 @@
-[[Orders]]
 # Orders
 
 A unit is always under one order. Advance is the order units start with. How to give an order is on [[Giving Orders]]. An order given to a unit is also given to the rest of its line. See [[Lines]].

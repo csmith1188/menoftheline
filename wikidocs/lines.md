@@ -1,4 +1,3 @@
-[[Lines]]
 # Lines
 
 When you select a unit, it looks in adjacent rows for units of the same type that are In Line. Those units look in their other adjacent rows, and so on, until the chain stops. That group is a line. In Line is on [[The Map]]. Alternates count as the same type; see [[Units]]. Broken units are never part of a line. See [[Fatigue and Breaking]].

@@ -3,6 +3,7 @@ import { io } from "socket.io-client";
 let socket = null;
 
 export function connectFormbar(authUrl, apiKey) {
+  if (process.env.SKIP_FORMBAR === "1") return null;
   if (socket) return socket;
   socket = io(String(authUrl || "").replace(/\/$/, ""), {
     extraHeaders: { api: apiKey || "" },
@@ -12,6 +13,14 @@ export function connectFormbar(authUrl, apiKey) {
     console.warn("Formbar socket error:", err.message);
   });
   return socket;
+}
+
+/** Drop the Formbar client so tests and short-lived processes can exit. */
+export function disconnectFormbar() {
+  if (!socket) return;
+  socket.removeAllListeners();
+  socket.close();
+  socket = null;
 }
 
 function pinNumber(pin) {

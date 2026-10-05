@@ -7,7 +7,7 @@
     "dev": "nodemon server.js",
     "debug": "nodemon scripts/debug-server.js",
     "patch-notes": "node scripts/generate-patch-notes.js",
-    "test": "node --test test/assess.test.js test/botTerrain.test.js test/controller.test.js test/economy.test.js test/fortCover.test.js test/keep.test.js test/lineBonus.test.js test/pushback.test.js test/reform.test.js test/tactics.test.js test/targeting.test.js test/terrain.test.js test/uiMetrics.test.js test/variants.test.js"
+    "test": "node --test test/assess.test.js test/botTerrain.test.js test/clientApi.test.js test/controller.test.js test/economy.test.js test/fortCover.test.js test/keep.test.js test/lineBonus.test.js test/pushback.test.js test/reform.test.js test/tactics.test.js test/targeting.test.js test/terrain.test.js test/uiMetrics.test.js test/variants.test.js"
   },
   "dependencies": {
     "connect-sqlite3": "^0.9.15",

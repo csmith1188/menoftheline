@@ -75,6 +75,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
+| Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
@@ -87,6 +88,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 - Client → server: `command` (payload to `sim.applyCommand`), also `leave`, `concede`, `tooltips`, `bgmVolume`, `botSettings`, `debugPlay`.
 - Server → client: `state` (public snapshot), `lobby`, `go-home`, `replaced`.
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`.
+- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `POST /api/v1/play` (guest modes). Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie.
 
 ### Shared code rule
 

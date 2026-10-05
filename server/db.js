@@ -165,11 +165,20 @@ function pickName() {
   return `${adjective} ${noun} ${n}`;
 }
 
-export async function createGuest() {
+function sanitizeGuestName(raw) {
+  const text = String(raw || "").trim().replace(/\s+/g, " ").slice(0, 32);
+  return text || null;
+}
+
+export async function createGuest(preferredName) {
+  const base = sanitizeGuestName(preferredName);
   for (let attempt = 0; attempt < 8; attempt += 1) {
+    const name = base
+      ? (attempt === 0 ? base : `${base} ${Math.floor(Math.random() * 90) + 10}`)
+      : pickName();
     const user = {
       id: crypto.randomUUID(),
-      name: pickName(),
+      name,
     };
     try {
       await run(
@@ -192,7 +201,7 @@ export async function getUser(id) {
 }
 
 /** Session guest, or a new one when the cookie is missing or stale. */
-export async function ensureGuest(session) {
+export async function ensureGuest(session, options = {}) {
   if (session.guestId) {
     const existing = await getUser(session.guestId);
     if (existing) return existing;
@@ -204,7 +213,7 @@ export async function ensureGuest(session) {
       return existing;
     }
   }
-  const user = await createGuest();
+  const user = await createGuest(options.name);
   session.guestId = user.id;
   return user;
 }

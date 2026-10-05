@@ -65,6 +65,17 @@ npm test           # run unit tests
 
 Open `http://localhost:3000` (or your `PORT`).
 
+### Native client API
+
+Guest Android/desktop clients can start matches without website cookies:
+
+- `POST /api/v1/session` with optional `{ "name" }` → `{ token, player }`
+- `GET /api/v1/me` with `Authorization: Bearer <token>` → `{ player, busy }`
+- `POST /api/v1/play` with `{ "mode": "bot" | "trainBot" | "casual" | "trainCasual" }` → `{ ok, mode }`
+- Socket.IO handshake `auth.token` uses that same session id
+
+Ranked / listed / join still require Formbar login on the website (`login_required`).
+
 ### Project layout
 
 | Path | Role |

@@ -78,18 +78,93 @@ const io = new Server(httpServer, {
 });
 const formbarSocket = connectFormbar(AUTH_URL, process.env.API_KEY || "");
 
+const sessionStore = new SQLiteStore({
+  db: "Men Of The Line.sqlite",
+  dir: dataPath,
+  concurrentDb: true,
+});
 const sessionMiddleware = session({
-  store: new SQLiteStore({
-    db: "Men Of The Line.sqlite",
-    dir: dataPath,
-    concurrentDb: true,
-  }),
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || "lane-pusher-local",
   resave: false,
   saveUninitialized: false,
   name: "lane.sid",
   cookie: { httpOnly: true, sameSite: "lax" },
 });
+
+const GUEST_PLAY_MODES = new Set(["bot", "trainBot", "casual", "trainCasual"]);
+const PAID_PLAY_MODES = new Set(["listed", "ranked", "join"]);
+
+/** Attach store-backed save helpers so API/socket token sessions match cookie sessions. */
+function wrapStoredSession(sid, data) {
+  const sess = data || {};
+  sess.save = (cb) => {
+    sessionStore.set(sid, sess, typeof cb === "function" ? cb : () => {});
+  };
+  sess.reload = (cb) => {
+    sessionStore.get(sid, (err, fresh) => {
+      if (err) {
+        if (typeof cb === "function") cb(err);
+        return;
+      }
+      if (!fresh) {
+        if (typeof cb === "function") cb(new Error("failed to load session"));
+        return;
+      }
+      for (const key of Object.keys(sess)) {
+        if (key === "save" || key === "reload" || key === "destroy" || key === "touch") continue;
+        delete sess[key];
+      }
+      Object.assign(sess, fresh);
+      if (typeof cb === "function") cb();
+    });
+  };
+  sess.destroy = (cb) => {
+    sessionStore.destroy(sid, typeof cb === "function" ? cb : () => {});
+  };
+  sess.touch = (cb) => {
+    if (typeof sessionStore.touch === "function") {
+      sessionStore.touch(sid, sess, typeof cb === "function" ? cb : () => {});
+      return;
+    }
+    if (typeof cb === "function") cb();
+  };
+  return sess;
+}
+
+function loadStoredSession(sid) {
+  return new Promise((resolve, reject) => {
+    sessionStore.get(sid, (err, data) => {
+      if (err) reject(err);
+      else resolve(data || null);
+    });
+  });
+}
+
+function requireApiSession(req, res, next) {
+  const header = String(req.headers.authorization || "");
+  const match = /^Bearer\s+(\S+)/i.exec(header);
+  if (!match) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const sid = match[1];
+  loadStoredSession(sid).then((data) => {
+    if (!data) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    req.sessionID = sid;
+    req.session = wrapStoredSession(sid, data);
+    next();
+  }).catch(next);
+}
+
+function saveSession(sess) {
+  return new Promise((resolve, reject) => {
+    sess.save((err) => (err ? reject(err) : resolve()));
+  });
+}
 
 app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
@@ -838,16 +913,100 @@ app.get("/play", async (req, res, next) => {
   }
 });
 
+app.use("/api/v1", express.json({ limit: "32kb" }));
+
+app.post("/api/v1/session", async (req, res, next) => {
+  try {
+    const name = req.body && req.body.name;
+    await ensureGuest(req.session, { name });
+    await saveSession(req.session);
+    const player = await playerFromSession(req.session, { createGuest: false });
+    if (!player) {
+      res.status(500).json({ error: "server_error" });
+      return;
+    }
+    res.json({
+      token: req.sessionID,
+      player: { id: player.id, name: player.name },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
+  try {
+    const player = await playerFromSession(req.session, { createGuest: false });
+    if (!player) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    res.json({
+      player: { id: player.id, name: player.name },
+      busy: matchmaker.isBusy(player.id),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
+  try {
+    const mode = req.body && req.body.mode;
+    if (PAID_PLAY_MODES.has(mode)) {
+      res.status(403).json({ error: "login_required" });
+      return;
+    }
+    if (!GUEST_PLAY_MODES.has(mode)) {
+      res.status(400).json({ error: "bad_mode" });
+      return;
+    }
+    const player = await playerFromSession(req.session, { createGuest: true });
+    if (!player) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (matchmaker.isBusy(player.id)) {
+      res.json({ ok: true, rejoin: true });
+      return;
+    }
+    req.session.view3d = null;
+    req.session.intent = { mode, roomId: null, view: null };
+    await saveSession(req.session);
+    res.json({ ok: true, mode });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use((err, req, res, next) => {
   console.error(err);
   if (res.headersSent) {
     next(err);
     return;
   }
+  if (String(req.path || "").startsWith("/api/")) {
+    res.status(500).json({ error: "server_error" });
+    return;
+  }
   res.status(500).send("Something went wrong");
 });
 
 io.use((socket, next) => {
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  if (typeof token === "string" && token.trim()) {
+    const sid = token.trim();
+    loadStoredSession(sid).then((data) => {
+      if (!data) {
+        next(new Error("no session"));
+        return;
+      }
+      socket.request.sessionID = sid;
+      socket.request.session = wrapStoredSession(sid, data);
+      next();
+    }).catch(next);
+    return;
+  }
   sessionMiddleware(socket.request, {}, next);
 });
 
@@ -888,9 +1047,23 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => matchmaker.disconnect(socket));
 });
 
-httpServer.listen(PORT, () => {
+export { app, httpServer, io, matchmaker, PORT, THIS_URL };
+
+export function listen(port = PORT) {
+  return new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(port, () => {
+      httpServer.off("error", reject);
+      resolve(httpServer);
+    });
+  });
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  await listen(PORT);
   console.log(`Men Of The Line listening on ${THIS_URL}`);
   if (process.env.DEBUG_RANGES === "1") {
     console.log("Debug ranges: forward weapon range, collision boxes, restore, fort, and keep bands");
   }
-});
+}

@@ -15,7 +15,7 @@ const SELECT_HOLD_MS = 400;
 /** Touch presses often sit near 400ms; require a clearer hold on coarse pointers. */
 const SELECT_HOLD_TOUCH_MS = 800;
 /** Hold this long on a buy button (no swipe) to open the unit info overlay. */
-const BUY_INFO_HOLD_MS = 1200;
+const BUY_INFO_HOLD_MS = 800;
 /** Two-finger spread / squeeze past this ratio counts as zoom in / out. */
 const PINCH_OUT = 1.12;
 const PINCH_IN = 0.88;

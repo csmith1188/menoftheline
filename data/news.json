@@ -1,5 +1,27 @@
 [
   {
+    "date": "2026-10-05",
+    "title": "Cavalry, Skirmishers, and Engineer Balance",
+    "summary": "Engineers now see farther while on hills and peaks to better counter \"turtling\" behind your fort. Cavalry works better in packs, and gold now reflects that. Militiamen are now a little more hardy. Rifles were broken in melee but nobody knew because they were too expensive. Skirmishers now have reduced ranged to encourage them being played in front of the line instead of behind.",
+    "items": [
+      "Engineer aura multiplier on hill/peak added (3).",
+      "Dragoon ranged damage decreased from 15 to 10.",
+      "Dragoon, Lancer, Engineer gold cost decreased from 300 to 200.",
+      "Field Gun melee damage decreased from 10 to 5.",
+      "Hussar gold cost increased from 150 to 200.",
+      "Militiamen fatigue pool increased from 50 to 60.",
+      "Militiamen melee damage increased from 5 to 8.",
+      "Militiamen ranged damage increased from 5 to 8.",
+      "Rifles gold cost decreased from 200 to 150.",
+      "Rifles ranged damage decreased from 20 to 15.",
+      "Rifles seconds between melee hits decreased from 2 to 1.5.",
+      "Rifles seconds between shots increased from 1.5 to 2.",
+      "Skirmisher melee damage decreased from 7 to 6.",
+      "Skirmisher ranged damage decreased from 7 to 6.",
+      "Skirmisher shooting range decreased from 220 to 200."
+    ]
+  },
+  {
     "date": "2026-10-04",
     "title": "Light Alternate Units",
     "summary": "Each buy type now has a second, light alternate. Swipe a buy button to cycle the standard unit, the yellow elite, and the new white light variant. Light alternates cost gold plus 10% of that gold price in land (elites still cost 20%).",

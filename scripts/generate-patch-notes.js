@@ -82,6 +82,7 @@ const CONFIG_SHORT_LABELS = {
   crossLaneMaxPaces: "Max cross-lane shot path",
   fortDistancePaces: "Fort distance from keep",
   officerRestorePaces: "Officer / Color Guard restore reach",
+  engineerElevationAuraFactor: "Engineer aura multiplier on hill/peak",
   keepRestoreBase: "Keep aura restore rate",
   keepAuraPaces: "Keep restore aura bands",
   missingHealthDamageRatio: "Damage loss from missing health",

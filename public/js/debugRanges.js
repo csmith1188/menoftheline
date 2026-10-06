@@ -1,6 +1,7 @@
 import { CONFIG } from "../shared/config.js";
 import { unitStats } from "../shared/units.js";
 import { fortFootprintPaces, Path } from "../shared/path.js";
+import { engineerAuraPaces } from "../shared/terrain.js";
 
 /** True when the server was started with the debug script. */
 export function debugRangesOn() {
@@ -93,7 +94,11 @@ export function collectDebugMarks(board) {
     if (troop.type === "officer") {
       const color = troop.variant === "colorGuard" ? "#7dffb2" : "#7ec8ff";
       const rows = Path.sublaneCount(troop.lane);
-      const [r0, r1] = clampSpan(troop.lane, t, CONFIG.officerRestorePaces);
+      const auraPaces =
+        troop.variant === "engineer"
+          ? engineerAuraPaces(troop, board.mapId)
+          : CONFIG.officerRestorePaces;
+      const [r0, r1] = clampSpan(troop.lane, t, auraPaces);
       for (let row = 0; row < rows; row += 1) {
         pushSpan(marks, troop.lane, row, r0, r1, color, 0.28, 2);
       }

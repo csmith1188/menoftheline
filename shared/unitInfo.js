@@ -298,6 +298,9 @@ export function unitAbilityLines(type) {
     );
     lines.push("Guns stranded when a pontoon drops peel back toward their own keep.");
     lines.push("While this unit occupies a hill, friends in aura gain that hill's shooting-range bonus.");
+    lines.push(
+      `On a hill or peak, Officer-range aura is ×${CONFIG.engineerElevationAuraFactor}.`,
+    );
   }
   if (base === "officer") {
     lines.push("Most units avoid shooting Officers while another unit type is in range.");

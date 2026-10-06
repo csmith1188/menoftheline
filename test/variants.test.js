@@ -10,8 +10,10 @@ import {
   variantOptions,
 } from "../shared/units.js";
 import {
+  auraOverlapsFeature,
   canOccupy,
   clearTerrainCache,
+  engineerAuraPaces,
   featuresOnMap,
   hasShotLos,
   isEnemyVisible,
@@ -283,5 +285,42 @@ describe("engineer", () => {
       sublane: 2,
     });
     assert.equal(shootRangeFactor(friend), 1 + CONFIG.hillRangeBonus);
+  });
+
+  it("doubles officer aura on a hill or peak", () => {
+    const sim = makeSim({ mapId: "default" });
+    const hill = featuresOnMap("default").find((f) => f.id === "hill-top-nw");
+    const peak = featuresOnMap("default").find((f) => f.id === "peak-bottom-inner-a");
+    const woods = featuresOnMap("default").find((f) => f.id === "woods-bottom-ab");
+    const onHill = spawn(sim, "player", "engineer", "top", {
+      progress: progressFromPlayerPaces("player", "top", hill.centerPaces),
+      sublane: 0,
+    });
+    const onPeak = spawn(sim, "player", "engineer", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", peak.centerPaces),
+      sublane: peak.sublanes[0],
+    });
+    const plain = spawn(sim, "player", "engineer", "top", {
+      progress: 0.5,
+      sublane: 2,
+    });
+    const doubled = CONFIG.officerRestorePaces * CONFIG.engineerElevationAuraFactor;
+    assert.equal(engineerAuraPaces(onHill), doubled);
+    assert.equal(engineerAuraPaces(onPeak), doubled);
+    assert.equal(engineerAuraPaces(plain), CONFIG.officerRestorePaces);
+    assert.equal(shootRangeFactor(onHill), 1 + CONFIG.hillRangeBonus);
+    assert.equal(shootRangeFactor(onPeak), 1);
+
+    const farFriend = spawn(sim, "player", "troop", "top", {
+      progress: progressFromPlayerPaces("player", "top", hill.centerPaces + 90),
+      sublane: 2,
+    });
+    assert.equal(shootRangeFactor(farFriend), 1 + CONFIG.hillRangeBonus);
+    const offPeak = spawn(sim, "player", "engineer", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", peak.centerPaces),
+      sublane: 0,
+    });
+    assert.equal(auraOverlapsFeature(onPeak, woods, "default"), true);
+    assert.equal(auraOverlapsFeature(offPeak, woods, "default"), false);
   });
 });

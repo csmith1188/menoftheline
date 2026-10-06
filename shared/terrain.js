@@ -69,7 +69,7 @@ export function computeTerrainFx(troopsBySide, mapId) {
       if (unit.variant !== "engineer") continue;
       for (let f = 0; f < features.length; f += 1) {
         const feature = features[f];
-        if (!auraOverlapsFeature(unit, feature)) continue;
+        if (!auraOverlapsFeature(unit, feature, mapId)) continue;
         losCancel[sideId].add(feature.id);
         if (feature.kind === "river") pontoonIds.add(feature.id);
       }
@@ -78,12 +78,29 @@ export function computeTerrainFx(troopsBySide, mapId) {
   return { pontoonIds, losCancel };
 }
 
+/**
+ * Engineer officer-aura reach in paces (doubled while on a hill or peak).
+ * Other units fall back to the shared officer restore reach.
+ */
+export function engineerAuraPaces(unit, mapId) {
+  const base = CONFIG.officerRestorePaces;
+  if (!unit || unit.variant !== "engineer") return base;
+  const under = featuresUnder(unit, mapId);
+  for (let i = 0; i < under.length; i += 1) {
+    const kind = under[i].kind;
+    if (kind === "hill" || kind === "peak") {
+      return base * CONFIG.engineerElevationAuraFactor;
+    }
+  }
+  return base;
+}
+
 /** True when an Engineer aura overlaps this feature's footprint. */
-export function auraOverlapsFeature(unit, feature) {
+export function auraOverlapsFeature(unit, feature, mapId) {
   if (!unit || !feature || unit.lane !== feature.lane || unit.hp <= 0) return false;
   const paces = playerPacesOf(unit);
   if (paces == null) return false;
-  const reach = CONFIG.officerRestorePaces;
+  const reach = engineerAuraPaces(unit, mapId);
   const { minPaces, maxPaces } = featureInterval(feature);
   return paces + reach >= minPaces && paces - reach <= maxPaces;
 }
@@ -306,7 +323,7 @@ export function shootRangeFactor(unit, mapId) {
     if (source.lane !== unit.lane) continue;
     const srcPaces = playerPacesOf(source);
     if (srcPaces == null) continue;
-    if (Math.abs(srcPaces - selfPaces) > CONFIG.officerRestorePaces) continue;
+    if (Math.abs(srcPaces - selfPaces) > engineerAuraPaces(source, mapId)) continue;
     const hills = featuresUnder(source, mapId);
     for (let h = 0; h < hills.length; h += 1) {
       if (hills[h].kind === "hill") return bonus;

@@ -28,7 +28,7 @@ Each unit has its own health, ranges, damage, speeds, and pushback. Each type ha
 
 - **Color Guard:** Restores fatigue and health the same way an Officer does (same rate, same reach, doubled when ahead). Color Guards do not stack with each other. Friends inside a Color Guard's restore aura ignore damage loss from missing health. See [[Fatigue and Breaking]] and [[Damage]].
 
-- **Engineer:** does not restore the line. Within 60 paces it unblocks LOS through terrain even without standing on it, turns overlapping rivers into pontoon bridges (artillery may cross; guns peel toward their keep if the pontoon drops), and while standing on a hill shares that hill's shooting-range bonus with friends in aura.
+- **Engineer:** does not restore the line. Within 60 paces it unblocks LOS through terrain even without standing on it, turns overlapping rivers into pontoon bridges (artillery may cross; guns peel toward their keep if the pontoon drops), and while standing on a hill shares that hill's shooting-range bonus with friends in aura. While standing on a hill or peak, that Officer-range aura is doubled.
 
 - **Keep:** Each player starts with a keep. It does not move, take orders, or get built. It sits at the end of every row of both lanes. Its combat is fixed: town research does not change its gun damage, fire rate, or hit points, and Defense ranks do not reduce damage it takes. It shoots, and it can shoot a unit that is in melee. Its gun applies Field Gun shooting pushback to units it hits; the Keep itself never recoils and never takes pushback. Ranged units may shoot the keep even while friendlies are meleeing it. If your keep is destroyed, you lose. See [[The Map]], [[Shooting]], [[Melee]], and [[Towns]].
 

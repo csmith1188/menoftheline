@@ -222,6 +222,8 @@ export const CONFIG = {
   hillSlope: 0.5,
   /** Extra shoot range while a unit's centerline is on a hill footprint. */
   hillRangeBonus: 0.1,
+  /** Engineer officer-aura multiplier while on a hill or peak footprint. */
+  engineerElevationAuraFactor: 3,
   /**
    * Cover while a unit's centerline is on woods, a peak, or a hill.
    * Each applies only against an attacker outside that same footprint.

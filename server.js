@@ -1059,7 +1059,12 @@ export function listen(port = PORT) {
   });
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// PM2 loads via ProcessContainer, so argv[1] is not this file; use pm_exec_path instead.
+const thisFile = fileURLToPath(import.meta.url);
+const entryPaths = [process.argv[1], process.env.pm_id != null ? process.env.pm_exec_path : null]
+  .filter(Boolean)
+  .map((p) => path.resolve(p));
+const isMain = entryPaths.some((entry) => entry === thisFile);
 if (isMain) {
   await listen(PORT);
   console.log(`Men Of The Line listening on ${THIS_URL}`);

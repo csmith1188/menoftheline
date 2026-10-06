@@ -16,6 +16,7 @@ import {
   moveSpeedFactor,
   playerPacesFromProgress,
   progressFromPlayerPaces,
+  setMapOpts,
   setTerrainFx,
   shootRangeFactor,
   snapshotTerrain,
@@ -4675,8 +4676,11 @@ class Side {
    */
   refreshIncome(share) {
     const portion = share === undefined ? 0.5 : share;
+    const base = (this.sim && this.sim.baseIncome != null)
+      ? this.sim.baseIncome
+      : CONFIG.baseIncome;
     this.income = Math.round(
-      CONFIG.baseIncome
+      base
       + CONFIG.centerIncome * portion
       + this.bankIncome(),
     );
@@ -4884,7 +4888,14 @@ export class GameSim {
     this.tick = 0;
     /** Named map preset (terrain layout). */
     this.mapId = CONFIG.defaultMapId;
+    /** When false, side forts are omitted from the map. */
+    this.fortsEnabled = true;
+    /** When false, snapshots do not hide fogged enemies. */
+    this.fogEnabled = true;
+    /** Base gold/sec before lane share and banks (overridable per lobby). */
+    this.baseIncome = CONFIG.baseIncome;
     /** Per-match pontoon / Engineer LOS overlay (installed into terrain helpers while this sim runs). */
+    this.installMapOpts();
     this.terrainFx = computeTerrainFx(
       { player: this.player.troops, enemy: this.enemy.troops },
       this.mapId,
@@ -4927,8 +4938,31 @@ export class GameSim {
     return troop;
   }
 
+  /** Install forts-on/off for terrain helpers before resolve/read. */
+  installMapOpts() {
+    setMapOpts({ forts: this.fortsEnabled !== false });
+  }
+
+  /**
+   * Apply custom lobby knobs (map, fog, forts, base GPS). Safe before play.
+   * `opts` should already be normalized via shared/matchOptions.js.
+   */
+  applyMatchOptions(opts = {}) {
+    if (opts.mapId != null) this.mapId = opts.mapId;
+    if (opts.fortsEnabled != null) this.fortsEnabled = Boolean(opts.fortsEnabled);
+    if (opts.fogEnabled != null) this.fogEnabled = Boolean(opts.fogEnabled);
+    if (opts.baseGps != null && Number.isFinite(Number(opts.baseGps))) {
+      this.baseIncome = Number(opts.baseGps);
+    } else if (opts.baseIncome != null && Number.isFinite(Number(opts.baseIncome))) {
+      this.baseIncome = Number(opts.baseIncome);
+    }
+    this.syncTerrainFx();
+    this.refreshIncomes();
+  }
+
   /** Rebuild and install this match's terrain overlay (avoids clobbering other rooms). */
   syncTerrainFx() {
+    this.installMapOpts();
     this.terrainFx = computeTerrainFx(
       { player: this.player.troops, enemy: this.enemy.troops },
       this.mapId,
@@ -4938,6 +4972,7 @@ export class GameSim {
 
   /** Install this match's overlay before reading terrain helpers. */
   installTerrainFx() {
+    this.installMapOpts();
     setTerrainFx(this.terrainFx);
   }
 
@@ -5059,6 +5094,9 @@ export class GameSim {
    */
   snapshot(opts = {}) {
     const forSideId = opts.forSideId || null;
+    const fogOn = this.fogEnabled !== false;
+    // When fog is off, skip per-side hiding (still seat-scoped for other fields).
+    const hideFogged = Boolean(forSideId) && fogOn;
     const troopsBySide = {
       player: this.player.troops,
       enemy: this.enemy.troops,
@@ -5075,7 +5113,7 @@ export class GameSim {
 
     const visibleEnemyIds = new Set();
     const visibleEnemyById = new Map();
-    if (forSideId) {
+    if (hideFogged) {
       const foe = forSideId === "player" ? this.enemy : this.player;
       for (let i = 0; i < foe.troops.length; i += 1) {
         const troop = foe.troops[i];
@@ -5094,7 +5132,7 @@ export class GameSim {
     }
 
     const sounds = this.sounds.filter((sound) => {
-      if (!forSideId || !sound) return true;
+      if (!hideFogged || !sound) return true;
       if (sound.sideId === forSideId) return true;
       if (sound.type === "keep") return true;
       // Enemy combat audio only if a visible foe sits on that row (or any foe).
@@ -5113,7 +5151,7 @@ export class GameSim {
     }).map((sound) => ({ ...sound }));
 
     const projectiles = this.projectiles.filter((shot) => {
-      if (!forSideId) return true;
+      if (!hideFogged) return true;
       const target = shot.target;
       // Hide shells aimed at fogged enemies so flight paths do not reveal them.
       // Keep shells from fogged attackers — fire still shows even when the unit does not.
@@ -5129,7 +5167,7 @@ export class GameSim {
     }));
 
     const splats = this.splats.filter((splat) => {
-      if (!forSideId) return true;
+      if (!hideFogged) return true;
       // Hide splats near invisible enemies (approximate by nearest foe).
       const foe = forSideId === "player" ? this.enemy : this.player;
       for (let i = 0; i < foe.troops.length; i += 1) {
@@ -5148,8 +5186,8 @@ export class GameSim {
       age: splat.age,
     }));
 
-    // Without forSideId (tests / omniscient), clear fog darkening.
-    if (!forSideId) {
+    // Omniscient / fog-off: clear fog darkening.
+    if (!hideFogged) {
       terrain.foggedFeatureIds = [];
       terrain.fogRegions = (terrain.fogRegions || []).map((r) => ({
         ...r,
@@ -5165,6 +5203,9 @@ export class GameSim {
       topCenter: this.shownTop,
       bottomCenter: this.shownBottom,
       mapId: this.mapId,
+      fogEnabled: fogOn,
+      fortsEnabled: this.fortsEnabled !== false,
+      baseIncome: this.baseIncome,
       terrain,
       sounds,
       checkpoints: this.checkpoints.map((town) => ({
@@ -5184,9 +5225,10 @@ export class GameSim {
   }
 
   snapshotSide(side, forSideId, visibleEnemyIds) {
+    const fogOn = this.fogEnabled !== false;
     const troops = side.troops.filter((troop) => {
       if (troop.hp <= 0) return false;
-      if (!forSideId || side.id === forSideId) return true;
+      if (!forSideId || !fogOn || side.id === forSideId) return true;
       return visibleEnemyIds && visibleEnemyIds.has(troop.id);
     }).map((troop) => ({
       id: troop.id,

@@ -1,4 +1,9 @@
 import { CONFIG } from "../shared/config.js";
+import {
+  MATCH_SPEEDS,
+  matchOptionsSummary,
+  normalizeMatchOptions,
+} from "../shared/matchOptions.js";
 import { BotController, DIFFICULTIES, STRATEGY_MODES } from "./bot.js";
 import {
   chargeHeld,
@@ -19,7 +24,7 @@ export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 10000;
 /** Match-start countdown for bot games. */
 export const BOT_COUNTDOWN_MS = Number(process.env.BOT_COUNTDOWN_MS) || 5000;
 
-export const BOT_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
+export const BOT_SPEEDS = MATCH_SPEEDS;
 
 function emptySeat(key, sideId) {
   return {
@@ -40,7 +45,7 @@ function emptySeat(key, sideId) {
  * Humans, bots, and later agents all sit in a seat and feed the same sim.
  */
 export class GameRoom {
-  constructor(matchmaker, io, mode) {
+  constructor(matchmaker, io, mode, options = {}) {
     this.matchmaker = matchmaker;
     this.io = io;
     this.mode = mode;
@@ -61,6 +66,7 @@ export class GameRoom {
     this.botStrategy = { top: "auto", bottom: "auto" };
     this.speedScale = 1;
     this.speedAccum = 0;
+    this.matchOptions = null;
     /** Debug-server bot matches: range overlays + play controls. */
     this.debugMode = process.env.DEBUG_RANGES === "1";
     /** Which sim side human commands apply to (debug bot games only). */
@@ -74,6 +80,23 @@ export class GameRoom {
     if (mode === "training") {
       applyTrainingRules(this);
     }
+    if (options.matchOptions) {
+      this.applyMatchOptions(options.matchOptions);
+    }
+  }
+
+  /** Custom lobby settings (listed rooms). */
+  applyMatchOptions(raw) {
+    const opts = normalizeMatchOptions(raw);
+    this.matchOptions = opts;
+    this.speedScale = opts.speed;
+    this.speedAccum = 0;
+    this.sim.applyMatchOptions(opts);
+  }
+
+  /** Public summary for Open Games cards. */
+  matchOptionsPublic() {
+    return matchOptionsSummary(this.matchOptions || {});
   }
 
   seatBySocket(socket) {
@@ -316,7 +339,7 @@ export class GameRoom {
 
   tick() {
     if (this.status !== "playing") return;
-    const scale = (this.mode === "bot" || this.mode === "training")
+    const scale = (this.mode === "bot" || this.mode === "training" || this.mode === "listed")
       ? this.speedScale
       : 1;
     this.speedAccum += scale;

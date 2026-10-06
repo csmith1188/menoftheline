@@ -14,62 +14,70 @@
       <p class="notice" role="status"><%= notice %></p>
     <% } %>
 
-    <section>
-      <h2>Play</h2>
-      <div class="stack">
-        <% if (rejoin) { %>
-          <a class="action" href="/play">Rejoin match</a>
-        <% } %>
-        <div class="play-split play-thirds">
-          <form method="post" action="/play/bot">
-            <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
-          </form>
-          <form method="post" action="/play/train/bot">
-            <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs bot</button>
-          </form>
-          <form method="post" action="/play/bot">
-            <input type="hidden" name="view" value="3d">
-            <button type="submit" <%= rejoin ? "disabled" : "" %> title="Play vs bot in 3D" aria-label="Play vs bot in 3D">3D</button>
-          </form>
-        </div>
-        <div class="play-split play-thirds">
-          <form method="post" action="/play/casual">
-            <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
-          </form>
-          <form method="post" action="/play/train/casual">
-            <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs random</button>
-          </form>
-          <form method="post" action="/play/casual">
-            <input type="hidden" name="view" value="3d">
-            <button type="submit" <%= rejoin ? "disabled" : "" %> title="Random unranked in 3D" aria-label="Random unranked in 3D">3D</button>
-          </form>
-        </div>
-        <% if (viewer) { %>
-          <div class="play-split">
-            <form method="post" action="/play/lobby">
-              <button type="submit" <%= canTicket ? "" : "disabled" %>>Create unranked lobby</button>
-            </form>
-            <form method="post" action="/play/lobby">
-              <input type="hidden" name="view" value="3d">
-              <button type="submit" <%= canTicket ? "" : "disabled" %> title="Create unranked lobby in 3D" aria-label="Create unranked lobby in 3D">3D</button>
-            </form>
-          </div>
-          <div class="play-split">
-            <form method="post" action="/play/ranked">
-              <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
-            </form>
-            <form method="post" action="/play/ranked">
-              <input type="hidden" name="view" value="3d">
-              <button type="submit" <%= canTicket ? "" : "disabled" %> title="Find ranked match in 3D" aria-label="Find ranked match in 3D">3D</button>
-            </form>
-          </div>
-          <% if (!canTicket && !rejoin) { %>
-            <p class="hint">A free ticket is required for a lobby, a specific join, or ranked search.</p>
+    <div class="play-tickets-stack">
+      <% if (viewer) { %>
+        <section class="play-tickets-buy">
+          <h2>Buy tickets</h2>
+          <%- include("buy", { nextPath: "/games", buyLayout: "row" }) %>
+        </section>
+      <% } %>
+
+      <section class="play-tickets-play">
+        <h2>Play</h2>
+        <div class="stack">
+          <% if (rejoin) { %>
+            <a class="action" href="/play">Rejoin match</a>
           <% } %>
-          <%- include("buy", { nextPath: "/games" }) %>
-        <% } %>
-      </div>
-    </section>
+          <div class="play-split play-thirds">
+            <form method="post" action="/play/bot">
+              <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
+            </form>
+            <form method="post" action="/play/train/bot">
+              <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs bot</button>
+            </form>
+            <form method="post" action="/play/bot">
+              <input type="hidden" name="view" value="3d">
+              <button type="submit" <%= rejoin ? "disabled" : "" %> title="Play vs bot in 3D" aria-label="Play vs bot in 3D">3D</button>
+            </form>
+          </div>
+          <div class="play-split play-thirds">
+            <form method="post" action="/play/casual">
+              <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
+            </form>
+            <form method="post" action="/play/train/casual">
+              <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs random</button>
+            </form>
+            <form method="post" action="/play/casual">
+              <input type="hidden" name="view" value="3d">
+              <button type="submit" <%= rejoin ? "disabled" : "" %> title="Random unranked in 3D" aria-label="Random unranked in 3D">3D</button>
+            </form>
+          </div>
+          <% if (viewer) { %>
+            <div class="play-split">
+              <form method="post" action="/play/ranked">
+                <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
+              </form>
+              <form method="post" action="/play/ranked">
+                <input type="hidden" name="view" value="3d">
+                <button type="submit" <%= canTicket ? "" : "disabled" %> title="Find ranked match in 3D" aria-label="Find ranked match in 3D">3D</button>
+              </form>
+            </div>
+            <div class="play-split">
+              <% if (canTicket) { %>
+                <a class="action" href="/games/create">Create Custom Game</a>
+                <a class="action" href="/games/create?view=3d" title="Create lobby in 3D" aria-label="Create lobby in 3D">3D</a>
+              <% } else { %>
+                <button type="button" disabled>Create lobby</button>
+                <button type="button" disabled title="Create lobby in 3D" aria-label="Create lobby in 3D">3D</button>
+              <% } %>
+            </div>
+            <% if (!canTicket && !rejoin) { %>
+              <p class="hint">A free ticket is required for a lobby, a specific join, or ranked search.</p>
+            <% } %>
+          <% } %>
+        </div>
+      </section>
+    </div>
 
     <section>
       <h2>Open games</h2>
@@ -79,7 +87,16 @@
       <ul class="list">
         <% lobbies.forEach(function (lobby) { %>
           <li class="card">
-            <p><%= lobby.host %></p>
+            <p class="title"><%= lobby.host %></p>
+            <% if (lobby.match) { %>
+              <dl class="lobby-match">
+                <div><dt>Map</dt><dd><%= lobby.match.mapLabel %></dd></div>
+                <div><dt>Speed</dt><dd><%= lobby.match.speedLabel %></dd></div>
+                <div><dt>Fog</dt><dd><%= lobby.match.fogEnabled ? "On" : "Off" %></dd></div>
+                <div><dt>Forts</dt><dd><%= lobby.match.fortsEnabled ? "On" : "Off" %></dd></div>
+                <div><dt>Base GPS</dt><dd><%= lobby.match.baseGps %></dd></div>
+              </dl>
+            <% } %>
             <% if (rejoin) { %>
               <p class="hint">You are already in a match.</p>
             <% } else if (!viewer) { %>

@@ -42,6 +42,7 @@ shared/                Authoritative tunables + geometry used by server, client,
   units.js             UNIT_STATS, variants, labels, BUY_UNITS, mobilityClass, cost helpers
   path.js              Path / lanes / progress / fort cover helpers
   maps.js              Named map presets (terrain feature layouts)
+  matchOptions.js      Custom lobby knobs (speed, fog, map, forts, base GPS)
   terrain.js           Terrain rules: move, LOS/fog, cover, range, snapshot helpers
   unitInfo.js          Player-facing unit copy + derived info panels
 public/js/             Browser match client (ES modules, imports ../shared/)
@@ -49,12 +50,13 @@ public/js/             Browser match client (ES modules, imports ../shared/)
   main3d.js / scene3d.js   3D match client
   board.js             Hit-testing, HUD geometry, buy UI helpers
   render.js            Canvas draw + applySnapshot
+  mapPreview.js        Lobby create map preview canvas
   input.js             Pointer → command payloads
   rules.js             In-match how-to diagrams (reads live CONFIG/UNIT_STATS)
   unitInfo.js          In-match unit info overlay (uses shared/unitInfo.js)
   tooltips.js, tutorial.js, audio.js, buyArt.js, suggestion.js, debugRanges.js
 public/css/            game.css, landing.css
-views/                 EJS shells (landing, play, wiki, admin, scores, …)
+views/                 EJS shells (landing, play, wiki, admin, scores, lobby-create, …)
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports server.js
@@ -75,6 +77,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
+| Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |

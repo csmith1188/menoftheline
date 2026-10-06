@@ -164,7 +164,7 @@ export class Matchmaker {
       return;
     }
     if (intent.mode === "listed") {
-      await this.startListed(socket);
+      await this.startListed(socket, intent.matchOptions || null);
       return;
     }
     if (intent.mode === "ranked") {
@@ -231,7 +231,7 @@ export class Matchmaker {
     await this.pairTraining();
   }
 
-  async startListed(socket) {
+  async startListed(socket, matchOptions = null) {
     const user = socket.data.user;
     if (!user.formbarId) {
       this.failHome(socket, "Log in to create a lobby.");
@@ -246,7 +246,9 @@ export class Matchmaker {
       await releaseHold(user.formbarId);
       return;
     }
-    const room = new GameRoom(this, this.io, "listed");
+    const room = new GameRoom(this, this.io, "listed", {
+      matchOptions: matchOptions || {},
+    });
     this.rooms.set(room.id, room);
     room.seatHuman("a", socket);
   }
@@ -463,6 +465,7 @@ export class Matchmaker {
         id: room.id,
         host: room.seat.a.name,
         createdAt: room.createdAt,
+        match: room.matchOptionsPublic(),
       });
     }
     rows.sort((a, b) => a.createdAt - b.createdAt);
@@ -602,6 +605,10 @@ export class Matchmaker {
     room.status = "waiting";
     room.countdownEnds = null;
     room.sim.reset();
+    // Keep custom lobby knobs after a listed abandon (reset clears sim defaults).
+    if (room.matchOptions) {
+      room.applyMatchOptions(room.matchOptions);
+    }
     if (!room.seat.a.userId && room.seat.b.userId) {
       const joiner = room.seat.b;
       room.seat.a.userId = joiner.userId;

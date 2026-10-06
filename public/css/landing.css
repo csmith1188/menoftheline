@@ -153,12 +153,49 @@ h2 {
   list-style: none;
 }
 
+.play-tickets-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.play-tickets-buy,
+.play-tickets-play {
+  min-width: 0;
+}
+
 form,
 .buy {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 0;
+}
+
+.buy-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.buy--row .buy-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.buy--row .buy-fields input,
+.buy--row .buy-fields button {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 520px) {
+  .buy--row .buy-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 button,
@@ -197,26 +234,36 @@ button:disabled {
   gap: 0;
 }
 
-.play-split form {
+.play-split form,
+.play-split > a.action,
+.play-split > button {
   margin: 0;
   min-width: 0;
 }
 
-.play-split form:first-child {
+.play-split form:first-child,
+.play-split > a.action:first-child,
+.play-split > button:first-child {
   flex: 2 1 0;
 }
 
-.play-split form:last-child {
+.play-split form:last-child,
+.play-split > a.action:last-child,
+.play-split > button:last-child {
   flex: 1 1 0;
 }
 
-.play-split form:first-child button {
+.play-split form:first-child button,
+.play-split > a.action:first-child,
+.play-split > button:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: none;
 }
 
-.play-split form:last-child button {
+.play-split form:last-child button,
+.play-split > a.action:last-child,
+.play-split > button:last-child {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
@@ -224,6 +271,76 @@ button:disabled {
   padding-right: 8px;
   font-size: 0.9rem;
   letter-spacing: 0.04em;
+}
+
+.lobby-create-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 20px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.lobby-create-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lobby-preview .label {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.map-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #172c20;
+}
+
+.lobby-match {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.lobby-match > div {
+  margin: 0;
+  min-width: 0;
+}
+
+.lobby-match dt {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text) 70%, var(--gold));
+}
+
+.lobby-match dd {
+  margin: 2px 0 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+@media (max-width: 720px) {
+  .lobby-match {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .lobby-create-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .play-split.play-thirds form {
@@ -259,7 +376,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   min-height: 48px;
   padding: 10px 12px;
@@ -278,12 +396,14 @@ textarea::placeholder {
 }
 
 input:hover,
-textarea:hover {
+textarea:hover,
+select:hover {
   border-color: #4a5d75;
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--gold);
   box-shadow: 0 0 0 2px rgba(232, 195, 106, 0.35);

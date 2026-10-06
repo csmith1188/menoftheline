@@ -50,6 +50,14 @@ import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
 import { renderWikiBody } from "./server/wiki-render.js";
 import { wikiLineDiff } from "./server/wiki-diff.js";
+import {
+  BASE_GPS_MAX,
+  BASE_GPS_MIN,
+  MATCH_SPEEDS,
+  defaultMatchOptions,
+  normalizeMatchOptions,
+} from "./shared/matchOptions.js";
+import { MAP_PRESETS, mapPresetIds } from "./shared/maps.js";
 
 const require = createRequire(import.meta.url);
 const connectSqlite3 = require("connect-sqlite3");
@@ -341,6 +349,40 @@ app.get("/games", async (req, res, next) => {
   try {
     const data = await gamesData(req);
     req.session.save(() => res.render("games", data));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/games/create", async (req, res, next) => {
+  try {
+    const data = await gamesData(req);
+    if (!data.viewer) {
+      res.redirect("/login");
+      return;
+    }
+    if (!data.canTicket && !data.rejoin) {
+      req.session.notice = "You need a free ticket.";
+      req.session.save(() => res.redirect("/games"));
+      return;
+    }
+    if (data.rejoin) {
+      req.session.save(() => res.redirect("/play"));
+      return;
+    }
+    const defaults = defaultMatchOptions();
+    const queryView = req.query && req.query.view === "3d" ? "3d" : null;
+    req.session.save(() => res.render("lobby-create", {
+      ...data,
+      nav: "games",
+      queryView,
+      matchDefaults: defaults,
+      matchSpeeds: MATCH_SPEEDS,
+      mapIds: mapPresetIds(),
+      mapPresets: MAP_PRESETS,
+      baseGpsMin: BASE_GPS_MIN,
+      baseGpsMax: BASE_GPS_MAX,
+    }));
   } catch (err) {
     next(err);
   }
@@ -737,6 +779,7 @@ async function startPlay(req, res, next, intent) {
       mode: intent.mode,
       roomId: intent.roomId || null,
       view: intent.view || null,
+      matchOptions: intent.matchOptions || null,
     };
     req.session.save(() => res.redirect("/play"));
   } catch (err) {
@@ -746,6 +789,10 @@ async function startPlay(req, res, next, intent) {
 
 function playView(req) {
   return req.body && req.body.view === "3d" ? "3d" : null;
+}
+
+function matchOptionsFromBody(body) {
+  return normalizeMatchOptions(body || {});
 }
 
 app.post("/play/bot", (req, res, next) => {
@@ -761,7 +808,11 @@ app.post("/play/train/casual", (req, res, next) => {
   startPlay(req, res, next, { mode: "trainCasual" });
 });
 app.post("/play/lobby", (req, res, next) => {
-  startPlay(req, res, next, { mode: "listed", view: playView(req) });
+  startPlay(req, res, next, {
+    mode: "listed",
+    view: playView(req),
+    matchOptions: matchOptionsFromBody(req.body),
+  });
 });
 app.post("/play/ranked", (req, res, next) => {
   startPlay(req, res, next, { mode: "ranked", view: playView(req) });

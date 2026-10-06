@@ -6,6 +6,16 @@ import { BotController } from "../server/bot.js";
 export function makeSim(opts = {}) {
   const sim = new GameSim();
   sim.mapId = opts.mapId || "empty";
+  if (opts.fortsEnabled != null || opts.fogEnabled != null || opts.baseGps != null) {
+    sim.applyMatchOptions({
+      mapId: sim.mapId,
+      fortsEnabled: opts.fortsEnabled,
+      fogEnabled: opts.fogEnabled,
+      baseGps: opts.baseGps,
+    });
+  } else {
+    sim.syncTerrainFx();
+  }
   return sim;
 }
 

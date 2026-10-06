@@ -178,10 +178,15 @@ export const MAP_PRESETS = {
   },
 };
 
-/** Resolve a preset id into a full feature list (layout + side forts). */
-export function resolveMapFeatures(mapId) {
+/**
+ * Resolve a preset id into a full feature list.
+ * Pass `{ forts: false }` to omit side forts (custom lobbies).
+ */
+export function resolveMapFeatures(mapId, opts = {}) {
   const preset = MAP_PRESETS[mapId] || MAP_PRESETS[CONFIG.defaultMapId] || MAP_PRESETS.default;
-  return [...preset.layout, ...sideForts()];
+  const layout = [...preset.layout];
+  if (opts.forts === false) return layout;
+  return [...layout, ...sideForts()];
 }
 
 /** List of known map preset ids. */

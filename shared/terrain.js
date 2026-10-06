@@ -32,9 +32,9 @@ export const TERRAIN_TINT = {
   fort: "rgba(90, 90, 90, 0.35)",
 };
 
-let _cachedMapId = null;
+let _cachedMapKey = null;
 let _cachedFeatures = null;
-/** Open LOS segments by map id → "lane:sublane" → segments (static geometry). */
+/** Open LOS segments by map key → "lane:sublane" → segments (static geometry). */
 let _openSegCache = new Map();
 
 function emptyTerrainFx() {
@@ -45,10 +45,26 @@ function emptyTerrainFx() {
 }
 
 let _terrainFx = emptyTerrainFx();
+/** Per-room map resolve knobs (installed with terrain FX while a sim runs). */
+let _mapOpts = { forts: true };
+
+function mapCacheKey(mapId, forts) {
+  const id = mapId || CONFIG.defaultMapId;
+  return forts === false ? `${id}:noforts` : id;
+}
 
 /** Match overlay: pontoon rivers and Engineer LOS cancel. */
 export function setTerrainFx(fx) {
   _terrainFx = fx || emptyTerrainFx();
+}
+
+/** Install map resolve options for the active room (forts on/off). */
+export function setMapOpts(opts = {}) {
+  _mapOpts = { forts: opts.forts !== false };
+}
+
+export function getMapOpts() {
+  return { ..._mapOpts };
 }
 
 export function getTerrainFx() {
@@ -125,22 +141,25 @@ function featureOpenForSide(viewerSideId, feature, troopsBySide) {
     || sideCancelsLos(viewerSideId, feature);
 }
 
-/** Active features for a map id (cached per id). */
+/** Active features for a map id (cached per id + forts flag). */
 export function featuresOnMap(mapId) {
   const id = mapId || CONFIG.defaultMapId;
-  if (_cachedMapId !== id || !_cachedFeatures) {
-    _cachedMapId = id;
-    _cachedFeatures = resolveMapFeatures(id);
+  const forts = _mapOpts.forts !== false;
+  const key = mapCacheKey(id, forts);
+  if (_cachedMapKey !== key || !_cachedFeatures) {
+    _cachedMapKey = key;
+    _cachedFeatures = resolveMapFeatures(id, { forts });
   }
   return _cachedFeatures;
 }
 
 /** Clear feature cache (tests). */
 export function clearTerrainCache() {
-  _cachedMapId = null;
+  _cachedMapKey = null;
   _cachedFeatures = null;
   _openSegCache = new Map();
   _terrainFx = emptyTerrainFx();
+  _mapOpts = { forts: true };
 }
 
 /** Footprint interval in player-keep paces. */
@@ -562,10 +581,11 @@ function mergedTerrainBlobs(lane, sublane, mapId) {
  */
 export function openSegmentsOnRow(lane, sublane, mapId) {
   const id = mapId || CONFIG.defaultMapId;
-  let byRow = _openSegCache.get(id);
+  const cacheId = mapCacheKey(id, _mapOpts.forts !== false);
+  let byRow = _openSegCache.get(cacheId);
   if (!byRow) {
     byRow = new Map();
-    _openSegCache.set(id, byRow);
+    _openSegCache.set(cacheId, byRow);
   }
   const key = `${lane}:${sublane}`;
   let segments = byRow.get(key);

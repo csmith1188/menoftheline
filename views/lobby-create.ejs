@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("pwa-head") %>
+  <title>Custom match · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Custom match</h2>
+      <p class="hint">Set the rules, then start the lobby and wait for an opponent.</p>
+
+      <form class="lobby-create" method="post" action="/play/lobby" id="lobby-create-form">
+        <div class="lobby-create-grid">
+          <div class="lobby-create-fields">
+            <label for="speed">Game speed</label>
+            <select id="speed" name="speed">
+              <% matchSpeeds.forEach(function (s) { %>
+                <option value="<%= s %>" <%= Number(matchDefaults.speed) === Number(s) ? "selected" : "" %>><%= s %>×</option>
+              <% }) %>
+            </select>
+
+            <label for="fogEnabled">Fog of war</label>
+            <select id="fogEnabled" name="fogEnabled">
+              <option value="1" <%= matchDefaults.fogEnabled ? "selected" : "" %>>Enabled</option>
+              <option value="0" <%= !matchDefaults.fogEnabled ? "selected" : "" %>>Disabled</option>
+            </select>
+
+            <label for="mapId">Map</label>
+            <select id="mapId" name="mapId">
+              <% mapIds.forEach(function (id) { %>
+                <option value="<%= id %>" <%= matchDefaults.mapId === id ? "selected" : "" %>>
+                  <%= mapPresets[id] ? mapPresets[id].label : id %>
+                </option>
+              <% }) %>
+            </select>
+
+            <label for="fortsEnabled">Forts</label>
+            <select id="fortsEnabled" name="fortsEnabled">
+              <option value="1" <%= matchDefaults.fortsEnabled ? "selected" : "" %>>Enabled</option>
+              <option value="0" <%= !matchDefaults.fortsEnabled ? "selected" : "" %>>Disabled</option>
+            </select>
+
+            <label for="baseGps">Base GPS</label>
+            <input
+              id="baseGps"
+              name="baseGps"
+              type="number"
+              min="<%= baseGpsMin %>"
+              max="<%= baseGpsMax %>"
+              step="1"
+              value="<%= matchDefaults.baseGps %>"
+              required
+            >
+
+            <label for="view">View</label>
+            <select id="view" name="view">
+              <option value="" <%= typeof queryView !== "undefined" && queryView === "3d" ? "" : "selected" %>>2D</option>
+              <option value="3d" <%= typeof queryView !== "undefined" && queryView === "3d" ? "selected" : "" %>>3D</option>
+            </select>
+
+            <div class="play-split">
+              <button type="submit" <%= canTicket ? "" : "disabled" %>>Start lobby</button>
+              <a class="action" href="/games">Cancel</a>
+            </div>
+          </div>
+
+          <div class="lobby-preview">
+            <p class="label">Map preview</p>
+            <canvas
+              id="map-preview"
+              class="map-preview"
+              width="960"
+              height="620"
+              role="img"
+              aria-label="Map preview"
+            ></canvas>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/games/create" }) %>
+  <script type="module">
+    import { bindMapPreview } from "/js/mapPreview.js";
+    bindMapPreview(
+      document.getElementById("lobby-create-form"),
+      document.getElementById("map-preview"),
+    );
+  </script>
+</body>
+</html>

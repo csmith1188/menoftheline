@@ -6,6 +6,7 @@
 - Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
 - Fog in lanes in 3d
+- gun puffs
 - Late game land?
 - Add more game metrics
     Each type of game played

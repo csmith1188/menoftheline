@@ -22,6 +22,14 @@ export function pointToSegment(p, ax, ay, bx, by) {
   return Math.hypot(p.x - (ax + dx * t), p.y - (ay + dy * t));
 }
 
+/** Memoized `worldPoints` results keyed by `lane:sublane`. */
+const worldPointsCache = new Map();
+
+/** Drop cached polylines (tests that mutate CONFIG). */
+export function clearWorldPointsCache() {
+  worldPointsCache.clear();
+}
+
 /**
  * Polyline helpers shared by movement, capture tests, and lane drawing.
  * progress 0 is the buying side's capital; progress 1 is the enemy capital.
@@ -44,31 +52,38 @@ export const Path = {
   /**
    * World-space waypoints traveling player-left to enemy-right.
    * Enemy troops walk the same points reversed so sublanes stay aligned.
+   * Results are memoized; do not mutate the returned array.
    */
   worldPoints(lane, sublane) {
+    const key = `${lane}:${sublane}`;
+    const cached = worldPointsCache.get(key);
+    if (cached) return cached;
+
     const left = CONFIG.playerCapital;
     const right = CONFIG.enemyCapital;
+    let points;
 
     if (lane === "top") {
       const n = Path.sublaneNorm(sublane, CONFIG.topSublaneCount);
       const y = left.y + n * CONFIG.topSublaneSpread;
-      return [
+      points = [
         { x: left.x, y },
         { x: right.x, y },
       ];
+    } else {
+      const c = Path.bottomCenter();
+      const radius = Path.bottomRadius(sublane);
+      points = [];
+      const segs = CONFIG.bottomArcSegments;
+      for (let i = 0; i <= segs; i += 1) {
+        const theta = Math.PI * (1 - i / segs);
+        points.push({
+          x: c.x + radius * Math.cos(theta),
+          y: c.y + radius * Math.sin(theta),
+        });
+      }
     }
-
-    const c = Path.bottomCenter();
-    const radius = Path.bottomRadius(sublane);
-    const points = [];
-    const segs = CONFIG.bottomArcSegments;
-    for (let i = 0; i <= segs; i += 1) {
-      const theta = Math.PI * (1 - i / segs);
-      points.push({
-        x: c.x + radius * Math.cos(theta),
-        y: c.y + radius * Math.sin(theta),
-      });
-    }
+    worldPointsCache.set(key, points);
     return points;
   },
 

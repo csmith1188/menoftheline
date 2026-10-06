@@ -196,6 +196,24 @@ const ShotTone = {
     else ctx.resume().then(start).catch(() => {});
   },
 
+  /** Cached white-noise buffers keyed by sampleRate:sampleCount. */
+  noiseBuffers: null,
+
+  noiseBuffer(ctx, life) {
+    const samples = Math.max(1, Math.floor(ctx.sampleRate * life));
+    const key = `${ctx.sampleRate}:${samples}`;
+    if (!this.noiseBuffers) this.noiseBuffers = new Map();
+    let buffer = this.noiseBuffers.get(key);
+    if (buffer) return buffer;
+    buffer = ctx.createBuffer(1, samples, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i += 1) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    this.noiseBuffers.set(key, buffer);
+    return buffer;
+  },
+
   /**
    * High-passed noise hit. `playbackRate` 2 = one octave up (tighter / brighter).
    */
@@ -210,11 +228,7 @@ const ShotTone = {
     const ctx = this.unlock();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * life), ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i += 1) {
-      data[i] = Math.random() * 2 - 1;
-    }
+    const buffer = this.noiseBuffer(ctx, life);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.setValueAtTime(playbackRate, now);

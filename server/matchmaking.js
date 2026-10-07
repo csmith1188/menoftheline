@@ -247,6 +247,7 @@ export class Matchmaker {
     const entry = {
       userId: user.id,
       name: user.name,
+      accountId: user.accountId || null,
       formbarId: user.formbarId || null,
       mmr: null,
       socket,
@@ -264,6 +265,7 @@ export class Matchmaker {
     const entry = {
       userId: user.id,
       name: user.name,
+      accountId: user.accountId || null,
       formbarId: user.formbarId || null,
       mmr: null,
       socket,
@@ -278,17 +280,17 @@ export class Matchmaker {
 
   async startListed(socket, matchOptions = null) {
     const user = socket.data.user;
-    if (!user.formbarId) {
+    if (!user.accountId) {
       this.failHome(socket, "Log in to create a lobby.");
       return;
     }
-    const held = await holdTicket(user.formbarId);
+    const held = await holdTicket(user.accountId);
     if (!held) {
       this.failHome(socket, "You need a free ticket.");
       return;
     }
     if (socket.data.left || !socket.connected) {
-      await releaseHold(user.formbarId);
+      await releaseHold(user.accountId);
       return;
     }
     const room = new GameRoom(this, this.io, "listed", {
@@ -300,23 +302,24 @@ export class Matchmaker {
 
   async startRanked(socket) {
     const user = socket.data.user;
-    if (!user.formbarId) {
+    if (!user.accountId) {
       this.failHome(socket, "Log in to play ranked.");
       return;
     }
-    const held = await holdTicket(user.formbarId);
+    const held = await holdTicket(user.accountId);
     if (!held) {
       this.failHome(socket, "You need a free ticket.");
       return;
     }
     if (socket.data.left || !socket.connected) {
-      await releaseHold(user.formbarId);
+      await releaseHold(user.accountId);
       return;
     }
     const entry = {
       userId: user.id,
       name: user.name,
-      formbarId: user.formbarId,
+      accountId: user.accountId,
+      formbarId: user.formbarId || null,
       mmr: user.mmr,
       socket,
       joinedAt: Date.now(),
@@ -347,29 +350,29 @@ export class Matchmaker {
       room.attach(socket);
       return;
     }
-    if (!user.formbarId) {
+    if (!user.accountId) {
       this.failHome(socket, "Log in to join a game.");
       return;
     }
-    const held = await holdTicket(user.formbarId);
+    const held = await holdTicket(user.accountId);
     if (!held) {
       this.failHome(socket, "You need a free ticket.");
       return;
     }
     if (socket.data.left || !socket.connected) {
-      await releaseHold(user.formbarId);
+      await releaseHold(user.accountId);
       return;
     }
     room.seatHuman("b", socket);
     const ok = await room.startCountdown();
     if (ok) return;
-    await releaseHold(user.formbarId);
+    await releaseHold(user.accountId);
     room.clearSeat(room.seat.b);
     socket.data.gameId = null;
     socket.data.seatKey = null;
     socket.leave(room.roomName);
     const host = room.seat.a;
-    const still = await ensureHold(host.formbarId);
+    const still = await ensureHold(host.accountId);
     if (!still) {
       if (host.socket) this.failHome(host.socket, "You need a free ticket.");
       room.destroy();
@@ -383,6 +386,7 @@ export class Matchmaker {
   place(room, key, entry) {
     if (entry.socket && entry.socket.connected) {
       entry.socket.data.user.mmr = entry.mmr;
+      entry.socket.data.user.accountId = entry.accountId;
       entry.socket.data.user.formbarId = entry.formbarId;
       room.seatHuman(key, entry.socket);
       return;
@@ -398,7 +402,7 @@ export class Matchmaker {
     const ok = await room.startCountdown();
     if (ok) return;
     for (const entry of [a, b]) {
-      if (entry.formbarId) await releaseHold(entry.formbarId);
+      if (entry.accountId) await releaseHold(entry.accountId);
       if (entry.socket) this.failHome(entry.socket, "Could not start that match.");
     }
     room.destroy();
@@ -451,7 +455,7 @@ export class Matchmaker {
     this.training = this.training.filter((item) => item !== entry);
     this.ranked = this.ranked.filter((item) => item !== entry);
     this.forgetQueue(entry);
-    if (entry.mode === "ranked") await releaseHold(entry.formbarId);
+    if (entry.mode === "ranked") await releaseHold(entry.accountId);
     if (entry.socket) this.clearPlaySession(entry.socket);
   }
 
@@ -580,6 +584,7 @@ export class Matchmaker {
     const otherSnap = {
       userId: other.userId,
       name: other.name,
+      accountId: other.accountId,
       formbarId: other.formbarId,
       mmr: other.mmr,
       socket: other.socket,
@@ -588,11 +593,11 @@ export class Matchmaker {
     const leaverSocket = seat.socket;
 
     if (wasCountdown && room.charged) {
-      await refundTicket(room.seat.a.formbarId);
-      await refundTicket(room.seat.b.formbarId);
+      await refundTicket(room.seat.a.accountId);
+      await refundTicket(room.seat.b.accountId);
       room.charged = false;
     } else if (room.status === "waiting" && room.paid) {
-      await releaseHold(seat.formbarId);
+      await releaseHold(seat.accountId);
     }
 
     room.cancelCountdown();
@@ -622,6 +627,7 @@ export class Matchmaker {
       const entry = {
         userId: otherSnap.userId,
         name: otherSnap.name,
+        accountId: otherSnap.accountId,
         formbarId: otherSnap.formbarId,
         mmr: otherSnap.mmr,
         socket: otherSnap.socket,
@@ -629,7 +635,7 @@ export class Matchmaker {
         mode,
       };
       if (mode === "ranked") {
-        const held = await holdTicket(entry.formbarId);
+        const held = await holdTicket(entry.accountId);
         if (!held) {
           this.failHome(entry.socket, "You need a free ticket.");
           return;
@@ -665,6 +671,7 @@ export class Matchmaker {
       const joiner = room.seat.b;
       room.seat.a.userId = joiner.userId;
       room.seat.a.name = joiner.name;
+      room.seat.a.accountId = joiner.accountId;
       room.seat.a.formbarId = joiner.formbarId;
       room.seat.a.mmr = joiner.mmr;
       room.seat.a.socket = joiner.socket;
@@ -674,7 +681,7 @@ export class Matchmaker {
       room.clearSeat(room.seat.b);
     }
     const host = room.seat.a;
-    const still = await ensureHold(host.formbarId);
+    const still = await ensureHold(host.accountId);
     if (!still) {
       this.failHome(host.socket, "You need a free ticket.");
       room.destroy();

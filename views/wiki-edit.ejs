@@ -18,7 +18,7 @@
       <div class="wiki-head">
         <p class="hint"><a href="/rules">All pages</a></p>
         <h2><%= exists ? "Edit" : "Create" %> page</h2>
-        <p class="hint">Markdown supported. Line breaks and tabs count. Link pages with [[Page Title]].</p>
+        <p class="hint">Markdown supported. Line breaks and tabs count. Link pages with [[Page Title]]. Up to <%= maxOpenWikiRevisions %> unapproved edits at a time.</p>
       </div>
       <form method="post" action="/rules/<%= slug %>/edit" class="wiki-edit">
         <label for="wiki-title">Title</label>
@@ -26,10 +26,10 @@
           <input id="wiki-title" type="text" value="<%= title %>" disabled>
           <input type="hidden" name="title" value="<%= title %>">
         <% } else { %>
-          <input id="wiki-title" name="title" type="text" maxlength="80" required value="<%= title %>">
+          <input id="wiki-title" name="title" type="text" maxlength="<%= wikiTitleMax %>" required value="<%= title %>">
         <% } %>
         <label for="wiki-body">Body</label>
-        <textarea id="wiki-body" name="body" rows="18" maxlength="20000" required><%= body %></textarea>
+        <textarea id="wiki-body" name="body" rows="18" maxlength="<%= wikiBodyMax %>" required><%= body %></textarea>
         <div class="wiki-actions">
           <button type="submit" class="action">Save</button>
           <a href="/rules/<%= slug %>">Cancel</a>

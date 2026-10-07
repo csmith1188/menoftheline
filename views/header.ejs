@@ -10,11 +10,11 @@
       <a href="/admin" class="<%= typeof nav !== 'undefined' && nav === 'admin' ? 'active' : '' %>"> [ Admin ]</a>
     <% } %>
     <% if (viewer) { %>
-      <a href="/profile/<%= viewer.formbar_id %>">[ <%= viewer.name %> ]</a>
+      <a href="/profile/<%= viewer.id %>">[ <%= viewer.name %> ]</a>
       <span class="tickets"><%= viewer.tickets %> tickets<% if (viewer.held > 0) { %> (<%= viewer.held %> in use)<% } %></span>
       <a href="/logout"> [ Log out ]</a>
-    <% } else { %>
-      <a href="/login"> [ Log in with Formbar ]</a>
+    <% } else if (typeof anyLoginEnabled === 'undefined' || anyLoginEnabled) { %>
+      <a href="/login"> [ Log in ]</a>
     <% } %>
   </nav>
 </header>

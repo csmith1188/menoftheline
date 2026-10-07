@@ -48,6 +48,7 @@ function emptySeat(key, sideId) {
     sideId,
     userId: null,
     name: null,
+    accountId: null,
     formbarId: null,
     mmr: null,
     socket: null,
@@ -146,6 +147,7 @@ export class GameRoom {
     }
     seat.userId = null;
     seat.name = null;
+    seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
     seat.socket = null;
@@ -168,6 +170,7 @@ export class GameRoom {
     }
     seat.userId = player.id;
     seat.name = player.name;
+    seat.accountId = player.accountId || null;
     seat.formbarId = player.formbarId || null;
     seat.mmr = Number.isFinite(player.mmr) ? player.mmr : null;
     seat.bot = null;
@@ -199,6 +202,7 @@ export class GameRoom {
     this.copyPlayer(seat, {
       id: player.userId || player.id,
       name: player.name,
+      accountId: player.accountId,
       formbarId: player.formbarId,
       mmr: player.mmr,
     });
@@ -216,6 +220,7 @@ export class GameRoom {
     const seat = this.seat[key];
     seat.userId = null;
     seat.name = "Bot";
+    seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
     seat.socket = null;
@@ -307,7 +312,7 @@ export class GameRoom {
   async startCountdown() {
     if (this.status !== "waiting" || this.closing) return false;
     if (this.paid && !this.charged) {
-      const ids = [this.seat.a.formbarId, this.seat.b.formbarId]
+      const ids = [this.seat.a.accountId, this.seat.b.accountId]
         .filter((id) => Number.isInteger(id) && id > 0);
       if (ids.length < 2) return false;
       const done = [];
@@ -325,8 +330,8 @@ export class GameRoom {
     }
     if (this.status !== "waiting" || this.closing) {
       if (this.charged) {
-        await refundTicket(this.seat.a.formbarId);
-        await refundTicket(this.seat.b.formbarId);
+        await refundTicket(this.seat.a.accountId);
+        await refundTicket(this.seat.b.accountId);
         this.charged = false;
       }
       return false;
@@ -653,8 +658,8 @@ export class GameRoom {
     try {
       if (
         this.mode === "ranked"
-        && a.formbarId
-        && b.formbarId
+        && a.accountId
+        && b.accountId
         && Number.isFinite(a.mmr)
         && Number.isFinite(b.mmr)
       ) {
@@ -664,8 +669,8 @@ export class GameRoom {
         mmrAAfter = nextMmr(a.mmr, b.mmr, aScore, k);
         mmrBAfter = nextMmr(b.mmr, a.mmr, bScore, k);
         ranked = [
-          { formbarId: a.formbarId, mmr: mmrAAfter, won: aScore === 1 },
-          { formbarId: b.formbarId, mmr: mmrBAfter, won: bScore === 1 },
+          { accountId: a.accountId, mmr: mmrAAfter, won: aScore === 1 },
+          { accountId: b.accountId, mmr: mmrBAfter, won: bScore === 1 },
         ];
       }
     } catch (err) {
@@ -683,6 +688,8 @@ export class GameRoom {
         nameB: b.name,
         formbarA: a.formbarId,
         formbarB: b.formbarId,
+        accountA: a.accountId,
+        accountB: b.accountId,
         winnerSide: winner,
         mmrABefore: Number.isFinite(a.mmr) ? a.mmr : null,
         mmrBBefore: Number.isFinite(b.mmr) ? b.mmr : null,

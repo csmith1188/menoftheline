@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("pwa-head") %>
+  <title>Sign up · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Create account</h2>
+      <form method="post" action="/signup">
+        <label for="name">Display name</label>
+        <input id="name" name="name" type="text" autocomplete="nickname" minlength="2" maxlength="32" pattern="[A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ '\-_]*" title="Letters, numbers, spaces, hyphens, apostrophes, underscores" value="<%= name || "" %>">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" maxlength="254" required value="<%= email || "" %>">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="200" required>
+        <button type="submit" class="action">Sign up</button>
+      </form>
+      <p class="hint">
+        <% if (authEmailEnabled) { %>We will email a verification link.<% } %>
+        Already have an account? <a href="/login">Log in</a>
+      </p>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/signup" }) %>
+</body>
+</html>

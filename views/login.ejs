@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("pwa-head") %>
+  <title>Log in · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Log in</h2>
+      <% if (disabled) { %>
+        <p class="hint">Login is currently disabled.</p>
+      <% } else { %>
+        <% if (localAccountsEnabled) { %>
+          <form method="post" action="/login">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="username" required value="<%= email || "" %>">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <button type="submit" class="action">Log in</button>
+          </form>
+          <p class="hint">
+            <a href="/signup">Create an account</a>
+            <% if (authEmailEnabled) { %>
+              · <a href="/forgot">Forgot password</a>
+            <% } %>
+          </p>
+          <% if (authEmailEnabled) { %>
+            <form method="post" action="/verify/resend" class="auth-secondary">
+              <label for="resend-email">Resend verification</label>
+              <input id="resend-email" name="email" type="email" autocomplete="email" required value="<%= email || "" %>">
+              <button type="submit">Resend</button>
+            </form>
+          <% } %>
+        <% } %>
+        <% if (formbarLoginEnabled) { %>
+          <% if (localAccountsEnabled) { %><p class="hint">Or</p><% } %>
+          <a class="action" href="/login?formbar=1">Log in with Formbar</a>
+        <% } %>
+      <% } %>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/login" }) %>
+</body>
+</html>

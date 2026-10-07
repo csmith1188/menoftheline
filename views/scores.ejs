@@ -22,7 +22,7 @@
         <ol class="scores">
           <% leaders.forEach(function (row) { %>
             <li>
-              <a href="/profile/<%= row.formbar_id %>"><%= row.name %></a>
+              <a href="/profile/<%= row.id %>"><%= row.name %></a>
               <span><%= row.mmr %> MMR</span>
             </li>
           <% }) %>

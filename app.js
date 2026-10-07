@@ -2438,31 +2438,58 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
       res.status(403).json({ error: "login_required" });
       return;
     }
-    const pack = ticketPack();
-    const transfer = await payPool(formbarSocket, {
-      userId: account.formbar_id,
-      poolId: POOL_ID,
-      amount: pack.cost,
-      pin: req.body && req.body.pin,
-      reason: `${pack.size} game tickets`,
-    });
-    if (!transfer.success) {
-      res.status(400).json({
-        error: "payment_failed",
-        message: transfer.message || "Payment failed.",
-      });
+    if (!rateLimit(`tickets:${account.id}`, { max: LIMITS.ticket, windowMs: 60 * 1000 })) {
+      res.status(429).json({ error: "rate_limited" });
       return;
     }
-    await addTickets(account.id, pack.size, pack.cost, account.formbar_id);
-    const updated = await getAccount(account.id);
-    const player = await playerFromSession(req.session, { createGuest: false });
-    const busy = player ? matchmaker.isBusy(player.id) : false;
-    res.json({
-      ok: true,
-      account: accountPublic(updated),
-      canTicket: Boolean(updated && updated.tickets > updated.held && !busy),
-      pack: { size: pack.size, cost: pack.cost },
-    });
+    if (!tryLockTicketPurchase(account.id)) {
+      res.status(409).json({ error: "purchase_in_progress" });
+      return;
+    }
+    try {
+      const pack = ticketPack();
+      const purchaseId = await beginTicketPurchase({
+        accountId: account.id,
+        formbarId: account.formbar_id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+      });
+      if (!purchaseId) {
+        res.status(409).json({ error: "purchase_pending" });
+        return;
+      }
+      const transfer = await payPool(formbarSocket, {
+        userId: account.formbar_id,
+        poolId: POOL_ID,
+        amount: pack.cost,
+        pin: req.body && req.body.pin,
+        reason: `${pack.size} game tickets`,
+      });
+      if (transfer.ambiguous) {
+        res.status(502).json({ error: "payment_ambiguous", message: AMBIGUOUS_TRANSFER });
+        return;
+      }
+      if (!transfer.success) {
+        await failTicketPurchase(purchaseId);
+        res.status(400).json({
+          error: "payment_failed",
+          message: transfer.message || "Payment failed.",
+        });
+        return;
+      }
+      await completeTicketPurchase(purchaseId, account.id, pack.size);
+      const updated = await getAccount(account.id);
+      const player = await playerFromSession(req.session, { createGuest: false });
+      const busy = player ? matchmaker.isBusy(player.id) : false;
+      res.json({
+        ok: true,
+        account: accountPublic(updated),
+        canTicket: Boolean(updated && updated.tickets > updated.held && !busy),
+        pack: { size: pack.size, cost: pack.cost },
+      });
+    } finally {
+      unlockTicketPurchase(account.id);
+    }
   } catch (err) {
     next(err);
   }

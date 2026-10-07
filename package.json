@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "debug": "nodemon scripts/debug-app.js",
+    "debug": "nodemon scripts/debug-server.js",
     "patch-notes": "node scripts/generate-patch-notes.js",
     "load": "node scripts/load/socket-load.js",
     "sim-bench": "node scripts/load/sim-bench.js",

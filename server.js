@@ -5,14 +5,18 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import express from "express";
 import session from "express-session";
-import jwt from "jsonwebtoken";
+import { timingSafeEqual } from "crypto";
 import { Server } from "socket.io";
 import {
-  addTickets,
   assignOwner,
   archiveSuggestion,
+  beginTicketPurchase,
   claimSuggestionReward,
+  claimWikiReward,
   canEditWiki,
+  completeSuggestionReward,
+  completeTicketPurchase,
+  completeWikiReward,
   confirmWikiRevision,
   consumeAuthToken,
   countOpenBugs,
@@ -22,6 +26,7 @@ import {
   createSuggestion,
   dataPath,
   ensureGuest,
+  failTicketPurchase,
   findAccountForProfile,
   FREE_OPEN_SUGGESTIONS,
   getAccount,
@@ -41,7 +46,8 @@ import {
   MAX_OPEN_BUGS,
   MAX_OPEN_WIKI_REVISIONS,
   mergeAccounts,
-  reopenSuggestion,
+  releaseSuggestionReward,
+  releaseWikiReward,
   sanitizeUserText,
   saveWikiPage,
   bgmVolumePercent,
@@ -51,8 +57,9 @@ import {
   setLocalCredentials,
   setPlayerBgmVolume,
   setPlayerTooltips,
-  setWikiRevisionRewarded,
   spendFreeTicket,
+  tryLockTicketPurchase,
+  unlockTicketPurchase,
   SUGGESTION_BODY_MAX,
   SUGGESTION_REPRO_MAX,
   systemStats,
@@ -90,6 +97,18 @@ import { ensureMetrics, report as metricsReport, startMetrics } from "./server/m
 import { workerCount } from "./server/owners.js";
 import { scheduleSettingWrite } from "./server/settingsWrite.js";
 import { connectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
+import { authenticateFormbarToken } from "./server/formbarAuth.js";
+import { ensureCsrf, requireCsrf } from "./server/csrf.js";
+import {
+  assertSessionSecret,
+  debugRangesEnabled,
+  originAllowed,
+  positiveEnv,
+  requestClientIp,
+  securityHeadersMiddleware,
+  sessionCookieOptions,
+} from "./server/hardening.js";
+import { allowSocketEvent } from "./server/commandLimit.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
 import { renderWikiBody } from "./server/wiki-render.js";
@@ -115,13 +134,42 @@ const AUTH_URL = String(process.env.AUTH_URL || "https://formbar.yorktechapps.co
 const THIS_URL = String(process.env.THIS_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 const POOL_ID = Number(process.env.POOL_ID);
 
+let sessionSecret;
+try {
+  sessionSecret = assertSessionSecret(process.env);
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
+}
+
 await initDb();
 warnAuthConfig();
 
 const app = express();
 const httpServer = createServer(app);
+if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
 // Prefer WebSocket; long-polling at 20 Hz state kills mobile Safari latency.
+// Browser Origins must match THIS_URL. A missing Origin is allowed here and
+// checked again in io.use, where native clients present auth.token.
 const io = new Server(httpServer, {
+  cors: {
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (originAllowed(origin, {
+        thisUrl: THIS_URL,
+        nodeEnv: process.env.NODE_ENV,
+        hasAuthToken: false,
+      })) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("origin not allowed"), false);
+    },
+    credentials: true,
+  },
   transports: ["websocket", "polling"],
   pingInterval: 20000,
   pingTimeout: 20000,
@@ -143,12 +191,27 @@ if (sessionStore.db && sessionStore.db.configure) {
 }
 const sessionMiddleware = session({
   store: sessionStore,
-  secret: process.env.SESSION_SECRET || "lane-pusher-local",
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
+  rolling: true,
   name: "lane.sid",
-  cookie: { httpOnly: true, sameSite: "lax" },
+  cookie: sessionCookieOptions(THIS_URL),
 });
+
+const LIMITS = {
+  login: positiveEnv(process.env, "RATE_LOGIN_MAX", 20),
+  loginWindow: positiveEnv(process.env, "RATE_LOGIN_WINDOW_MS", 15 * 60 * 1000),
+  guest: positiveEnv(process.env, "RATE_GUEST_MAX", 10),
+  guestWindow: positiveEnv(process.env, "RATE_GUEST_WINDOW_MS", 10 * 60 * 1000),
+  play: positiveEnv(process.env, "RATE_PLAY_MAX", 30),
+  ticket: positiveEnv(process.env, "RATE_TICKET_MAX", 6),
+  suggest: positiveEnv(process.env, "RATE_SUGGEST_MAX", 10),
+  suggestWindow: positiveEnv(process.env, "RATE_SUGGEST_WINDOW_MS", 10 * 60 * 1000),
+  wiki: positiveEnv(process.env, "RATE_WIKI_MAX", 10),
+  admin: positiveEnv(process.env, "RATE_ADMIN_MAX", 60),
+  lobby: positiveEnv(process.env, "RATE_LOBBY_MAX", 10),
+};
 
 const GUEST_PLAY_MODES = new Set(["bot", "trainBot", "casual", "trainCasual"]);
 const PAID_PLAY_MODES = new Set(["listed", "ranked", "join"]);
@@ -234,8 +297,11 @@ app.locals.wikiBodyMax = WIKI_BODY_MAX;
 app.locals.maxOpenBugs = MAX_OPEN_BUGS;
 app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
 app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
-app.use(express.urlencoded({ extended: false }));
+app.use(securityHeadersMiddleware(THIS_URL));
+app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 app.use(sessionMiddleware);
+app.use(ensureCsrf);
+app.use(requireCsrf);
 app.use((req, res, next) => {
   res.locals.isAdmin = isAdmin(req.session);
   res.locals.localAccountsEnabled = localAccountsEnabled();
@@ -275,21 +341,56 @@ function safeNext(value) {
   return text;
 }
 
-function formbarUserIdFromToken(tokenData) {
-  const raw = tokenData.id ?? tokenData.userId ?? tokenData.userID ?? tokenData.sub;
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
 function setAccountSession(sess, account) {
   sess.accountId = account.id;
   sess.formbarId = account.formbar_id || null;
   sess.formbarName = account.name;
 }
 
+function regenerateSession(req) {
+  const notice = req.session && req.session.notice;
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) reject(err);
+      else {
+        if (notice) req.session.notice = notice;
+        resolve();
+      }
+    });
+  });
+}
+
+async function establishAccountSession(req, account, notice) {
+  await regenerateSession(req);
+  setAccountSession(req.session, account);
+  if (notice) req.session.notice = notice;
+}
+
 function clientIp(req) {
-  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return fwd || req.ip || "unknown";
+  return requestClientIp(req);
+}
+
+function adminLimited(req) {
+  const accountId = req.session && req.session.accountId;
+  const key = accountId ? `admin:${accountId}` : `admin-ip:${clientIp(req)}`;
+  return rateLimit(key, { max: LIMITS.admin, windowMs: 60 * 1000 });
+}
+
+function routeId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+const AMBIGUOUS_TRANSFER = "The transfer may have gone through. It will not be retried automatically because Formbar has no transaction id.";
+
+function bearerMatches(header, secret) {
+  if (!secret) return false;
+  const match = /^Bearer\s+(\S+)/i.exec(String(header || ""));
+  if (!match) return false;
+  const left = Buffer.from(match[1]);
+  const right = Buffer.from(secret);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
 }
 
 async function resolveSessionAccount(sess) {
@@ -450,23 +551,24 @@ async function completeFormbarLogin(req, res, token) {
     res.status(404).send("Formbar login is disabled.");
     return;
   }
-  const tokenData = jwt.decode(String(token));
-  const userId = tokenData && typeof tokenData === "object"
-    ? formbarUserIdFromToken(tokenData)
-    : null;
-  if (!tokenData || userId == null) {
+  const linkId = Number(req.session.linkAccountId);
+  let identity;
+  try {
+    identity = await authenticateFormbarToken(token, AUTH_URL);
+  } catch (err) {
+    if (err && err.code === "certs_unavailable") {
+      res.status(503).send("Formbar login is temporarily unavailable.");
+      return;
+    }
     res.status(400).send("Invalid Formbar token.");
     return;
   }
-  const rawName = String(
-    tokenData.displayName || tokenData.name || `Player ${userId}`,
-  );
-  const nameCheck = validateDisplayName(rawName);
-  const name = nameCheck.ok ? nameCheck.name : `Player ${userId}`;
+  const nameCheck = validateDisplayName(identity.rawName);
+  const name = nameCheck.ok ? nameCheck.name : `Player ${identity.id}`;
+  const userId = identity.id;
+  await regenerateSession(req);
 
-  const linkId = Number(req.session.linkAccountId);
   if (Number.isInteger(linkId) && linkId > 0) {
-    req.session.linkAccountId = null;
     const result = await linkFormbarToAccount(linkId, userId);
     if (!result.ok) {
       req.session.notice = result.error === "already_linked"
@@ -550,7 +652,11 @@ app.post("/login", async (req, res, next) => {
         disabled: false,
       }));
     };
-    if (!rateLimit(`login:${clientIp(req)}:${email}`, { max: 20 })) {
+    if (!rateLimit(`login-ip:${clientIp(req)}`, { max: LIMITS.login * 2, windowMs: LIMITS.loginWindow })) {
+      renderFail("Too many login attempts. Try again later.");
+      return;
+    }
+    if (!rateLimit(`login:${clientIp(req)}:${email}`, { max: LIMITS.login, windowMs: LIMITS.loginWindow })) {
       renderFail("Too many login attempts. Try again later.");
       return;
     }
@@ -568,7 +674,7 @@ app.post("/login", async (req, res, next) => {
       renderFail("Verify your email before logging in.");
       return;
     }
-    setAccountSession(req.session, account);
+    await establishAccountSession(req, account);
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -663,7 +769,7 @@ app.post("/signup", async (req, res, next) => {
       req.session.save(() => res.redirect("/login"));
       return;
     }
-    setAccountSession(req.session, account);
+    await establishAccountSession(req, account);
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -689,8 +795,7 @@ app.get("/verify", async (req, res, next) => {
     }
     await setEmailVerified(account.id);
     const fresh = await getAccount(account.id);
-    setAccountSession(req.session, fresh || account);
-    req.session.notice = "Email verified. You are logged in.";
+    await establishAccountSession(req, fresh || account, "Email verified. You are logged in.");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -814,8 +919,7 @@ app.post("/reset", async (req, res, next) => {
     }
     await setAccountPassword(account.id, await hashPassword(password));
     const fresh = await getAccount(account.id);
-    setAccountSession(req.session, fresh || account);
-    req.session.notice = "Password updated.";
+    await establishAccountSession(req, fresh || account, "Password updated.");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1069,22 +1173,53 @@ app.post("/tickets", async (req, res, next) => {
       req.session.save(() => res.redirect(back));
       return;
     }
-    const pack = ticketPack();
-    const transfer = await payPool(formbarSocket, {
-      userId: account.formbar_id,
-      poolId: POOL_ID,
-      amount: pack.cost,
-      pin: req.body && req.body.pin,
-      reason: `${pack.size} game tickets`,
-    });
-    if (!transfer.success) {
-      req.session.notice = transfer.message || "Payment failed.";
+    if (!rateLimit(`tickets:${account.id}`, { max: LIMITS.ticket, windowMs: 60 * 1000 })) {
+      req.session.notice = "Too many ticket purchases. Try again in a minute.";
       req.session.save(() => res.redirect(back));
       return;
     }
-    await addTickets(account.id, pack.size, pack.cost, account.formbar_id);
-    req.session.notice = `Added ${pack.size} tickets.`;
-    req.session.save(() => res.redirect(back));
+    if (!tryLockTicketPurchase(account.id)) {
+      req.session.notice = "A ticket purchase is already in progress.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    try {
+      const pack = ticketPack();
+      const purchaseId = await beginTicketPurchase({
+        accountId: account.id,
+        formbarId: account.formbar_id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+      });
+      if (!purchaseId) {
+        req.session.notice = "A ticket purchase is already pending and was not retried.";
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+      const transfer = await payPool(formbarSocket, {
+        userId: account.formbar_id,
+        poolId: POOL_ID,
+        amount: pack.cost,
+        pin: req.body && req.body.pin,
+        reason: `${pack.size} game tickets`,
+      });
+      if (transfer.ambiguous) {
+        req.session.notice = AMBIGUOUS_TRANSFER;
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+      if (!transfer.success) {
+        await failTicketPurchase(purchaseId);
+        req.session.notice = transfer.message || "Payment failed.";
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+      await completeTicketPurchase(purchaseId, account.id, pack.size);
+      req.session.notice = `Added ${pack.size} tickets.`;
+      req.session.save(() => res.redirect(back));
+    } finally {
+      unlockTicketPurchase(account.id);
+    }
   } catch (err) {
     next(err);
   }
@@ -1096,6 +1231,11 @@ app.post("/suggestions", async (req, res, next) => {
     const account = await pageViewer(req);
     if (!account) {
       res.redirect("/login");
+      return;
+    }
+    if (!rateLimit(`suggest:${account.id}`, { max: LIMITS.suggest, windowMs: LIMITS.suggestWindow })) {
+      req.session.notice = "Too many suggestions. Try again later.";
+      req.session.save(() => res.redirect(back));
       return;
     }
     const body = sanitizeUserText(req.body && req.body.body, {
@@ -1182,7 +1322,18 @@ app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    await archiveSuggestion(req.params.id);
+    if (!adminLimited(req)) {
+      req.session.notice = "Too many admin actions. Try again in a minute.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    const suggestionId = routeId(req.params.id);
+    if (!suggestionId) {
+      req.session.notice = "Suggestion not found.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    await archiveSuggestion(suggestionId);
     req.session.notice = "Suggestion archived.";
     req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
@@ -1196,9 +1347,17 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    const suggestion = await getSuggestion(req.params.id);
-    if (!suggestion || suggestion.archived_at || suggestion.rewarded_at) {
-      req.session.notice = "Suggestion not found.";
+    if (!adminLimited(req)) {
+      req.session.notice = "Too many admin actions. Try again in a minute.";
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
+    }
+    const suggestionId = routeId(req.params.id);
+    const suggestion = suggestionId ? await getSuggestion(suggestionId) : null;
+    if (!suggestion || suggestion.archived_at || suggestion.rewarded_at || suggestion.reward_status === "pending") {
+      req.session.notice = suggestion && suggestion.reward_status === "pending"
+        ? AMBIGUOUS_TRANSFER
+        : "Suggestion not found.";
       req.session.save(() => res.redirect("/admin/suggestions"));
       return;
     }
@@ -1214,23 +1373,23 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
       return;
     }
     const amount = wikiRewardAmount();
-    let transfer;
-    try {
-      transfer = await rewardFromPool(formbarSocket, {
-        userId: suggestion.formbar_id,
-        amount,
-        reason: "MOTL Suggestion Reward",
-      });
-    } catch (err) {
-      await reopenSuggestion(suggestion.id);
-      throw err;
+    const transfer = await rewardFromPool(formbarSocket, {
+      userId: suggestion.formbar_id,
+      amount,
+      reason: "MOTL Suggestion Reward",
+    });
+    if (transfer.ambiguous) {
+      req.session.notice = AMBIGUOUS_TRANSFER;
+      req.session.save(() => res.redirect("/admin/suggestions"));
+      return;
     }
     if (!transfer.success) {
-      await reopenSuggestion(suggestion.id);
+      await releaseSuggestionReward(suggestion.id);
       req.session.notice = transfer.message || "Reward transfer failed.";
       req.session.save(() => res.redirect("/admin/suggestions"));
       return;
     }
+    await completeSuggestionReward(suggestion.id);
     req.session.notice = `Archived and sent ${amount} digipogs to ${suggestion.name}.`;
     req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
@@ -1309,11 +1468,11 @@ app.get("/admin/wiki", async (req, res, next) => {
 
 app.post("/admin/wiki/:id/confirm", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
+    if (!isAdmin(req.session) || !adminLimited(req)) {
       res.redirect("/");
       return;
     }
-    const ok = await confirmWikiRevision(req.params.id);
+    const ok = await confirmWikiRevision(routeId(req.params.id));
     req.session.notice = ok ? "Revision confirmed." : "Revision not found.";
     req.session.save(() => res.redirect("/admin/wiki"));
   } catch (err) {
@@ -1323,11 +1482,11 @@ app.post("/admin/wiki/:id/confirm", async (req, res, next) => {
 
 app.post("/admin/wiki/:id/undo", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
+    if (!isAdmin(req.session) || !adminLimited(req)) {
       res.redirect("/");
       return;
     }
-    const result = await undoWikiRevision(req.params.id);
+    const result = await undoWikiRevision(routeId(req.params.id));
     if (!result.ok) {
       req.session.notice = result.error || "Could not undo.";
     } else if (result.deleted) {
@@ -1347,19 +1506,36 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
       res.redirect("/");
       return;
     }
-    const revision = await getWikiRevision(req.params.id);
+    if (!adminLimited(req)) {
+      req.session.notice = "Too many admin actions. Try again in a minute.";
+      req.session.save(() => res.redirect("/admin/wiki"));
+      return;
+    }
+    const revisionId = routeId(req.params.id);
+    const revision = revisionId ? await getWikiRevision(revisionId) : null;
     if (!revision || revision.undone_at) {
       req.session.notice = "Revision not found.";
       req.session.save(() => res.redirect("/admin/wiki"));
       return;
     }
-    if (revision.rewarded_at) {
+    if (revision.rewarded_at || revision.reward_status === "completed") {
       req.session.notice = "Already rewarded.";
+      req.session.save(() => res.redirect("/admin/wiki"));
+      return;
+    }
+    if (revision.reward_status === "pending") {
+      req.session.notice = AMBIGUOUS_TRANSFER;
       req.session.save(() => res.redirect("/admin/wiki"));
       return;
     }
     if (revision.formbar_id <= 0) {
       req.session.notice = "System revisions cannot be rewarded.";
+      req.session.save(() => res.redirect("/admin/wiki"));
+      return;
+    }
+    const claimed = await claimWikiReward(revision.id);
+    if (!claimed) {
+      req.session.notice = "Already rewarded.";
       req.session.save(() => res.redirect("/admin/wiki"));
       return;
     }
@@ -1369,12 +1545,18 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
       amount,
       reason: `MOTL Wiki Reward: ${revision.title}`,
     });
+    if (transfer.ambiguous) {
+      req.session.notice = AMBIGUOUS_TRANSFER;
+      req.session.save(() => res.redirect("/admin/wiki"));
+      return;
+    }
     if (!transfer.success) {
+      await releaseWikiReward(revision.id);
       req.session.notice = transfer.message || "Reward transfer failed.";
       req.session.save(() => res.redirect("/admin/wiki"));
       return;
     }
-    await setWikiRevisionRewarded(revision.id);
+    await completeWikiReward(revision.id);
     req.session.notice = `Sent ${amount} digipogs to ${revision.name}.`;
     req.session.save(() => res.redirect("/admin/wiki"));
   } catch (err) {
@@ -1385,7 +1567,24 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
 async function startPlay(req, res, next, intent) {
   try {
     const paid = intent.mode === "listed" || intent.mode === "ranked" || intent.mode === "join";
+    const playMax = intent.mode === "listed" ? LIMITS.lobby : LIMITS.play;
+    if (!rateLimit(`play:${clientIp(req)}`, { max: playMax, windowMs: 60 * 1000 })) {
+      req.session.notice = "Too many game requests. Try again in a minute.";
+      req.session.save(() => res.redirect("/games"));
+      return;
+    }
     const account = await resolveSessionAccount(req.session);
+    if (account && !rateLimit(`play-acct:${account.id}`, { max: playMax, windowMs: 60 * 1000 })) {
+      req.session.notice = "Too many game requests. Try again in a minute.";
+      req.session.save(() => res.redirect("/games"));
+      return;
+    }
+    const needsNewGuest = !paid && !account && !req.session.guestId && !req.session.userId;
+    if (needsNewGuest && !rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
+      req.session.notice = "Too many new players from this network. Try again later.";
+      req.session.save(() => res.redirect("/games"));
+      return;
+    }
     if (paid && !account) {
       res.redirect("/login");
       return;
@@ -1517,6 +1716,12 @@ app.post("/rules/:slug/edit", async (req, res, next) => {
       res.redirect("/login");
       return;
     }
+    if (!rateLimit(`wiki:${account.id}`, { max: LIMITS.wiki, windowMs: LIMITS.suggestWindow })) {
+      req.session.notice = "Too many wiki edits. Try again later.";
+      const slug = wikiSlug(req.params.slug);
+      req.session.save(() => res.redirect(`/rules/${slug}`));
+      return;
+    }
     const slug = wikiSlug(req.params.slug);
     if (!(await viewerCanEditWiki(req.session))) {
       req.session.notice = "Editing requires finishing a ranked game.";
@@ -1566,6 +1771,11 @@ app.post("/rules/:slug/delete", async (req, res, next) => {
       req.session.save(() => res.redirect(`/rules/${slug}/edit`));
       return;
     }
+    if (!adminLimited(req)) {
+      req.session.notice = "Too many admin actions. Try again in a minute.";
+      req.session.save(() => res.redirect(`/rules/${slug}/edit`));
+      return;
+    }
     const result = await deleteWikiPageBySlug(slug);
     if (!result.ok) {
       req.session.notice = result.error || "Could not delete page.";
@@ -1601,7 +1811,7 @@ app.get("/play", async (req, res, next) => {
       || (intent && intent.view === "3d")
       || (room && room.view3d);
     res.render(use3d ? "play3d" : "index", {
-      debugRanges: process.env.DEBUG_RANGES === "1",
+      debugRanges: debugRangesEnabled(),
       tooltipsDefault: player.tooltips !== false,
       bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 50,
     });
@@ -1610,10 +1820,22 @@ app.get("/play", async (req, res, next) => {
   }
 });
 
+app.use("/api/v1", (req, res, next) => {
+  if (req.query && (req.query.token || req.query.access_token || req.query.session)) {
+    res.status(400).json({ error: "bad_request" });
+    return;
+  }
+  next();
+});
 app.use("/api/v1", express.json({ limit: "32kb" }));
 
 app.get("/api/v1/metrics", (req, res) => {
   if (process.env.METRICS !== "1") {
+    res.status(404).end();
+    return;
+  }
+  const tokenOk = bearerMatches(req.headers.authorization, process.env.METRICS_TOKEN || "");
+  if (!tokenOk && !isAdmin(req.session)) {
     res.status(404).end();
     return;
   }
@@ -1635,6 +1857,10 @@ app.get("/api/v1/metrics", (req, res) => {
 
 app.post("/api/v1/session", async (req, res, next) => {
   try {
+    if (!rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
     const name = req.body && req.body.name;
     await ensureGuest(req.session, { name });
     await saveSession(req.session);
@@ -1679,6 +1905,20 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
       res.status(400).json({ error: "bad_mode" });
       return;
     }
+    if (!rateLimit(`play:${clientIp(req)}`, { max: LIMITS.play, windowMs: 60 * 1000 })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
+    const accountId = req.session && req.session.accountId;
+    if (accountId && !rateLimit(`play-acct:${accountId}`, { max: LIMITS.play, windowMs: 60 * 1000 })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
+    const needsNewGuest = !req.session.accountId && !req.session.guestId && !req.session.userId;
+    if (needsNewGuest && !rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
     const player = await playerFromSession(req.session, { createGuest: true });
     if (!player) {
       res.status(401).json({ error: "unauthorized" });
@@ -1714,6 +1954,49 @@ app.use((err, req, res, next) => {
     return;
   }
   res.status(500).send("Something went wrong");
+});
+
+const socketsByUser = new Map();
+
+function capUserSockets(socket) {
+  const user = socket.data.user;
+  if (!user || !user.id) return;
+  const max = positiveEnv(process.env, "MAX_SOCKETS_PER_USER", 4);
+  let list = socketsByUser.get(user.id);
+  if (!list) {
+    list = [];
+    socketsByUser.set(user.id, list);
+  }
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (!list[i].connected) list.splice(i, 1);
+  }
+  list.push(socket);
+  while (list.length > max) {
+    const old = list.shift();
+    if (old && old !== socket && old.connected) old.disconnect(true);
+  }
+  socket.on("disconnect", () => {
+    const current = socketsByUser.get(user.id);
+    if (!current) return;
+    const idx = current.indexOf(socket);
+    if (idx >= 0) current.splice(idx, 1);
+    if (!current.length) socketsByUser.delete(user.id);
+  });
+}
+
+io.use((socket, next) => {
+  const origin = socket.handshake.headers && socket.handshake.headers.origin;
+  const token = socket.handshake.auth && socket.handshake.auth.token;
+  const hasAuthToken = typeof token === "string" && Boolean(token.trim());
+  if (!originAllowed(origin, {
+    thisUrl: THIS_URL,
+    nodeEnv: process.env.NODE_ENV,
+    hasAuthToken,
+  })) {
+    next(new Error("origin not allowed"));
+    return;
+  }
+  next();
 });
 
 io.use((socket, next) => {
@@ -1752,10 +2035,12 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   matchmaker.connect(socket);
+  capUserSockets(socket);
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
   socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
   socket.on("debugPlay", (payload) => matchmaker.debugPlay(socket, payload));
   socket.on("tooltips", (on) => {
+    if (!allowSocketEvent(socket, "tooltips")) return;
     const enabled = Boolean(on);
     if (socket.data.user) socket.data.user.tooltips = enabled;
     scheduleSettingWrite(socket, "tooltips", enabled, (value) => {
@@ -1763,6 +2048,7 @@ io.on("connection", (socket) => {
     });
   });
   socket.on("bgmVolume", (percent) => {
+    if (!allowSocketEvent(socket, "bgmVolume")) return;
     if (!Number.isFinite(Number(percent))) return;
     const value = clampBgmVolumePercent(percent);
     if (socket.data.user) socket.data.user.bgmVolume = value;
@@ -1794,9 +2080,12 @@ const entryPaths = [process.argv[1], process.env.pm_id != null ? process.env.pm_
   .map((p) => path.resolve(p));
 const isMain = entryPaths.some((entry) => entry === thisFile);
 if (isMain) {
+  if (process.env.NODE_ENV === "production" && process.env.DEBUG_RANGES === "1") {
+    console.warn("DEBUG_RANGES is set but ignored in production.");
+  }
   await listen(PORT);
   console.log(`Men Of The Line listening on ${THIS_URL}`);
-  if (process.env.DEBUG_RANGES === "1") {
+  if (debugRangesEnabled()) {
     console.log("Debug ranges: forward weapon range, collision boxes, restore, fort, and keep bands");
   }
 }

@@ -30,24 +30,30 @@
           <% } %>
           <div class="play-split play-thirds">
             <form method="post" action="/play/bot">
+<%- include("csrf-field") %>
               <button type="submit" <%= rejoin ? "disabled" : "" %>>Play vs bot</button>
             </form>
             <form method="post" action="/play/train/bot">
+<%- include("csrf-field") %>
               <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs bot</button>
             </form>
             <form method="post" action="/play/bot">
+<%- include("csrf-field") %>
               <input type="hidden" name="view" value="3d">
               <button type="submit" <%= rejoin ? "disabled" : "" %> title="Play vs bot in 3D" aria-label="Play vs bot in 3D">3D</button>
             </form>
           </div>
           <div class="play-split play-thirds">
             <form method="post" action="/play/casual">
+<%- include("csrf-field") %>
               <button type="submit" <%= rejoin ? "disabled" : "" %>>Random unranked</button>
             </form>
             <form method="post" action="/play/train/casual">
+<%- include("csrf-field") %>
               <button type="submit" <%= rejoin ? "disabled" : "" %>>Train vs random</button>
             </form>
             <form method="post" action="/play/casual">
+<%- include("csrf-field") %>
               <input type="hidden" name="view" value="3d">
               <button type="submit" <%= rejoin ? "disabled" : "" %> title="Random unranked in 3D" aria-label="Random unranked in 3D">3D</button>
             </form>
@@ -55,9 +61,11 @@
           <% if (viewer) { %>
             <div class="play-split">
               <form method="post" action="/play/ranked">
+<%- include("csrf-field") %>
                 <button type="submit" <%= canTicket ? "" : "disabled" %>>Find ranked match</button>
               </form>
               <form method="post" action="/play/ranked">
+<%- include("csrf-field") %>
                 <input type="hidden" name="view" value="3d">
                 <button type="submit" <%= canTicket ? "" : "disabled" %> title="Find ranked match in 3D" aria-label="Find ranked match in 3D">3D</button>
               </form>
@@ -106,9 +114,11 @@
             <% } else { %>
               <div class="play-split">
                 <form method="post" action="/play/join/<%= lobby.id %>">
+                  <%- include("csrf-field") %>
                   <button type="submit">Join</button>
                 </form>
                 <form method="post" action="/play/join/<%= lobby.id %>">
+                  <%- include("csrf-field") %>
                   <input type="hidden" name="view" value="3d">
                   <button type="submit" title="Join in 3D" aria-label="Join in 3D">3D</button>
                 </form>

@@ -21,6 +21,7 @@
         <p class="hint">Markdown supported. Line breaks and tabs count. Link pages with [[Page Title]]. Up to <%= maxOpenWikiRevisions %> unapproved edits at a time.</p>
       </div>
       <form method="post" action="/rules/<%= slug %>/edit" class="wiki-edit">
+        <%- include("csrf-field") %>
         <label for="wiki-title">Title</label>
         <% if (exists) { %>
           <input id="wiki-title" type="text" value="<%= title %>" disabled>
@@ -38,6 +39,7 @@
       <% if (exists && isAdmin && slug !== "home") { %>
         <form method="post" action="/rules/<%= slug %>/delete" class="wiki-delete"
               onsubmit="return confirm('Delete this page permanently?');">
+          <%- include("csrf-field") %>
           <button type="submit">Delete page</button>
         </form>
       <% } %>

@@ -1,4 +1,5 @@
 <form class="buy<%= typeof buyLayout !== "undefined" && buyLayout === "row" ? " buy--row" : "" %>" method="post" action="/tickets">
+  <%- include("csrf-field") %>
   <input type="hidden" name="next" value="<%= nextPath %>">
   <label for="pin">Digipog PIN</label>
   <div class="buy-fields">

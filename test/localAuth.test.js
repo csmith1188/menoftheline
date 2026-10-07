@@ -4,12 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-
-function fakeJwt(payload) {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${header}.${body}.x`;
-}
+import { publicKeyB64, signFormbar, unsignedFormbar } from "./formbarToken.js";
 
 function startServer(env) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "motl-auth-"));
@@ -31,6 +26,8 @@ function startServer(env) {
       SMTP_FROM: "motl@example.com",
       AUTH_MAIL_CAPTURE_PATH: mailPath,
       SESSION_SECRET: "test-auth-secret",
+      NODE_ENV: "test",
+      FORMBAR_PUBLIC_KEY_B64: publicKeyB64,
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -70,12 +67,15 @@ async function stopServer(server) {
 function cookieJar() {
   let cookie = "";
   return {
+    csrf: "",
     store(res) {
       const raw = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-      const list = raw.length ? raw : [];
-      for (const line of list) {
+      for (const line of raw) {
         const part = String(line).split(";")[0];
-        if (part.startsWith("lane.sid=")) cookie = part;
+        if (part.startsWith("lane.sid=") && part !== cookie) {
+          cookie = part;
+          this.csrf = "";
+        }
       }
     },
     header() {
@@ -84,9 +84,28 @@ function cookieJar() {
   };
 }
 
+async function primeCsrf(base, jar) {
+  let res = await fetch(`${base}/login`, { headers: jar.header(), redirect: "manual" });
+  jar.store(res);
+  if (res.status >= 300 && res.status < 400) {
+    res = await fetch(`${base}/`, { headers: jar.header(), redirect: "manual" });
+    jar.store(res);
+  }
+  const html = await res.text();
+  const match = html.match(/name="_csrf" value="([^"]+)"/);
+  if (match) jar.csrf = match[1];
+}
+
 async function fetchSession(base, url, jar, init = {}) {
+  const method = String(init.method || "GET").toUpperCase();
+  if (method === "POST") await primeCsrf(base, jar);
+  let body = init.body;
+  if (body instanceof URLSearchParams && jar.csrf && !body.has("_csrf")) {
+    body.set("_csrf", jar.csrf);
+  }
   const res = await fetch(`${base}${url}`, {
     ...init,
+    body,
     headers: {
       ...(init.headers || {}),
       ...jar.header(),
@@ -94,6 +113,12 @@ async function fetchSession(base, url, jar, init = {}) {
     redirect: "manual",
   });
   jar.store(res);
+  const type = res.headers.get("content-type") || "";
+  if (type.includes("text/html")) {
+    const html = await res.clone().text();
+    const match = html.match(/name="_csrf" value="([^"]+)"/);
+    if (match) jar.csrf = match[1];
+  }
   return res;
 }
 
@@ -267,9 +292,15 @@ test("Formbar login sets account session; Digipog buy needs formbar; paid play u
   await server.ready;
 
   const formJar = cookieJar();
-  const token = fakeJwt({ id: 424242, displayName: "Formbar Ace" });
+  const token = signFormbar({ id: 424242, displayName: "Formbar Ace" }, undefined, { expiresIn: "1h" });
   const oauth = await fetchSession(server.base, `/login?token=${encodeURIComponent(token)}`, formJar);
   assert.equal(oauth.status, 302);
+  const unsigned = await fetchSession(
+    server.base,
+    `/login?token=${encodeURIComponent(unsignedFormbar({ id: 1, displayName: "Nope" }))}`,
+    cookieJar(),
+  );
+  assert.equal(unsigned.status, 400);
   const formHome = await fetchSession(server.base, "/", formJar);
   assert.match(await formHome.text(), /Formbar Ace/);
 
@@ -321,7 +352,7 @@ test("profile can add local credentials onto a Formbar account", async (t) => {
   t.after(() => stopServer(server));
   await server.ready;
   const jar = cookieJar();
-  const token = fakeJwt({ id: 515151, displayName: "Link Me" });
+  const token = signFormbar({ id: 515151, displayName: "Link Me" }, undefined, { expiresIn: "1h" });
   await fetchSession(server.base, `/login?token=${encodeURIComponent(token)}`, jar);
   const home = await fetchSession(server.base, "/", jar);
   const html = await home.text();

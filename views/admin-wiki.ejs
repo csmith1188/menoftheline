@@ -29,18 +29,22 @@
                 <span class="hint"><%= new Date(item.created_at).toLocaleString() %></span>
                 <% if (item.isCreate) { %><span class="hint">New page</span><% } %>
                 <% if (item.rewarded_at) { %><span class="hint">Rewarded</span><% } %>
+                <% if (item.reward_status === "pending") { %><span class="hint">Reward pending</span><% } %>
               </div>
               <pre class="wiki-diff" aria-label="Diff"><% item.diff.forEach(function (line) { %><span class="wiki-diff-<%= line.type %>"><%= line.type === "add" ? "+" : line.type === "del" ? "-" : " " %><%= line.text %>
 </span><% }) %></pre>
               <div class="wiki-admin-actions">
                 <form method="post" action="/admin/wiki/<%= item.id %>/confirm">
+                  <%- include("csrf-field") %>
                   <button type="submit">Confirm</button>
                 </form>
                 <form method="post" action="/admin/wiki/<%= item.id %>/undo">
+                  <%- include("csrf-field") %>
                   <button type="submit">Undo</button>
                 </form>
-                <% if (!item.rewarded_at && item.formbar_id > 0) { %>
+                <% if (!item.rewarded_at && item.reward_status !== "pending" && item.formbar_id > 0) { %>
                   <form method="post" action="/admin/wiki/<%= item.id %>/reward">
+                    <%- include("csrf-field") %>
                     <button type="submit">Reward <%= rewardAmount %> digipogs</button>
                   </form>
                 <% } %>

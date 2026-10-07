@@ -41,11 +41,13 @@
           </ul>
           <% if (canLinkFormbar) { %>
             <form method="post" action="/profile/link/formbar">
+<%- include("csrf-field") %>
               <button type="submit" class="action">Link Formbar account</button>
             </form>
           <% } %>
           <% if (canAddLocal) { %>
             <form method="post" action="/profile/link/local">
+<%- include("csrf-field") %>
               <label for="link-email">Email</label>
               <input id="link-email" name="email" type="email" autocomplete="email" required>
               <label for="link-password">Password</label>

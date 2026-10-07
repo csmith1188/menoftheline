@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { CONFIG } from "../shared/config.js";
-import { allowCommand } from "./commandLimit.js";
+import { allowCommand, allowSocketEvent, sanitizeCommand } from "./commandLimit.js";
+import { debugRangesEnabled } from "./hardening.js";
 import {
   metricsEnabled,
   noteBroadcast,
@@ -85,7 +86,7 @@ export class GameRoom {
     this.speedAccum = 0;
     this.matchOptions = null;
     /** Debug-server bot matches: range overlays + play controls. */
-    this.debugMode = process.env.DEBUG_RANGES === "1";
+    this.debugMode = debugRangesEnabled();
     /** Which sim side human commands apply to (debug bot games only). */
     this.controlSide = "player";
     /** When false, seated bots do not act (debug bot games default off). */
@@ -237,6 +238,7 @@ export class GameRoom {
 
   /** Mid-match training controls. Bot games only. */
   botSettings(socket, payload) {
+    if (!allowSocketEvent(socket, "botSettings")) return;
     if (this.mode !== "bot") return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
@@ -295,7 +297,9 @@ export class GameRoom {
 
   /** Toggle controlled side / bot AI. Debug bot games only. */
   debugPlay(socket, payload) {
-    if (this.mode !== "bot" || !this.debugMode) return;
+    if (!debugRangesEnabled() || !this.debugMode) return;
+    if (!allowSocketEvent(socket, "debugPlay")) return;
+    if (this.mode !== "bot") return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
@@ -452,11 +456,12 @@ export class GameRoom {
     if (this.status !== "playing" || this.sim.winner) return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
-    if (!allowCommand(socket, cmd)) {
+    const clean = sanitizeCommand(cmd);
+    if (!clean || !allowCommand(socket, clean)) {
       noteCommand(false);
       return;
     }
-    if (this.mode === "training" && cmd.type === "buy" && cmd.lane !== "bottom") {
+    if (this.mode === "training" && clean.type === "buy" && clean.lane !== "bottom") {
       noteCommand(false);
       return;
     }
@@ -464,7 +469,7 @@ export class GameRoom {
       noteCommand(false);
       return;
     }
-    seat.queue.push(cmd);
+    seat.queue.push(clean);
     noteCommand(true);
   }
 

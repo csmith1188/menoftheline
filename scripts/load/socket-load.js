@@ -193,8 +193,13 @@ async function main() {
         ...process.env,
         PORT: String(port),
         THIS_URL: `http://127.0.0.1:${port}`,
+        NODE_ENV: process.env.NODE_ENV || "development",
         METRICS: "1",
         METRICS_LOG: "1",
+        METRICS_TOKEN: process.env.METRICS_TOKEN || "load-metrics-token",
+        RATE_GUEST_MAX: process.env.RATE_GUEST_MAX || "5000",
+        RATE_GUEST_WINDOW_MS: process.env.RATE_GUEST_WINDOW_MS || "600000",
+        RATE_PLAY_MAX: process.env.RATE_PLAY_MAX || "5000",
         LOAD_TEST: "1",
         LOAD_TEST_GOLD: process.env.LOAD_TEST_GOLD || "20000",
         DATA_DIR: dataDir,
@@ -243,7 +248,9 @@ async function main() {
     if (serverDied) break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
     try {
-      const res = await fetch(`${base}/api/v1/metrics`);
+      const res = await fetch(`${base}/api/v1/metrics`, {
+        headers: { authorization: `Bearer ${process.env.METRICS_TOKEN || "load-metrics-token"}` },
+      });
       if (res.ok) series.push(await res.json());
     } catch (err) {
       console.error(err.message);
@@ -255,7 +262,9 @@ async function main() {
   }
   await new Promise((resolve) => setTimeout(resolve, 500));
   try {
-    const res = await fetch(`${base}/api/v1/metrics`);
+    const res = await fetch(`${base}/api/v1/metrics`, {
+      headers: { authorization: `Bearer ${process.env.METRICS_TOKEN || "load-metrics-token"}` },
+    });
     if (res.ok) series.push({ ...(await res.json()), phase: "after-concede" });
   } catch {
     // Server may already be stopping.

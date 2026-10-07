@@ -19,6 +19,7 @@
       <p class="hint">Set the rules, then start the lobby and wait for an opponent.</p>
 
       <form class="lobby-create" method="post" action="/play/lobby" id="lobby-create-form">
+<%- include("csrf-field") %>
         <div class="lobby-create-grid">
           <div class="lobby-create-fields">
             <label for="speed">Game speed</label>

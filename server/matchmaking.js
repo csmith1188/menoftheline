@@ -1,4 +1,5 @@
 import { clearOwner, ensureHold, holdTicket, ownerForUser, refundTicket, releaseHold } from "./db.js";
+import { allowSocketEvent } from "./commandLimit.js";
 import { workerCount, workerIndex } from "./owners.js";
 import { pickRankedPair } from "./rating.js";
 import { GameRoom, TICK_MS } from "./room.js";
@@ -34,8 +35,10 @@ export class Matchmaker {
     this.ticker = new MatchTicker(TICK_MS);
     this.maxSpread = numberEnv("MMR_MAX_SPREAD", 200);
     this.waitMs = numberEnv("MATCH_WAIT_MS", 60000);
+    this.queueMaxAgeMs = numberEnv("QUEUE_MAX_AGE_MS", 10 * 60 * 1000);
     this.pairing = false;
     this.timer = setInterval(() => {
+      this.expireQueues().catch((err) => console.error(err));
       this.pairRanked().catch((err) => console.error(err));
     }, 1000);
     if (this.timer.unref) this.timer.unref();
@@ -450,6 +453,27 @@ export class Matchmaker {
     }
   }
 
+  /** Drop searches and empty listed lobbies that have waited past QUEUE_MAX_AGE_MS. */
+  async expireQueues(now = Date.now()) {
+    const maxAge = this.queueMaxAgeMs;
+    const lists = [this.casual, this.training, this.ranked];
+    for (let i = 0; i < lists.length; i += 1) {
+      const stale = lists[i].filter((entry) => now - entry.joinedAt >= maxAge);
+      for (let s = 0; s < stale.length; s += 1) {
+        const entry = stale[s];
+        await this.removeQueued(entry);
+        if (entry.socket) this.failHome(entry.socket, "Search timed out.");
+      }
+    }
+    const rooms = [...this.rooms.values()];
+    for (let i = 0; i < rooms.length; i += 1) {
+      const room = rooms[i];
+      if (room.mode !== "listed" || room.status !== "waiting" || room.closing) continue;
+      if (now - room.createdAt < maxAge) continue;
+      await this.abandonSeat(room, room.seat.a, { goHome: true });
+    }
+  }
+
   async removeQueued(entry) {
     this.casual = this.casual.filter((item) => item !== entry);
     this.training = this.training.filter((item) => item !== entry);
@@ -460,6 +484,7 @@ export class Matchmaker {
   }
 
   leave(socket) {
+    if (!allowSocketEvent(socket, "leave")) return;
     socket.data.left = true;
     const user = socket.data.user;
     const room = (socket.data.gameId && this.rooms.get(socket.data.gameId))
@@ -495,6 +520,7 @@ export class Matchmaker {
   }
 
   concede(socket) {
+    if (!allowSocketEvent(socket, "concede")) return;
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.concede(socket);
   }

@@ -17,6 +17,7 @@
     <section>
       <h2>Create account</h2>
       <form method="post" action="/signup">
+<%- include("csrf-field") %>
         <label for="name">Display name</label>
         <input id="name" name="name" type="text" autocomplete="nickname" minlength="2" maxlength="32" pattern="[A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ '\-_]*" title="Letters, numbers, spaces, hyphens, apostrophes, underscores" value="<%= name || "" %>">
         <label for="email">Email</label>

@@ -28,7 +28,10 @@ server/
   room.js              GameRoom: seats, command queue → sim, emit "state"
   ticker.js            One 50ms loop for every playing room; snapshots at STATE_MS
   metrics.js           METRICS=1 counters (tick, snapshot, event loop, sqlite)
-  commandLimit.js      Per-socket command token bucket
+  commandLimit.js      Per-socket command token bucket and socket event limits
+  csrf.js              Session CSRF tokens for browser POST forms
+  hardening.js         Session secret, cookie, origin, and security headers
+  formbarAuth.js       Formbar RS256 JWT verification via AUTH_URL/certs
   settingsWrite.js     Debounced tooltip / BGM preference writes
   sim.js               GameSim + Unit classes + combat/economy rules (large)
   matchmaking.js       Queues, ranked/listed/bot/training rooms, userId indexes
@@ -44,7 +47,7 @@ server/
   news.js              Landing news from data/news.json
   wiki-render.js       Markdown → HTML for wiki
   wiki-diff.js         Revision diffs
-  formbar.js           External auth/pay socket
+  formbar.js           Digipog transfers; one outstanding socket transfer at a time
   load-env.js          dotenv load (imported first by server.js)
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
@@ -89,6 +92,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
 | Local signup / verify / reset / Formbar login flags | `server/auth.js`, `server/mail.js` | `server/db.js` accounts, `server.js` routes, `views/login.ejs` / signup / forgot / reset |
+| Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `server.js`, `test/security.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |

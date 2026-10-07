@@ -1,19 +1,6 @@
 import { marked } from "marked";
 import { wikiSlug } from "./db.js";
 
-const renderer = {
-  html({ text }) {
-    // Disallow raw HTML from page authors.
-    return escapeHtml(text);
-  },
-};
-
-marked.use({
-  gfm: true,
-  breaks: true,
-  renderer,
-});
-
 function escapeHtml(text) {
   return String(text || "")
     .replace(/&/g, "&amp;")
@@ -26,12 +13,52 @@ function escapeMarkdownLabel(text) {
   return String(text || "").replace(/([\\\[\]*_`])/g, "\\$1");
 }
 
+/** http(s) and single-slash site paths. Blocks javascript:, data:, and protocol-relative URLs. */
+export function safeWikiUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value || /[\u0000-\u001F\s]/.test(value)) return "";
+  if (value.startsWith("//") || value.startsWith("/\\")) return "";
+  if (value.startsWith("/") && !value.startsWith("//")) return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+const renderer = {
+  html({ text }) {
+    return escapeHtml(text);
+  },
+  link({ href, text }) {
+    const safe = safeWikiUrl(href);
+    const label = escapeHtml(text);
+    if (!safe) return label;
+    const external = /^https?:/i.test(safe);
+    const rel = external ? ' rel="noopener noreferrer"' : "";
+    return `<a href="${escapeHtml(safe)}"${rel}>${label}</a>`;
+  },
+  image({ href, text }) {
+    const safe = safeWikiUrl(href);
+    const alt = escapeHtml(text);
+    if (!safe) return alt;
+    return `<img src="${escapeHtml(safe)}" alt="${alt}">`;
+  },
+};
+
+marked.use({
+  gfm: true,
+  breaks: true,
+  renderer,
+});
+
 /** Markdown + line breaks + tabs; [[Page Title]] wiki links. */
 export function renderWikiBody(body, { existingSlugs = new Set() } = {}) {
   const raw = String(body || "");
   if (!raw) return "";
 
-  // Tabs → 4 spaces so nested lists and alignment work in markdown.
   const withTabs = raw.replace(/\t/g, "    ");
 
   const withWiki = withTabs.replace(/\[\[([^\[\]]+)\]\]/g, (_, title) => {

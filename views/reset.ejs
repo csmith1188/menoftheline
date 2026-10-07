@@ -17,6 +17,7 @@
     <section>
       <h2>Choose a new password</h2>
       <form method="post" action="/reset">
+<%- include("csrf-field") %>
         <input type="hidden" name="token" value="<%= token %>">
         <label for="password">New password</label>
         <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" required>

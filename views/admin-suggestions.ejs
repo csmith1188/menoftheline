@@ -35,10 +35,12 @@
               <% } %>
               <div class="wiki-admin-actions">
                 <form method="post" action="/admin/suggestions/<%= item.id %>/archive">
+                  <%- include("csrf-field") %>
                   <button type="submit">Archive</button>
                 </form>
                 <% if (item.formbar_id > 0) { %>
                   <form method="post" action="/admin/suggestions/<%= item.id %>/archive-reward">
+                    <%- include("csrf-field") %>
                     <button type="submit">Archive and Reward</button>
                   </form>
                 <% } %>

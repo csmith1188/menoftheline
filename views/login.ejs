@@ -21,6 +21,7 @@
       <% } else { %>
         <% if (localAccountsEnabled) { %>
           <form method="post" action="/login">
+<%- include("csrf-field") %>
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" required value="<%= email || "" %>">
             <label for="password">Password</label>
@@ -35,6 +36,7 @@
           </p>
           <% if (authEmailEnabled) { %>
             <form method="post" action="/verify/resend" class="auth-secondary">
+<%- include("csrf-field") %>
               <label for="resend-email">Resend verification</label>
               <input id="resend-email" name="email" type="email" autocomplete="email" required value="<%= email || "" %>">
               <button type="submit">Resend</button>

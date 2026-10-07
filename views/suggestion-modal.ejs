@@ -4,6 +4,7 @@
       <h2 id="suggest-title">Suggestion</h2>
       <p class="hint">One unanswered suggestion is free; each extra costs 1 ticket. Up to <%= maxOpenBugs %> open bug reports.</p>
       <form method="post" action="/suggestions" id="suggest-form">
+<%- include("csrf-field") %>
         <input type="hidden" name="next" value="<%= typeof nextPath !== 'undefined' ? nextPath : '/' %>">
         <label for="suggest-body">Message</label>
         <textarea id="suggest-body" name="body" rows="5" maxlength="<%= suggestionBodyMax %>" required></textarea>

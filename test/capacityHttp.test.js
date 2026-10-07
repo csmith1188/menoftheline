@@ -27,7 +27,13 @@ test("metrics route is absent until METRICS=1, and static assets cache", async (
   assert.equal(hidden.status, 404);
 
   process.env.METRICS = "1";
-  const shown = await fetch(`${base}/api/v1/metrics`);
+  const stillHidden = await fetch(`${base}/api/v1/metrics`);
+  assert.equal(stillHidden.status, 404);
+
+  process.env.METRICS_TOKEN = "metrics-test-token";
+  const shown = await fetch(`${base}/api/v1/metrics`, {
+    headers: { authorization: "Bearer metrics-test-token" },
+  });
   assert.equal(shown.status, 200);
   const body = await shown.json();
   assert.equal(body.enabled, true);

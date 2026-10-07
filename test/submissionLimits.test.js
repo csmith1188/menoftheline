@@ -22,6 +22,7 @@ function startServer(env = {}) {
       FORMBAR_LOGIN: "0",
       AUTH_EMAIL: "0",
       SESSION_SECRET: "test-limits-secret",
+      NODE_ENV: "test",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -55,11 +56,15 @@ async function stopServer(server) {
 function cookieJar() {
   let cookie = "";
   return {
+    csrf: "",
     store(res) {
       const raw = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
       for (const line of raw) {
         const part = String(line).split(";")[0];
-        if (part.startsWith("lane.sid=")) cookie = part;
+        if (part.startsWith("lane.sid=") && part !== cookie) {
+          cookie = part;
+          this.csrf = "";
+        }
       }
     },
     header() {
@@ -68,9 +73,28 @@ function cookieJar() {
   };
 }
 
+async function primeCsrf(base, jar) {
+  let res = await fetch(`${base}/login`, { headers: jar.header(), redirect: "manual" });
+  jar.store(res);
+  if (res.status >= 300 && res.status < 400) {
+    res = await fetch(`${base}/`, { headers: jar.header(), redirect: "manual" });
+    jar.store(res);
+  }
+  const html = await res.text();
+  const match = html.match(/name="_csrf" value="([^"]+)"/);
+  if (match) jar.csrf = match[1];
+}
+
 async function fetchSession(base, url, jar, init = {}) {
+  const method = String(init.method || "GET").toUpperCase();
+  if (method === "POST") await primeCsrf(base, jar);
+  let body = init.body;
+  if (body instanceof URLSearchParams && jar.csrf && !body.has("_csrf")) {
+    body.set("_csrf", jar.csrf);
+  }
   const res = await fetch(`${base}${url}`, {
     ...init,
+    body,
     headers: {
       ...(init.headers || {}),
       ...jar.header(),
@@ -78,6 +102,12 @@ async function fetchSession(base, url, jar, init = {}) {
     redirect: "manual",
   });
   jar.store(res);
+  const type = res.headers.get("content-type") || "";
+  if (type.includes("text/html")) {
+    const html = await res.clone().text();
+    const match = html.match(/name="_csrf" value="([^"]+)"/);
+    if (match) jar.csrf = match[1];
+  }
   return res;
 }
 

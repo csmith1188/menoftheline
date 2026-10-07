@@ -145,11 +145,21 @@ export async function initDb() {
   await run(`CREATE TABLE IF NOT EXISTS ticket_purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     formbar_id INTEGER NOT NULL,
+    account_id INTEGER,
     digipogs INTEGER NOT NULL,
     tickets INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'completed'
   )`);
+  const purchaseCols = await all("PRAGMA table_info(ticket_purchases)");
+  if (!purchaseCols.some((col) => col.name === "account_id")) {
+    await run("ALTER TABLE ticket_purchases ADD COLUMN account_id INTEGER");
+  }
+  if (!purchaseCols.some((col) => col.name === "status")) {
+    await run("ALTER TABLE ticket_purchases ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'");
+  }
   await run("CREATE INDEX IF NOT EXISTS ticket_purchases_formbar ON ticket_purchases (formbar_id)");
+  await run("CREATE INDEX IF NOT EXISTS ticket_purchases_pending ON ticket_purchases (account_id, status)");
   await run(`CREATE TABLE IF NOT EXISTS match_assignments (
     user_id TEXT PRIMARY KEY,
     worker INTEGER NOT NULL,
@@ -168,7 +178,8 @@ export async function initDb() {
     repro TEXT,
     created_at INTEGER NOT NULL,
     archived_at INTEGER,
-    rewarded_at INTEGER
+    rewarded_at INTEGER,
+    reward_status TEXT
   )`);
   const suggestionCols = await all("PRAGMA table_info(suggestions)");
   if (!suggestionCols.some((col) => col.name === "rewarded_at")) {
@@ -177,6 +188,13 @@ export async function initDb() {
   if (!suggestionCols.some((col) => col.name === "account_id")) {
     await run("ALTER TABLE suggestions ADD COLUMN account_id INTEGER");
   }
+  if (!suggestionCols.some((col) => col.name === "reward_status")) {
+    await run("ALTER TABLE suggestions ADD COLUMN reward_status TEXT");
+  }
+  await run(
+    `UPDATE suggestions SET reward_status = 'completed'
+     WHERE rewarded_at IS NOT NULL AND (reward_status IS NULL OR reward_status = '')`,
+  );
   await run("CREATE INDEX IF NOT EXISTS suggestions_open_account ON suggestions (account_id, archived_at, is_bug)");
   await run(`CREATE TABLE IF NOT EXISTS wiki_pages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,12 +214,20 @@ export async function initDb() {
     created_at INTEGER NOT NULL,
     confirmed_at INTEGER,
     undone_at INTEGER,
-    rewarded_at INTEGER
+    rewarded_at INTEGER,
+    reward_status TEXT
   )`);
   const wikiRevCols = await all("PRAGMA table_info(wiki_revisions)");
   if (!wikiRevCols.some((col) => col.name === "account_id")) {
     await run("ALTER TABLE wiki_revisions ADD COLUMN account_id INTEGER");
   }
+  if (!wikiRevCols.some((col) => col.name === "reward_status")) {
+    await run("ALTER TABLE wiki_revisions ADD COLUMN reward_status TEXT");
+  }
+  await run(
+    `UPDATE wiki_revisions SET reward_status = 'completed'
+     WHERE rewarded_at IS NOT NULL AND (reward_status IS NULL OR reward_status = '')`,
+  );
   await run("CREATE INDEX IF NOT EXISTS wiki_revisions_open_account ON wiki_revisions (account_id, confirmed_at, undone_at)");
   await run("UPDATE accounts SET held = 0");
   const userCols = await all("PRAGMA table_info(users)");
@@ -681,21 +707,124 @@ export async function spendFreeTicket(accountId) {
   return result.changes > 0;
 }
 
-/** Credit tickets after Digipog payment; records purchase against Formbar id. */
+const ticketPurchaseLocks = new Set();
+
+/** One in-flight purchase per account, in addition to the pending database row. */
+export function tryLockTicketPurchase(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  if (ticketPurchaseLocks.has(id)) return false;
+  ticketPurchaseLocks.add(id);
+  return true;
+}
+
+export function unlockTicketPurchase(accountId) {
+  ticketPurchaseLocks.delete(Number(accountId));
+}
+
+/**
+ * Insert a pending purchase. Returns null when this account already has one.
+ * A pending row is not retried: Formbar has no idempotency id, so an unknown
+ * outcome must stay pending instead of charging again.
+ */
+export async function beginTicketPurchase({ accountId, formbarId, tickets, digipogs }) {
+  const id = Number(accountId);
+  const fid = Number(formbarId);
+  const count = Number(tickets);
+  const cost = Number(digipogs);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  if (!Number.isInteger(fid) || fid <= 0) return null;
+  if (!Number.isInteger(count) || count <= 0) return null;
+  if (!Number.isFinite(cost) || cost <= 0) return null;
+  const pending = await get(
+    "SELECT id FROM ticket_purchases WHERE account_id = ? AND status = 'pending'",
+    [id],
+  );
+  if (pending) return null;
+  const result = await run(
+    `INSERT INTO ticket_purchases (formbar_id, account_id, digipogs, tickets, created_at, status)
+     VALUES (?, ?, ?, ?, ?, 'pending')`,
+    [fid, id, cost, count, Date.now()],
+  );
+  return result.lastID;
+}
+
+export async function failTicketPurchase(purchaseId) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const result = await run(
+    "UPDATE ticket_purchases SET status = 'failed' WHERE id = ? AND status = 'pending'",
+    [id],
+  );
+  return result.changes > 0;
+}
+
+/** Credit tickets and mark the pending purchase completed in one transaction. */
+export async function completeTicketPurchase(purchaseId, accountId, tickets) {
+  const id = Number(purchaseId);
+  const account = Number(accountId);
+  const count = Number(tickets);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  if (!Number.isInteger(account) || account <= 0) return false;
+  if (!Number.isInteger(count) || count <= 0) return false;
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const marked = await execRun(
+        "UPDATE ticket_purchases SET status = 'completed' WHERE id = ? AND status = 'pending'",
+        [id],
+      );
+      if (!marked.changes) {
+        await execRun("ROLLBACK");
+        return false;
+      }
+      await execRun(
+        "UPDATE accounts SET tickets = tickets + ?, updated_at = ? WHERE id = ?",
+        [count, Date.now(), account],
+      );
+      await execRun("COMMIT");
+      return true;
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch {
+        // The original error is the one to surface.
+      }
+      throw err;
+    }
+  });
+}
+
+/** Credit tickets after Digipog payment; records a completed purchase. */
 export async function addTickets(accountId, tickets, digipogs, formbarId) {
   const id = Number(accountId);
   const fid = Number(formbarId);
+  const count = Number(tickets);
   const now = Date.now();
-  await run(
-    "UPDATE accounts SET tickets = tickets + ?, updated_at = ? WHERE id = ?",
-    [tickets, now, id],
-  );
-  if (Number.isInteger(fid) && fid > 0) {
-    await run(
-      "INSERT INTO ticket_purchases (formbar_id, digipogs, tickets, created_at) VALUES (?, ?, ?, ?)",
-      [fid, digipogs, tickets, now],
-    );
-  }
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      await execRun(
+        "UPDATE accounts SET tickets = tickets + ?, updated_at = ? WHERE id = ?",
+        [count, now, id],
+      );
+      if (Number.isInteger(fid) && fid > 0) {
+        await execRun(
+          `INSERT INTO ticket_purchases (formbar_id, account_id, digipogs, tickets, created_at, status)
+           VALUES (?, ?, ?, ?, ?, 'completed')`,
+          [fid, id, digipogs, count, now],
+        );
+      }
+      await execRun("COMMIT");
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch {
+        // Keep the original failure.
+      }
+      throw err;
+    }
+  });
 }
 
 /** Dev/test helper: grant tickets without Digipog purchase. */
@@ -1075,7 +1204,7 @@ export async function getSuggestion(id) {
   const suggestionId = Number(id);
   if (!Number.isInteger(suggestionId) || suggestionId <= 0) return null;
   return get(
-    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
+    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at, reward_status
      FROM suggestions
      WHERE id = ?`,
     [suggestionId],
@@ -1085,14 +1214,14 @@ export async function getSuggestion(id) {
 export async function listSuggestions({ archived = false } = {}) {
   if (archived) {
     return all(
-      `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
+      `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at, reward_status
        FROM suggestions
        WHERE archived_at IS NOT NULL
        ORDER BY archived_at DESC, id DESC`,
     );
   }
   return all(
-    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at
+    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at, reward_status
      FROM suggestions
      WHERE archived_at IS NULL
      ORDER BY created_at DESC, id DESC`,
@@ -1109,27 +1238,51 @@ export async function archiveSuggestion(id) {
   return result.changes > 0;
 }
 
+/**
+ * unclaimed -> pending. Only one caller wins. rewarded_at stays unset until
+ * the Formbar transfer is confirmed. A pending row is not claimed again:
+ * an unknown Formbar outcome must not be paid twice.
+ */
 export async function claimSuggestionReward(id) {
   const suggestionId = Number(id);
   if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
-  const now = Date.now();
   const result = await run(
     `UPDATE suggestions
-     SET archived_at = ?, rewarded_at = ?
-     WHERE id = ? AND archived_at IS NULL AND rewarded_at IS NULL`,
-    [now, now, suggestionId],
+     SET reward_status = 'pending', archived_at = ?
+     WHERE id = ? AND archived_at IS NULL AND rewarded_at IS NULL
+       AND (reward_status IS NULL OR reward_status = 'unclaimed')`,
+    [Date.now(), suggestionId],
+  );
+  return result.changes > 0;
+}
+
+export async function completeSuggestionReward(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
+  const result = await run(
+    `UPDATE suggestions
+     SET reward_status = 'completed', rewarded_at = ?
+     WHERE id = ? AND reward_status = 'pending' AND rewarded_at IS NULL`,
+    [Date.now(), suggestionId],
+  );
+  return result.changes > 0;
+}
+
+/** Confirmed Formbar failure only. Returns the row to unclaimed so it can be retried. */
+export async function releaseSuggestionReward(id) {
+  const suggestionId = Number(id);
+  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
+  const result = await run(
+    `UPDATE suggestions
+     SET reward_status = 'unclaimed', archived_at = NULL, rewarded_at = NULL
+     WHERE id = ? AND reward_status = 'pending' AND rewarded_at IS NULL`,
+    [suggestionId],
   );
   return result.changes > 0;
 }
 
 export async function reopenSuggestion(id) {
-  const suggestionId = Number(id);
-  if (!Number.isInteger(suggestionId) || suggestionId <= 0) return false;
-  const result = await run(
-    "UPDATE suggestions SET archived_at = NULL, rewarded_at = NULL WHERE id = ?",
-    [suggestionId],
-  );
-  return result.changes > 0;
+  return releaseSuggestionReward(id);
 }
 
 export const WIKI_TITLE_MAX = 80;
@@ -1233,7 +1386,7 @@ export async function getWikiPageBySlug(slug) {
   if (page.current_revision_id) {
     revision = await get(
       `SELECT id, page_id, formbar_id, account_id, name, body, created_at,
-              confirmed_at, undone_at, rewarded_at
+              confirmed_at, undone_at, rewarded_at, reward_status
        FROM wiki_revisions WHERE id = ?`,
       [page.current_revision_id],
     );
@@ -1246,7 +1399,7 @@ export async function getWikiRevision(id) {
   if (!Number.isInteger(revisionId) || revisionId <= 0) return null;
   return get(
     `SELECT r.id, r.page_id, r.formbar_id, r.account_id, r.name, r.body, r.created_at,
-            r.confirmed_at, r.undone_at, r.rewarded_at,
+            r.confirmed_at, r.undone_at, r.rewarded_at, r.reward_status,
             p.slug, p.title, p.current_revision_id
      FROM wiki_revisions r
      JOIN wiki_pages p ON p.id = r.page_id
@@ -1334,7 +1487,7 @@ export async function deleteWikiPageBySlug(slug) {
 export async function listOpenWikiRevisions() {
   return all(
     `SELECT r.id, r.page_id, r.formbar_id, r.account_id, r.name, r.body, r.created_at,
-            r.confirmed_at, r.undone_at, r.rewarded_at,
+            r.confirmed_at, r.undone_at, r.rewarded_at, r.reward_status,
             p.slug, p.title,
             (
               SELECT prev.body FROM wiki_revisions prev
@@ -1405,12 +1558,45 @@ export async function undoWikiRevision(id) {
   return { ok: true, deleted: false };
 }
 
-export async function setWikiRevisionRewarded(id) {
+/** unclaimed -> pending. A second claim does not call Formbar. */
+export async function claimWikiReward(id) {
   const revisionId = Number(id);
   if (!Number.isInteger(revisionId) || revisionId <= 0) return false;
   const result = await run(
-    "UPDATE wiki_revisions SET rewarded_at = ? WHERE id = ? AND rewarded_at IS NULL AND undone_at IS NULL",
+    `UPDATE wiki_revisions
+     SET reward_status = 'pending'
+     WHERE id = ? AND undone_at IS NULL AND rewarded_at IS NULL
+       AND (reward_status IS NULL OR reward_status = 'unclaimed')`,
+    [revisionId],
+  );
+  return result.changes > 0;
+}
+
+export async function completeWikiReward(id) {
+  const revisionId = Number(id);
+  if (!Number.isInteger(revisionId) || revisionId <= 0) return false;
+  const result = await run(
+    `UPDATE wiki_revisions
+     SET reward_status = 'completed', rewarded_at = ?
+     WHERE id = ? AND reward_status = 'pending' AND rewarded_at IS NULL AND undone_at IS NULL`,
     [Date.now(), revisionId],
   );
   return result.changes > 0;
+}
+
+/** Confirmed Formbar failure only. Ambiguous results stay pending. */
+export async function releaseWikiReward(id) {
+  const revisionId = Number(id);
+  if (!Number.isInteger(revisionId) || revisionId <= 0) return false;
+  const result = await run(
+    `UPDATE wiki_revisions
+     SET reward_status = 'unclaimed'
+     WHERE id = ? AND reward_status = 'pending' AND rewarded_at IS NULL`,
+    [revisionId],
+  );
+  return result.changes > 0;
+}
+
+export async function setWikiRevisionRewarded(id) {
+  return completeWikiReward(id);
 }

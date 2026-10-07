@@ -5084,7 +5084,7 @@ export class GameSim {
     const foe = side === this.player ? this.enemy : this.player;
     if (cmd.type === "buy") {
       if (cmd.lane !== "top" && cmd.lane !== "bottom") return false;
-      if (!side.canSpawnUnit(cmd.unit)) return false;
+      if (typeof cmd.unit !== "string" || !side.canSpawnUnit(cmd.unit)) return false;
       return Boolean(this.grantTroop(side, cmd.lane, cmd.unit));
     }
     if (cmd.type === "bank") return side.tryUnlockBank();
@@ -5093,12 +5093,14 @@ export class GameSim {
     }
     if (cmd.type === "townProduce" || cmd.type === "upgrade") {
       const id = Number(cmd.checkpointId);
+      if (!Number.isInteger(id)) return false;
       const town = this.checkpoints.find((c) => c.index === id);
       if (!town || town.owner !== side.id) return false;
       return side.tryToggleTownProduce(town);
     }
     if (cmd.type === "order") {
       const troopId = Number(cmd.troopId);
+      if (!Number.isInteger(troopId)) return false;
       const troop = side.troops.find((t) => t.id === troopId && t.hp > 0);
       if (!troop) return false;
       const solo = Boolean(cmd.solo) || troop.isInMelee(foe.troops);

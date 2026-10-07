@@ -9,7 +9,7 @@ import sqlite3 from "sqlite3";
 function startServer(env = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "motl-limits-"));
   const port = 19210 + Math.floor(Math.random() * 200);
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: {
       ...process.env,

@@ -5,7 +5,7 @@ process.env.SKIP_FORMBAR = "1";
 process.env.METRICS_LOG = "0";
 process.env.METRICS = "";
 
-const { listen, httpServer, io } = await import("../server.js");
+const { listen, httpServer, io } = await import("../app.js");
 const { disconnectFormbar } = await import("../server/formbar.js");
 
 test("metrics route is absent until METRICS=1, and static assets cache", async (t) => {

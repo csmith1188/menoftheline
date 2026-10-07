@@ -2,7 +2,7 @@
 # Do not set PM2 instances above 1. Matchmaker, GameRoom, and GameSim
 # live in that process. A Socket.IO Redis adapter does not copy sim state.
 #
-#   pm2 start server.js --name motl -i 1
+#   pm2 start app.js --name motl -i 1
 #
 # Nginx serves JS, CSS, images, shared modules, and BGM.
 # Node keeps HTML, /api/, and /socket.io/.

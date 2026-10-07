@@ -11,8 +11,8 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 
 | Command | Purpose |
 |---------|---------|
-| `npm start` | Production-ish server (`server.js`) |
-| `npm run dev` | Nodemon on `server.js` |
+| `npm start` | Production-ish server (`app.js`) |
+| `npm run dev` | Nodemon on `app.js` |
 | `npm run debug` | Same server with `DEBUG_RANGES=1` overlays |
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
 | `npm run sim-bench` | One crowded match: step and snapshot times |
@@ -23,7 +23,7 @@ Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/pa
 ## Layout (start here)
 
 ```
-server.js              HTTP + sessions + local/Formbar/Discord auth + Socket.IO + wiki/admin routes
+app.js              HTTP + sessions + local/Formbar/Discord auth + Socket.IO + wiki/admin routes
 server/
   room.js              GameRoom: seats, command queue → sim, emit "state" / "chat"
   ticker.js            One 50ms loop for every playing room; snapshots at STATE_MS
@@ -50,7 +50,7 @@ server/
   wiki-diff.js         Revision diffs
   formbar.js           Digipog transfers; one outstanding socket transfer at a time
   discord.js           Discord OAuth authorize/token/user helpers
-  load-env.js          dotenv load (imported first by server.js)
+  load-env.js          dotenv load (imported first by app.js)
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
   units.js             UNIT_STATS, variants, labels, BUY_UNITS, mobilityClass, cost helpers
@@ -76,7 +76,7 @@ public/css/            game.css, landing.css
 views/                 EJS shells (landing, play, wiki, admin, scores, lobby-create, …)
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
-scripts/debug-server.js  Sets DEBUG_RANGES then imports server.js
+scripts/debug-server.js  Sets DEBUG_RANGES then imports app.js
 scripts/load/          socket-load.js (100-player harness), sim-bench.js
 deploy/nginx.conf.example  One Node process behind Nginx; static files cached
 goals.md               Backlog / roadmap (not docs)
@@ -99,13 +99,13 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Reconnect spam / disconnect forfeit | `server/room.js` (`noteReconnectSpam`, reconnect wait) | Mid-match reconnect spam force-concedes; tunables `reconnectSpamMax` / `reconnectSpamWindowMs` in `shared/config.js` |
 | Match pause / unpause | `server/room.js` (`pause`, `settingsOpen`, `simFrozen`) | Human mutual pause + `UNPAUSE_MS` countdown; bot menu freeze via `settingsOpen`; clients `main.js` / `main3d.js`, settings Pause button, chat pause-alert CSS |
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
-| Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
-| Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `server.js` routes, `views/login.ejs` / signup / forgot / reset / profile. Profile link merges when the identity is already taken (union providers; refuse same-provider conflicts). New accounts take the provider/local display name; collisions get `Name 2`…; owners can rename on profile (3/hour). |
-| Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `server.js`, `test/security.test.js` |
+| Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `app.js` routes |
+| Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `app.js` routes, `views/login.ejs` / signup / forgot / reset / profile. Profile link merges when the identity is already taken (union providers; refuse same-provider conflicts). New accounts take the provider/local display name; collisions get `Name 2`…; owners can rename on profile (3/hour). |
+| Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js`, `test/security.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
-| Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
-| Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
-| Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `server.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
+| Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
+| Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
+| Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `app.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
 | In-match rules diagrams | `public/js/rules.js` | Must stay consistent with `shared/` + `wikidocs/` |

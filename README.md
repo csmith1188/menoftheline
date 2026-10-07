@@ -58,7 +58,7 @@ SQLite data is stored under `data/` (created at runtime; ignored by git except `
 ### Run
 
 ```bash
-npm start          # production-style: node server.js
+npm start          # production-style: node app.js
 npm run dev        # auto-restart with nodemon (install nodemon if needed)
 npm test           # run unit tests
 ```
@@ -80,7 +80,7 @@ Ranked / listed / join still require Formbar login on the website (`login_requir
 
 | Path | Role |
 | --- | --- |
-| `server.js` | Express app, routes, Socket.IO |
+| `app.js` | Express app, routes, Socket.IO |
 | `server/` | DB, matchmaking, simulation, auth helpers |
 | `shared/` | Shared game config and unit data |
 | `public/` | Static CSS/JS/assets |

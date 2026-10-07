@@ -25,7 +25,7 @@ function once(socket, event, timeoutMs = 8000) {
 
 function startWorker(index, bases, dataDir) {
   const port = 18781 + index;
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: {
       ...process.env,

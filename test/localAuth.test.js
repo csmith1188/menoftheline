@@ -10,7 +10,7 @@ function startServer(env) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "motl-auth-"));
   const mailPath = path.join(dataDir, "mail.log");
   const port = 19010 + Math.floor(Math.random() * 200);
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: {
       ...process.env,

@@ -23,7 +23,7 @@ function spawnServer(env) {
     FORMBAR_PUBLIC_KEY_B64: publicKeyB64,
     ...env,
   };
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -81,7 +81,7 @@ test("production process exits when the session secret is insecure", async () =>
   };
   const childEnv = { ...process.env, ...env, PORT: "19301", SKIP_FORMBAR: "1" };
   delete childEnv.NODE_TEST_CONTEXT;
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -193,7 +193,7 @@ test("production ignores DEBUG_RANGES", async (t) => {
   };
   const childEnv = { ...process.env, ...env, SKIP_FORMBAR: "1", DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "motl-debug-")) };
   delete childEnv.NODE_TEST_CONTEXT;
-  const child = spawn(process.execPath, ["server.js"], {
+  const child = spawn(process.execPath, ["app.js"], {
     cwd: path.resolve("."),
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],

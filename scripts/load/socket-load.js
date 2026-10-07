@@ -187,7 +187,7 @@ async function main() {
   let stopping = false;
   let base = process.env.LOAD_BASE || "";
   if (!base) {
-    child = spawn(process.execPath, ["server.js"], {
+    child = spawn(process.execPath, ["app.js"], {
       cwd: root,
       env: {
         ...process.env,

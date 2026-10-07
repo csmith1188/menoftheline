@@ -3,6 +3,14 @@ import { UNIT_STATS, UNIT_VARIANTS, unitLandCost } from "../../shared/units.js";
 import { featuresOnMap } from "../../shared/terrain.js";
 import { BASE_TYPES, LANES, enemyRowCount, enemyShares, typeGold } from "./assess.js";
 
+function lanesOf(snapshot) {
+  return snapshot.laneIds || LANES;
+}
+
+function townLaneOf(snapshot) {
+  return snapshot.townLaneId || "bottom";
+}
+
 /**
  * Desired gold fractions. Hard shifts them toward the enemy's army,
  * then caps and renormalizes so one survivor cannot demand a whole
@@ -185,17 +193,18 @@ function urgencyOf(snapshot, lane, profile) {
     * CONFIG.botUrgencyDisadvantage;
   const shareDeficit = Math.max(0, 0.5 - info.share) * CONFIG.botUrgencyShare;
   let economy = 0;
-  if (lane === "bottom" && bottomSeedOpen(snapshot)) {
+  const townLane = townLaneOf(snapshot);
+  if (lane === townLane && bottomSeedOpen(snapshot)) {
     economy = CONFIG.botUrgencyEconomy * (profile.richUrgency ? 1 : 0.65);
   }
   let garrison = 0;
-  if (lane === "top" && snapshot.lanes.top.friendlies.length < CONFIG.botTopGarrison) {
+  if (lane === "top" && snapshot.lanes.top && snapshot.lanes.top.friendlies.length < CONFIG.botTopGarrison) {
     garrison = CONFIG.botTopGarrisonUrgency;
   }
   let opportunity = 0;
   if (profile.richUrgency) {
     if (info.commit === "keepAttack") opportunity += CONFIG.botUrgencyOpportunity;
-    if (lane === "bottom" && info.advantage > 1.1 && snapshot.townsOpen > 0) {
+    if (lane === townLane && info.advantage > 1.1 && snapshot.townsOpen > 0) {
       opportunity += CONFIG.botUrgencyOpportunity * 0.5;
     }
   }
@@ -205,21 +214,26 @@ function urgencyOf(snapshot, lane, profile) {
   return threat + disadvantage + shareDeficit + economy + garrison + opportunity;
 }
 
-/** A bottom seed waits until the top lane can actually defend the keep. */
+/** A town-lane seed waits until the top lane can actually defend the keep. */
 function bottomSeedOpen(snapshot) {
   if (snapshot.townsOwned > 0) return false;
-  if (snapshot.lanes.top.friendlies.length < CONFIG.botTopGarrison) return false;
-  return snapshot.lanes.bottom.friendlies.length < CONFIG.botBottomSeed;
+  const top = snapshot.lanes.top;
+  const town = snapshot.lanes[townLaneOf(snapshot)];
+  if (!top || top.friendlies.length < CONFIG.botTopGarrison) return false;
+  if (!town) return false;
+  return town.friendlies.length < CONFIG.botBottomSeed;
 }
 
 /** Buy lane. Sticky so a one-point swing does not bounce purchases. */
 export function pickBuyLane(snapshot, state, profile) {
-  let best = state.buyLane || "top";
+  const laneIds = lanesOf(snapshot);
+  let best = state.buyLane || laneIds[0] || "top";
   let bestScore = -Infinity;
-  let rawBest = "top";
+  let rawBest = laneIds[0] || "top";
   let rawScore = -Infinity;
-  for (let i = 0; i < LANES.length; i += 1) {
-    const lane = LANES[i];
+  for (let i = 0; i < laneIds.length; i += 1) {
+    const lane = laneIds[i];
+    if (!snapshot.lanes[lane]) continue;
     const score = urgencyOf(snapshot, lane, profile);
     if (score > rawScore) {
       rawScore = score;

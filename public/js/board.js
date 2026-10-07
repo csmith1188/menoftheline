@@ -6,6 +6,7 @@ import {
   pointToSegment,
 } from "../shared/path.js";
 import { TERRAIN_EMOJI, terrainCoverParts } from "../shared/terrain.js";
+import { installMapView, isArcLane, isLineLane } from "./mapView.js";
 import { SHOT_SNAP_PX, SNAP_PX, lerpAlpha, lerpPoint, lerpTroop } from "./interp.js";
 
 /** Display face for titles. Body copy and bullets use IM Fell English. */
@@ -280,14 +281,23 @@ export const boardStateMethods = {
     this.laneCenterLastAt = now;
     const tau = CONFIG.laneCenterEase;
     const k = !(tau > 0) || dt <= 0 ? 1 : 1 - Math.exp(-dt / tau);
-    this.topCenter += (this.topCenterTo - this.topCenter) * k;
-    this.bottomCenter += (this.bottomCenterTo - this.bottomCenter) * k;
-    if (Math.abs(this.topCenterTo - this.topCenter) < 1e-4) {
-      this.topCenter = this.topCenterTo;
+    if (!this.laneCenters) this.laneCenters = {};
+    if (!this.laneCentersTo) this.laneCentersTo = {};
+    const ids = Path.laneIds();
+    for (let i = 0; i < ids.length; i += 1) {
+      const id = ids[i];
+      let cur = this.laneCenters[id];
+      let to = this.laneCentersTo[id];
+      if (cur == null) cur = 0.5;
+      if (to == null) to = cur;
+      cur += (to - cur) * k;
+      if (Math.abs(to - cur) < 1e-4) cur = to;
+      this.laneCenters[id] = cur;
     }
-    if (Math.abs(this.bottomCenterTo - this.bottomCenter) < 1e-4) {
-      this.bottomCenter = this.bottomCenterTo;
-    }
+    if (this.laneCenters.top != null) this.topCenter = this.laneCenters.top;
+    if (this.laneCenters.bottom != null) this.bottomCenter = this.laneCenters.bottom;
+    if (this.laneCentersTo.top != null) this.topCenterTo = this.laneCentersTo.top;
+    if (this.laneCentersTo.bottom != null) this.bottomCenterTo = this.laneCentersTo.bottom;
   },
 
   /** Drawn control sizes plus extra hit padding so taps reach 44 CSS px. */
@@ -547,7 +557,9 @@ export const boardStateMethods = {
 
   strategyButtonRect(lane) {
     const layout = this.strategyRowLayout();
-    const index = lane === "bottom" ? 1 : 0;
+    const ids = Path.laneIds();
+    let index = ids.indexOf(lane);
+    if (index < 0) index = isArcLane(lane) ? Math.max(0, ids.length - 1) : 0;
     return {
       x: layout.x + index * (layout.w + layout.gap),
       y: layout.y,
@@ -557,9 +569,12 @@ export const boardStateMethods = {
     };
   },
 
-  /** Upgrade readout box: player left (top slot), enemy right (bottom slot). */
+  /** Upgrade readout box: player left (first line), enemy right (first arc). */
   upgradeReadoutRect(sideId) {
-    return this.strategyButtonRect(sideId === "enemy" ? "bottom" : "top");
+    const ids = Path.laneIds();
+    const line = ids.find((id) => isLineLane(id)) || ids[0] || "top";
+    const arc = ids.find((id) => isArcLane(id)) || ids[ids.length - 1] || "bottom";
+    return this.strategyButtonRect(sideId === "enemy" ? arc : line);
   },
 
   buyButtonRect(index) {
@@ -638,23 +653,38 @@ export const boardStateMethods = {
    * Empty field, towns, and keeps return null.
    */
   laneAt(point) {
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
-    const top = left.y - CONFIG.topLaneHeight / 2;
-    const bottom = left.y + CONFIG.topLaneHeight / 2;
-    if (point.y >= top && point.y <= bottom && point.x >= left.x && point.x <= right.x) {
-      return { lane: "top", along: Path.stationAt("top", point.x, point.y) };
+    const board = Path.activeBoard();
+    const left = board.playerCapital;
+    const right = board.enemyCapital;
+    const ids = Path.laneIds();
+    for (let i = 0; i < ids.length; i += 1) {
+      const lane = ids[i];
+      const def = Path.laneDef(lane);
+      if (!def || !def.geometry) continue;
+      if (def.geometry.kind === "line") {
+        const height = def.geometry.height || CONFIG.topLaneHeight;
+        const top = left.y - height / 2;
+        const bottom = left.y + height / 2;
+        if (point.y >= top && point.y <= bottom && point.x >= left.x && point.x <= right.x) {
+          return { lane, along: Path.stationAt(lane, point.x, point.y) };
+        }
+        continue;
+      }
+      if (def.geometry.kind === "arc") {
+        const c = Path.arcCenter(lane);
+        const dx = point.x - c.x;
+        const dy = point.y - c.y;
+        if (dy < 0) continue;
+        const dist = Math.hypot(dx, dy);
+        const width = def.geometry.sublaneWidth;
+        const outer = Path.arcRadius(lane, 0) + width / 2;
+        const inner = Path.arcRadius(lane, def.geometry.sublaneCount - 1) - width / 2;
+        if (dist < inner || dist > outer) continue;
+        const along = (Path.stationAt(lane, point.x, point.y) / 180) * this.laneLength(lane);
+        return { lane, along };
+      }
     }
-    const c = Path.bottomCenter();
-    const dx = point.x - c.x;
-    const dy = point.y - c.y;
-    if (dy < 0) return null;
-    const dist = Math.hypot(dx, dy);
-    const outer = Path.bottomRadius(0) + CONFIG.bottomSublaneWidth / 2;
-    const inner = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - CONFIG.bottomSublaneWidth / 2;
-    if (dist < inner || dist > outer) return null;
-    const along = (Path.stationAt("bottom", point.x, point.y) / 180) * this.laneLength("bottom");
-    return { lane: "bottom", along };
+    return null;
   },
 
   /** Shortest distance from a world point to a lane centerline. */
@@ -675,13 +705,21 @@ export const boardStateMethods = {
    * Along is measured from the player keep, matching openTelescopeAt.
    */
   nearestLaneAt(point) {
-    const topDist = this.laneDistance("top", point);
-    const botDist = this.laneDistance("bottom", point);
-    if (topDist <= botDist) {
-      return { lane: "top", along: Path.stationAt("top", point.x, point.y) };
+    const ids = Path.laneIds();
+    let best = ids[0] || "top";
+    let bestD = Infinity;
+    for (let i = 0; i < ids.length; i += 1) {
+      const d = this.laneDistance(ids[i], point);
+      if (d < bestD) {
+        bestD = d;
+        best = ids[i];
+      }
     }
-    const along = (Path.stationAt("bottom", point.x, point.y) / 180) * this.laneLength("bottom");
-    return { lane: "bottom", along };
+    if (isArcLane(best)) {
+      const along = (Path.stationAt(best, point.x, point.y) / 180) * this.laneLength(best);
+      return { lane: best, along };
+    }
+    return { lane: best, along: Path.stationAt(best, point.x, point.y) };
   },
 
   /** Undo the zoom camera. Southpaw is undone first so the point is in view space. */
@@ -1730,10 +1768,32 @@ export function applyCountdownTiming(board, payload) {
   board.countdownEnds = payload.countdownEnds || null;
   if (payload.status === "countdown" && Number.isFinite(payload.countdownLeft)) {
     board.countdownLocalEnd = performance.now() + Math.max(0, payload.countdownLeft);
-    return;
-  }
-  if (payload.status !== "countdown") {
+  } else if (payload.status !== "countdown") {
     board.countdownLocalEnd = null;
+  }
+  applyUnpauseTiming(board, payload);
+}
+
+/** Bind mutual-unpause / reconnect-wait countdown the same way as match-start. */
+export function applyUnpauseTiming(board, payload) {
+  board.unpauseEnds = payload.unpauseEnds || null;
+  board.paused = Boolean(payload.paused);
+  board.menuPaused = Boolean(payload.menuPaused);
+  board.canPause = Boolean(payload.canPause);
+  board.pauseWant = Boolean(payload.pauseWant);
+  board.unpauseWant = Boolean(payload.unpauseWant);
+  board.pauseAlert = Boolean(payload.pauseAlert);
+  board.reconnectWaiting = Boolean(payload.reconnectWaiting);
+  board.reconnectWaitEnds = payload.reconnectWaitEnds || null;
+  if (Number.isFinite(payload.unpauseLeft) && payload.unpauseEnds) {
+    board.unpauseLocalEnd = performance.now() + Math.max(0, payload.unpauseLeft);
+  } else if (!payload.unpauseEnds) {
+    board.unpauseLocalEnd = null;
+  }
+  if (Number.isFinite(payload.reconnectWaitLeft) && payload.reconnectWaitEnds) {
+    board.reconnectLocalEnd = performance.now() + Math.max(0, payload.reconnectWaitLeft);
+  } else if (!payload.reconnectWaitEnds) {
+    board.reconnectLocalEnd = null;
   }
 }
 
@@ -1745,6 +1805,30 @@ export function countdownSecondsLeft(board) {
   }
   if (Number.isFinite(board.countdownEnds)) {
     return Math.max(0, Math.ceil((board.countdownEnds - Date.now()) / 1000));
+  }
+  return 0;
+}
+
+/** Whole seconds left until a mutual pause resumes. */
+export function unpauseSecondsLeft(board) {
+  if (!board.unpauseEnds && !Number.isFinite(board.unpauseLocalEnd)) return 0;
+  if (Number.isFinite(board.unpauseLocalEnd)) {
+    return Math.max(0, Math.ceil((board.unpauseLocalEnd - performance.now()) / 1000));
+  }
+  if (Number.isFinite(board.unpauseEnds)) {
+    return Math.max(0, Math.ceil((board.unpauseEnds - Date.now()) / 1000));
+  }
+  return 0;
+}
+
+/** Whole seconds left waiting for a disconnected opponent. */
+export function reconnectSecondsLeft(board) {
+  if (!board.reconnectWaitEnds && !Number.isFinite(board.reconnectLocalEnd)) return 0;
+  if (Number.isFinite(board.reconnectLocalEnd)) {
+    return Math.max(0, Math.ceil((board.reconnectLocalEnd - performance.now()) / 1000));
+  }
+  if (Number.isFinite(board.reconnectWaitEnds)) {
+    return Math.max(0, Math.ceil((board.reconnectWaitEnds - Date.now()) / 1000));
   }
   return 0;
 }
@@ -1765,6 +1849,8 @@ export function applySnapshot(board, snap, seat, controlSide) {
     if (!owner) return null;
     return owner === mine ? "player" : "enemy";
   };
+  installMapView(snap);
+  board.mapMeta = snap.map || null;
   board.elapsed = snap.elapsed;
   const prevElapsed = board.motionElapsed;
   const elapsed = Number(snap.elapsed);
@@ -1780,16 +1866,31 @@ export function applySnapshot(board, snap, seat, controlSide) {
   board.winReason = snap.winReason || null;
   board.status = snap.status;
   applyCountdownTiming(board, snap);
-  const top = mirror ? 1 - snap.topCenter : snap.topCenter;
-  const bottom = mirror ? 1 - snap.bottomCenter : snap.bottomCenter;
+  const rawCenters = snap.laneCenters || {
+    top: snap.topCenter,
+    bottom: snap.bottomCenter,
+  };
   const first = !board.laneCenterLastAt;
   if (!first) board.presentLaneCenters();
-  board.topCenterTo = top;
-  board.bottomCenterTo = bottom;
-  if (first) {
-    board.topCenter = top;
-    board.bottomCenter = bottom;
-    board.laneCenterLastAt = performance.now();
+  if (!board.laneCenters) board.laneCenters = {};
+  if (!board.laneCentersTo) board.laneCentersTo = {};
+  const laneIds = Path.laneIds();
+  for (let i = 0; i < laneIds.length; i += 1) {
+    const id = laneIds[i];
+    let share = rawCenters[id];
+    if (share == null) share = 0.5;
+    if (mirror) share = 1 - share;
+    board.laneCentersTo[id] = share;
+    if (first) board.laneCenters[id] = share;
+  }
+  if (first) board.laneCenterLastAt = performance.now();
+  if (board.laneCenters.top != null) {
+    board.topCenter = board.laneCenters.top;
+    board.topCenterTo = board.laneCentersTo.top;
+  }
+  if (board.laneCenters.bottom != null) {
+    board.bottomCenter = board.laneCenters.bottom;
+    board.bottomCenterTo = board.laneCentersTo.bottom;
   }
   board.player = syncSide(board.player, snap.sides[mine], "player", board, mx);
   board.enemy = syncSide(
@@ -1911,9 +2012,23 @@ export function createBoardState(canvas) {
     status: "waiting",
     countdownEnds: null,
     countdownLocalEnd: null,
+    paused: false,
+    menuPaused: false,
+    canPause: false,
+    pauseWant: false,
+    unpauseWant: false,
+    pauseAlert: false,
+    unpauseEnds: null,
+    unpauseLocalEnd: null,
+    reconnectWaiting: false,
+    reconnectWaitEnds: null,
+    reconnectLocalEnd: null,
     cssScale: 1,
     southpaw: readSouthpaw(),
     terrainLabels: readTerrainLabels(),
+    mapMeta: null,
+    laneCenters: { top: 0.5, bottom: 0.5 },
+    laneCentersTo: { top: 0.5, bottom: 0.5 },
     topCenter: 0.5,
     bottomCenter: 0.5,
     topCenterTo: 0.5,

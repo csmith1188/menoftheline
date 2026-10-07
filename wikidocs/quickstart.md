@@ -11,6 +11,8 @@
 - Swipe Unit Buttons up/down to purchase for the top/bottom lane. See [[Units]].
 - Swipe Unit Buttons left/right to change the unit type
 - Click a Town you control to enable/disable researching in that town. See [[Towns]].
+- Open Settings (gear). In a bot game the match pauses while Settings is open. Against a human, use Pause to request a pause (shown in chat; the other player's chat button turns red until they open chat or also Pause). Both players must Pause to freeze the match. Unpause starts a 60-second resume countdown, or resumes immediately when both players Unpause.
+- If a human opponent disconnects mid-match, the game keeps running for 5 seconds, then pauses with a 60-second reconnect wait. If they do not return, they concede and you win.
 ## Map Controls
 - Click an empty part of lane, pinch zoom in, or mouse wheel up to zoom into that lane. See [[The Map]].
 - Swipe up/down to switch lanes when zoomed

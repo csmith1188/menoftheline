@@ -2,6 +2,12 @@ import { CONFIG } from "../shared/config.js";
 import { resolveMapFeatures } from "../shared/maps.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
+import {
+  installMapView,
+  isArcLane,
+  laneRowColor,
+  laneStrokeWidth,
+} from "./mapView.js";
 
 function strokeLaneInterval(ctx, lane, sublane, minPaces, maxPaces) {
   const total = Path.lanePaces(lane);
@@ -10,7 +16,7 @@ function strokeLaneInterval(ctx, lane, sublane, minPaces, maxPaces) {
   const t1 = Math.min(1, maxPaces / total);
   if (!(t1 > t0)) return;
   const pts = Path.worldPoints(lane, sublane);
-  const steps = lane === "bottom" ? Math.max(2, Math.ceil((t1 - t0) * 24)) : 1;
+  const steps = isArcLane(lane) ? Math.max(2, Math.ceil((t1 - t0) * 24)) : 1;
   ctx.beginPath();
   for (let k = 0; k <= steps; k += 1) {
     const t = t0 + ((t1 - t0) * k) / steps;
@@ -22,42 +28,52 @@ function strokeLaneInterval(ctx, lane, sublane, minPaces, maxPaces) {
 }
 
 function drawKeeps(ctx) {
+  const board = Path.activeBoard();
   const keeps = [
-    { c: CONFIG.playerCapital, color: CONFIG.colors.player },
-    { c: CONFIG.enemyCapital, color: CONFIG.colors.enemy },
+    { c: board.playerCapital, color: CONFIG.colors.player },
+    { c: board.enemyCapital, color: CONFIG.colors.enemy },
   ];
   for (let i = 0; i < keeps.length; i += 1) {
     const { c, color } = keeps[i];
     ctx.beginPath();
     ctx.fillStyle = color;
-    ctx.arc(c.x, c.y, CONFIG.capitalRadius * 0.7, 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, board.capitalRadius * 0.7, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawLanes(ctx) {
-  const left = CONFIG.playerCapital;
-  const right = CONFIG.enemyCapital;
-  ctx.fillStyle = CONFIG.colors.topLane;
-  ctx.fillRect(
-    left.x,
-    left.y - CONFIG.topLaneHeight / 2,
-    right.x - left.x,
-    CONFIG.topLaneHeight,
-  );
+  const board = Path.activeBoard();
+  const left = board.playerCapital;
+  const right = board.enemyCapital;
+  const ids = Path.laneIds();
+  for (let i = 0; i < ids.length; i += 1) {
+    const def = Path.laneDef(ids[i]);
+    if (!def || !def.geometry || def.geometry.kind !== "line") continue;
+    const height = def.geometry.height || CONFIG.topLaneHeight;
+    ctx.fillStyle = CONFIG.colors.topLane;
+    ctx.fillRect(
+      left.x,
+      left.y - height / 2,
+      right.x - left.x,
+      height,
+    );
+  }
 
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
-  const drawRows = (lane, count, color, width) => {
+  for (let i = 0; i < ids.length; i += 1) {
+    const lane = ids[i];
+    const count = Path.sublaneCount(lane);
+    const color = laneRowColor(lane);
+    const width = laneStrokeWidth(lane);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     for (let s = 0; s < count; s += 1) {
       strokeLaneInterval(ctx, lane, s, 0, Path.lanePaces(lane));
     }
-  };
-  drawRows("top", CONFIG.topSublaneCount, CONFIG.colors.topSublane, CONFIG.topSublaneWidth);
-  drawRows("bottom", CONFIG.bottomSublaneCount, CONFIG.colors.bottomSublane, CONFIG.bottomSublaneWidth);
+  }
 
   const segs = quarterSegments();
   ctx.save();
@@ -86,7 +102,7 @@ function drawTerrain(ctx, features) {
     if (!(total > 0)) continue;
     const half = f.halfWidthPaces || 0;
     const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.4)";
-    const width = f.lane === "top" ? CONFIG.topSublaneWidth : CONFIG.bottomSublaneWidth;
+    const width = laneStrokeWidth(f.lane);
     const emoji = f.emoji || TERRAIN_EMOJI[f.kind] || "";
     for (let s = 0; s < f.sublanes.length; s += 1) {
       const sub = f.sublanes[s];
@@ -117,8 +133,10 @@ export function drawMapPreview(canvas, { mapId = "default", fortsEnabled = true 
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const w = CONFIG.canvasWidth;
-  const h = CONFIG.canvasHeight;
+  installMapView(mapId);
+  const board = Path.activeBoard();
+  const w = board.canvasWidth;
+  const h = board.canvasHeight;
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   ctx.setTransform(1, 0, 0, 1, 0, 0);

@@ -30,6 +30,19 @@
         </div>
       </div>
       <button type="button" id="gear" class="gear" aria-label="Menu" aria-controls="menu" aria-expanded="false">⚙</button>
+      <% if (matchChatEnabled) { %>
+      <button type="button" id="chat-btn" class="chat-btn" aria-label="Chat" aria-controls="chat" aria-expanded="false">💬</button>
+      <div id="chat" class="chat hidden" role="dialog" aria-modal="true" aria-labelledby="chat-title">
+        <div class="chat-head">
+          <h2 id="chat-title">Chat</h2>
+        </div>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <input id="chat-input" type="text" maxlength="200" placeholder="Type a message…" aria-label="Chat message">
+          <button type="submit" class="action">Send</button>
+        </form>
+      </div>
+      <% } %>
       <div id="menu" class="menu hidden" role="dialog" aria-modal="true" aria-labelledby="menu-title">
         <div class="menu-head">
           <h2 id="menu-title">Settings</h2>
@@ -92,6 +105,7 @@
             </div>
           </section>
           <section class="menu-block menu-actions">
+            <button type="button" id="pause-btn" class="action hidden">Pause</button>
             <button type="button" id="concede" class="action">Concede</button>
             <div id="confirm" class="confirm hidden">
               <p>Concede this match?</p>

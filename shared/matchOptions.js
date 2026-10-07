@@ -1,5 +1,5 @@
 import { CONFIG } from "./config.js";
-import { MAP_PRESETS, mapPresetIds } from "./maps.js";
+import { mapPresetIds, getMap } from "./maps.js";
 
 /** Allowed match speed multipliers (shared by bot settings and custom lobbies). */
 export const MATCH_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -9,12 +9,14 @@ export const BASE_GPS_MIN = 0;
 export const BASE_GPS_MAX = 50;
 
 export function defaultMatchOptions() {
+  const map = getMap(CONFIG.defaultMapId || "default");
+  const fromMap = map ? map.mergedConfig({}) : null;
   return {
     speed: 1,
-    fogEnabled: true,
+    fogEnabled: fromMap ? fromMap.fogEnabled : true,
     mapId: CONFIG.defaultMapId || "default",
-    fortsEnabled: true,
-    baseGps: CONFIG.baseIncome,
+    fortsEnabled: fromMap ? fromMap.fortsEnabled : true,
+    baseGps: fromMap ? fromMap.baseGps : CONFIG.baseIncome,
   };
 }
 
@@ -63,7 +65,8 @@ export function normalizeMatchOptions(raw = {}) {
 /** Short labels for Open Games / lobby UI. */
 export function matchOptionsSummary(opts) {
   const o = normalizeMatchOptions(opts);
-  const mapLabel = (MAP_PRESETS[o.mapId] && MAP_PRESETS[o.mapId].label) || o.mapId;
+  const map = getMap(o.mapId);
+  const mapLabel = (map && map.label) || o.mapId;
   return {
     ...o,
     mapLabel,

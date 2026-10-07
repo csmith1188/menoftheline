@@ -1,4 +1,5 @@
 import { CONFIG } from "./config.js";
+import { classicBoardFromConfig, classicLanesFromConfig } from "./map/definition.js";
 
 /**
  * Euclidean distance between two points with x/y.
@@ -22,10 +23,42 @@ export function pointToSegment(p, ax, ay, bx, by) {
   return Math.hypot(p.x - (ax + dx * t), p.y - (ay + dy * t));
 }
 
+/** Build a classic board context from CONFIG (used before a map is installed). */
+export function classicBoardContext() {
+  const board = classicBoardFromConfig();
+  const laneDefs = classicLanesFromConfig();
+  const lanes = {};
+  for (const lane of laneDefs) {
+    lanes[lane.id] = {
+      id: lane.id,
+      paces: lane.paces,
+      geometry: { ...lane.geometry },
+      resource: { ...lane.resource },
+      towns: lane.towns ? { ...lane.towns } : null,
+    };
+  }
+  const lineLane = laneDefs.find((l) => l.geometry.kind === "line");
+  return {
+    mapId: CONFIG.defaultMapId || "default",
+    canvasWidth: board.canvasWidth,
+    canvasHeight: board.canvasHeight,
+    playerCapital: { ...board.playerCapital },
+    enemyCapital: { ...board.enemyCapital },
+    capitalRadius: board.capitalRadius,
+    fortDistancePaces: CONFIG.fortDistancePaces,
+    paceRulerLaneId: (lineLane && lineLane.id) || laneDefs[0].id,
+    laneIds: laneDefs.map((l) => l.id),
+    lanes,
+  };
+}
+
+/** @type {ReturnType<typeof classicBoardContext> | null} */
+let _board = null;
+
 /** Memoized `worldPoints` results keyed by `lane:sublane`. */
 const worldPointsCache = new Map();
 
-/** Drop cached polylines (tests that mutate CONFIG). */
+/** Drop cached polylines (tests that mutate CONFIG, or board swaps). */
 export function clearWorldPointsCache() {
   worldPointsCache.clear();
 }
@@ -36,8 +69,47 @@ export function clearWorldPointsCache() {
  * Sublane 0 is the northernmost top row / outermost bottom half-circle.
  */
 export const Path = {
+  /** Install board geometry from a GameMap (or compatible context). */
+  useBoard(ctx) {
+    _board = ctx || null;
+    clearWorldPointsCache();
+  },
+
+  /** Clear installed board (tests / teardown). */
+  clearBoard() {
+    _board = null;
+    clearWorldPointsCache();
+  },
+
+  /** Active board context, or classic CONFIG fallback. */
+  activeBoard() {
+    return _board || classicBoardContext();
+  },
+
+  /** Lane definition from the active board, or null. */
+  laneDef(lane) {
+    const board = Path.activeBoard();
+    return (board.lanes && board.lanes[lane]) || null;
+  },
+
+  laneIds() {
+    return Path.activeBoard().laneIds.slice();
+  },
+
+  /** First arc lane id on the board (classic: "bottom"), or null. */
+  firstArcLaneId() {
+    const board = Path.activeBoard();
+    for (const id of board.laneIds) {
+      const def = board.lanes[id];
+      if (def && def.geometry && def.geometry.kind === "arc") return id;
+    }
+    return null;
+  },
+
   /** How many parallel rows a lane has. */
   sublaneCount(lane) {
+    const def = Path.laneDef(lane);
+    if (def && def.geometry) return def.geometry.sublaneCount;
     return lane === "top" ? CONFIG.topSublaneCount : CONFIG.bottomSublaneCount;
   },
 
@@ -59,22 +131,29 @@ export const Path = {
     const cached = worldPointsCache.get(key);
     if (cached) return cached;
 
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
+    const board = Path.activeBoard();
+    const left = board.playerCapital;
+    const right = board.enemyCapital;
+    const def = Path.laneDef(lane);
+    const kind = def && def.geometry ? def.geometry.kind : (lane === "bottom" ? "arc" : "line");
     let points;
 
-    if (lane === "top") {
-      const n = Path.sublaneNorm(sublane, CONFIG.topSublaneCount);
-      const y = left.y + n * CONFIG.topSublaneSpread;
+    if (kind === "line") {
+      const geo = def ? def.geometry : {
+        sublaneCount: CONFIG.topSublaneCount,
+        sublaneSpread: CONFIG.topSublaneSpread,
+      };
+      const n = Path.sublaneNorm(sublane, geo.sublaneCount);
+      const y = left.y + n * geo.sublaneSpread;
       points = [
         { x: left.x, y },
         { x: right.x, y },
       ];
     } else {
-      const c = Path.bottomCenter();
-      const radius = Path.bottomRadius(sublane);
+      const c = Path.arcCenter(lane);
+      const radius = Path.arcRadius(lane, sublane);
       points = [];
-      const segs = CONFIG.bottomArcSegments;
+      const segs = (def && def.geometry && def.geometry.arcSegments) || CONFIG.bottomArcSegments;
       for (let i = 0; i <= segs; i += 1) {
         const theta = Math.PI * (1 - i / segs);
         points.push({
@@ -87,25 +166,40 @@ export const Path = {
     return points;
   },
 
-  /** Shared center of the three bottom half-circles (midpoint of the keeps). */
-  bottomCenter() {
+  /** Shared center of an arc lane (midpoint of the keeps at player keep y). */
+  arcCenter(_lane) {
+    const board = Path.activeBoard();
     return {
-      x: (CONFIG.playerCapital.x + CONFIG.enemyCapital.x) / 2,
-      y: CONFIG.playerCapital.y,
+      x: (board.playerCapital.x + board.enemyCapital.x) / 2,
+      y: board.playerCapital.y,
     };
+  },
+
+  /** Shared center of the classic bottom half-circles. */
+  bottomCenter() {
+    return Path.arcCenter(Path.firstArcLaneId() || "bottom");
   },
 
   /** Distance from the shared center to each keep — the middle ring's radius. */
   bottomMidRadius() {
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
+    const board = Path.activeBoard();
+    const left = board.playerCapital;
+    const right = board.enemyCapital;
     return Math.hypot(right.x - left.x, right.y - left.y) / 2;
+  },
+
+  /** Radius for an arc-lane sublane (0 = outer). */
+  arcRadius(lane, sublane) {
+    const def = Path.laneDef(lane);
+    const count = def && def.geometry ? def.geometry.sublaneCount : CONFIG.bottomSublaneCount;
+    const spread = def && def.geometry ? def.geometry.sublaneSpread : CONFIG.bottomSublaneSpread;
+    const n = Path.sublaneNorm(sublane, count);
+    return Path.bottomMidRadius() - n * spread;
   },
 
   /** Sublane 0 is the outer ring, 2 is the inner ring. */
   bottomRadius(sublane) {
-    const n = Path.sublaneNorm(sublane, CONFIG.bottomSublaneCount);
-    return Path.bottomMidRadius() - n * CONFIG.bottomSublaneSpread;
+    return Path.arcRadius(Path.firstArcLaneId() || "bottom", sublane);
   },
 
   /**
@@ -131,27 +225,44 @@ export const Path = {
 
   /** Gameplay length of a lane, in paces. Both rows of a lane share it. */
   lanePaces(lane) {
+    const def = Path.laneDef(lane);
+    if (def) return def.paces;
     return lane === "bottom" ? CONFIG.bottomLanePaces : CONFIG.topLanePaces;
   },
 
-  /** Pixel length of the top lane, the ruler that turns walk speed into paces. */
+  /** Pixel length of the pace-ruler lane (classic: top). */
   topSpanPx() {
-    return CONFIG.enemyCapital.x - CONFIG.playerCapital.x;
+    const board = Path.activeBoard();
+    return board.enemyCapital.x - board.playerCapital.x;
+  },
+
+  /** Pace-ruler lane id (first line lane). */
+  paceRulerLaneId() {
+    return Path.activeBoard().paceRulerLaneId;
+  },
+
+  fortDistancePaces() {
+    return Path.activeBoard().fortDistancePaces;
   },
 
   /** How many station units (pixels or degrees) one pace covers on this lane. */
   stationPerPace(lane) {
-    if (lane === "bottom") {
-      return 180 / CONFIG.bottomLanePaces;
+    const def = Path.laneDef(lane);
+    const kind = def && def.geometry ? def.geometry.kind : (lane === "bottom" ? "arc" : "line");
+    if (kind === "arc") {
+      return 180 / Path.lanePaces(lane);
     }
     const span = Path.topSpanPx();
-    return span > 0 ? span / CONFIG.topLanePaces : 0;
+    const paces = Path.lanePaces(lane);
+    return span > 0 ? span / paces : 0;
   },
 
-  /** Convert a pixel distance into paces using the top-lane ruler. */
+  /** Convert a pixel distance into paces using the pace-ruler lane. */
   pacesFromPx(pixels) {
     const span = Path.topSpanPx();
-    return span > 0 ? pixels * (CONFIG.topLanePaces / span) : 0;
+    const rulerId = Path.paceRulerLaneId();
+    const paces = Path.lanePaces(rulerId);
+    return span > 0 ? pixels * (paces / span) : 0;
   },
 
   /**
@@ -177,7 +288,7 @@ export const Path = {
 
   /** Station of a fort center measured from the player keep. */
   fortStation(lane, sideId) {
-    const along = CONFIG.fortDistancePaces * Path.stationPerPace(lane);
+    const along = Path.fortDistancePaces() * Path.stationPerPace(lane);
     if (sideId === "player") return along;
     return Path.lanePaces(lane) * Path.stationPerPace(lane) - along;
   },
@@ -265,11 +376,13 @@ export const Path = {
   },
 
   /**
-   * Shared lineup coordinate: pixels along the top centerline, or
-   * degrees around the bottom half-circles (0 at player, 180 at enemy).
+   * Shared lineup coordinate: pixels along a line centerline, or
+   * degrees around an arc (0 at player, 180 at enemy).
    */
   stationAt(lane, x, y) {
-    if (lane === "bottom") {
+    const def = Path.laneDef(lane);
+    const kind = def && def.geometry ? def.geometry.kind : (lane === "bottom" ? "arc" : "line");
+    if (kind === "arc") {
       return Path.bottomStationDeg(x, y);
     }
     const points = Path.centerline(lane);
@@ -299,58 +412,78 @@ export const Path = {
 };
 
 
-  /**
-   * Colored fort bars at fortDistancePaces from each keep: vertical on
-   * top, radial on the bottom rings. Each bar belongs to the keep it
-   * sits in front of. Stroke thickness is the colored band.
-   */
+/**
+ * Colored fort bars at fortDistancePaces from each keep: vertical on
+ * line lanes, radial on arc lanes. Each bar belongs to the keep it
+ * sits in front of. Stroke thickness is the colored band.
+ */
 export function quarterSegments() {
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
-    const topY = left.y - CONFIG.topLaneHeight / 2;
-    const botY = left.y + CONFIG.topLaneHeight / 2;
-    const span = right.x - left.x;
-    const topLen = Path.lanePaces("top") * Path.stationPerPace("top");
-    const px = left.x + (span > 0 && topLen > 0
-      ? (Path.fortStation("top", "player") / topLen) * span
-      : left.x);
-    const ex = left.x + (span > 0 && topLen > 0
-      ? (Path.fortStation("top", "enemy") / topLen) * span
-      : right.x);
-    const c = Path.bottomCenter();
-    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
-    const rOut = Path.bottomRadius(0);
-    const bottomLen = Path.lanePaces("bottom") * Path.stationPerPace("bottom");
-    const pFrac = bottomLen > 0 ? Path.fortStation("bottom", "player") / bottomLen : 0;
-    const eFrac = bottomLen > 0 ? Path.fortStation("bottom", "enemy") / bottomLen : 1;
-    const pTheta = Math.PI * (1 - pFrac);
-    const eTheta = Math.PI * (1 - eFrac);
-    return [
-      { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player, side: "player" },
-      { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy, side: "enemy" },
-      {
-        x1: c.x + rIn * Math.cos(pTheta),
-        y1: c.y + rIn * Math.sin(pTheta),
-        x2: c.x + rOut * Math.cos(pTheta),
-        y2: c.y + rOut * Math.sin(pTheta),
-        color: CONFIG.colors.player,
-        side: "player",
-      },
-      {
-        x1: c.x + rIn * Math.cos(eTheta),
-        y1: c.y + rIn * Math.sin(eTheta),
-        x2: c.x + rOut * Math.cos(eTheta),
-        y2: c.y + rOut * Math.sin(eTheta),
-        color: CONFIG.colors.enemy,
-        side: "enemy",
-      },
-    ];
+  const board = Path.activeBoard();
+  const left = board.playerCapital;
+  const right = board.enemyCapital;
+  const segs = [];
+
+  for (const laneId of board.laneIds) {
+    const def = board.lanes[laneId];
+    if (!def || !def.geometry) continue;
+    if (def.geometry.kind === "line") {
+      const height = def.geometry.height || CONFIG.topLaneHeight;
+      const topY = left.y - height / 2;
+      const botY = left.y + height / 2;
+      const span = right.x - left.x;
+      const topLen = Path.lanePaces(laneId) * Path.stationPerPace(laneId);
+      const px = left.x + (span > 0 && topLen > 0
+        ? (Path.fortStation(laneId, "player") / topLen) * span
+        : left.x);
+      const ex = left.x + (span > 0 && topLen > 0
+        ? (Path.fortStation(laneId, "enemy") / topLen) * span
+        : right.x);
+      segs.push(
+        { x1: px, y1: topY, x2: px, y2: botY, color: CONFIG.colors.player, side: "player", lane: laneId },
+        { x1: ex, y1: topY, x2: ex, y2: botY, color: CONFIG.colors.enemy, side: "enemy", lane: laneId },
+      );
+      continue;
+    }
+
+    if (def.geometry.kind === "arc") {
+      const c = Path.arcCenter(laneId);
+      const rIn = Path.arcRadius(laneId, def.geometry.sublaneCount - 1);
+      const rOut = Path.arcRadius(laneId, 0);
+      const bottomLen = Path.lanePaces(laneId) * Path.stationPerPace(laneId);
+      const pFrac = bottomLen > 0 ? Path.fortStation(laneId, "player") / bottomLen : 0;
+      const eFrac = bottomLen > 0 ? Path.fortStation(laneId, "enemy") / bottomLen : 1;
+      const pTheta = Math.PI * (1 - pFrac);
+      const eTheta = Math.PI * (1 - eFrac);
+      segs.push(
+        {
+          x1: c.x + rIn * Math.cos(pTheta),
+          y1: c.y + rIn * Math.sin(pTheta),
+          x2: c.x + rOut * Math.cos(pTheta),
+          y2: c.y + rOut * Math.sin(pTheta),
+          color: CONFIG.colors.player,
+          side: "player",
+          lane: laneId,
+        },
+        {
+          x1: c.x + rIn * Math.cos(eTheta),
+          y1: c.y + rIn * Math.sin(eTheta),
+          x2: c.x + rOut * Math.cos(eTheta),
+          y2: c.y + rOut * Math.sin(eTheta),
+          color: CONFIG.colors.enemy,
+          side: "enemy",
+          lane: laneId,
+        },
+      );
+    }
   }
+  return segs;
+}
 
 
 export function quarterThickness() {
-    return CONFIG.footprintPaces * 2 * Path.stationPerPace("top");
-  }
+  const ruler = Path.paceRulerLaneId();
+  return CONFIG.footprintPaces * 2 * Path.stationPerPace(ruler);
+}
 
 
 /**
@@ -387,19 +520,19 @@ export function troopLaneT(troop) {
 
 /** True when this footprint overlaps its own fort in this lane. */
 export function touchesQuarterLine(troop) {
-    const sideId = troop.side && troop.side.id;
-    if (!sideId || !troop.lane) {
-      return false;
-    }
-    if (typeof troop.station === "function") {
-      const fort = Path.fortStation(troop.lane, sideId);
-      return Math.abs(troop.station() - fort) <= Path.stationSlack(troop.lane, "block");
-    }
-    // Client troops: compare along-lane paces to the fort.
-    const paces = pacesFromKeepOf(troop, sideId);
-    if (paces == null) return false;
-    return Math.abs(paces - CONFIG.fortDistancePaces) <= terrainFootprintPaces();
+  const sideId = troop.side && troop.side.id;
+  if (!sideId || !troop.lane) {
+    return false;
   }
+  if (typeof troop.station === "function") {
+    const fort = Path.fortStation(troop.lane, sideId);
+    return Math.abs(troop.station() - fort) <= Path.stationSlack(troop.lane, "block");
+  }
+  // Client troops: compare along-lane paces to the fort.
+  const paces = pacesFromKeepOf(troop, sideId);
+  if (paces == null) return false;
+  return Math.abs(paces - Path.fortDistancePaces()) <= terrainFootprintPaces();
+}
 
 /**
  * Paces from a keep to a body along that body's lane.
@@ -415,7 +548,8 @@ export function pacesFromKeepOf(body, keepSideId, lane) {
   if (body.capitalHP !== undefined || (body.capital && body.id)) {
     const ownId = body.id;
     if (ownId === keepSideId) return 0;
-    const useLane = lane || "top";
+    const ids = Path.laneIds();
+    const useLane = lane || ids[0] || "top";
     return Path.lanePaces(useLane);
   }
   const useLane = body.lane || lane;
@@ -430,7 +564,7 @@ export function pacesFromKeepOf(body, keepSideId, lane) {
  * (paces from keep ≤ fort distance). Same rule as keep health restore.
  */
 export function fortsClearOfEnemies(sideId, foes) {
-  const limit = CONFIG.fortDistancePaces;
+  const limit = Path.fortDistancePaces();
   const list = foes || [];
   for (let i = 0; i < list.length; i += 1) {
     const foe = list[i];
@@ -440,4 +574,3 @@ export function fortsClearOfEnemies(sideId, foes) {
   }
   return true;
 }
-

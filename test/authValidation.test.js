@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildDiscriminatedDisplayName,
   isProfaneName,
   isValidEmail,
   isValidPassword,
@@ -37,6 +38,16 @@ test("display names reject symbols and EN/ES profanity", () => {
   assert.equal(isProfaneName("mierda"), true);
   assert.equal(isProfaneName("f4ck"), true);
   assert.equal(isProfaneName("Noble Pike"), false);
+});
+
+test("discriminated display names append a numeric suffix", () => {
+  assert.equal(buildDiscriminatedDisplayName("Ash Fox", 1), "Ash Fox");
+  assert.equal(buildDiscriminatedDisplayName("Ash Fox", 2), "Ash Fox 2");
+  assert.equal(buildDiscriminatedDisplayName("Ash Fox", 12), "Ash Fox 12");
+  const long = "A".repeat(32);
+  const d2 = buildDiscriminatedDisplayName(long, 2);
+  assert.ok(d2.length <= 32);
+  assert.match(d2, / 2$/);
 });
 
 test("signup fields validate name email and password together", () => {

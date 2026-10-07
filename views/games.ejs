@@ -87,10 +87,21 @@
       </section>
     </div>
 
-    <section>
+    <section class="open-games">
       <h2>Open games</h2>
+      <dl class="stats open-queues">
+        <div>
+          <dt>Waiting unranked</dt>
+          <dd><%= waiting.unranked %></dd>
+        </div>
+        <div>
+          <dt>Waiting ranked</dt>
+          <dd><%= waiting.ranked %></dd>
+        </div>
+      </dl>
+      <h3>Custom games</h3>
       <% if (!lobbies.length) { %>
-        <p class="hint">No open games.</p>
+        <p class="hint">No custom games.</p>
       <% } %>
       <ul class="list">
         <% lobbies.forEach(function (lobby) { %>

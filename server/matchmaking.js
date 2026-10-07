@@ -509,6 +509,26 @@ export class Matchmaker {
     if (room) room.command(socket, cmd);
   }
 
+  chat(socket, payload) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) room.chat(socket, payload);
+  }
+
+  pause(socket) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) room.pause(socket);
+  }
+
+  pauseSeen(socket) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) room.pauseSeen(socket);
+  }
+
+  settingsOpen(socket, open) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) room.settingsOpen(socket, open);
+  }
+
   botSettings(socket, payload) {
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.botSettings(socket, payload);
@@ -537,6 +557,14 @@ export class Matchmaker {
     if (queued && queued.socket === socket) {
       this.removeQueued(queued).catch((err) => console.error(err));
     }
+  }
+
+  /** Players sitting in matchmaking, not custom lobbies. */
+  waitingCounts() {
+    return {
+      unranked: this.casual.length,
+      ranked: this.ranked.length,
+    };
   }
 
   listLobbies() {
@@ -627,6 +655,10 @@ export class Matchmaker {
     }
 
     room.cancelCountdown();
+    const leaverName = seat.name || "Player";
+    if (otherSnap.socket) {
+      room.systemChat(`${leaverName} left`);
+    }
     room.clearSeat(seat);
     if (leaverSocket) {
       leaverSocket.leave(room.roomName);

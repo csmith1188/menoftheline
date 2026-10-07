@@ -47,6 +47,10 @@
           <% if (localAccountsEnabled) { %><p class="hint">Or</p><% } %>
           <a class="action" href="/login?formbar=1">Log in with Formbar</a>
         <% } %>
+        <% if (discordLoginEnabled) { %>
+          <% if (localAccountsEnabled || formbarLoginEnabled) { %><p class="hint">Or</p><% } %>
+          <a class="action" href="/login?discord=1">Log in with Discord</a>
+        <% } %>
       <% } %>
     </section>
   </div>

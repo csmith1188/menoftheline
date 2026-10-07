@@ -5,6 +5,12 @@ import { TERRAIN_TINT } from "../shared/terrain.js";
 import { drawDebugRanges } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
 import {
+  isArcLane,
+  laneFogColor,
+  laneRowColor,
+  laneStrokeWidth,
+} from "./mapView.js";
+import {
   applySnapshot,
   boardStateMethods,
   presentTroopMotion,
@@ -419,7 +425,7 @@ const boardMethods = {
     const t1 = Math.min(1, maxPaces / total);
     if (!(t1 > t0)) return;
     const pts = Path.worldPoints(lane, sublane);
-    const steps = lane === "bottom" ? Math.max(2, Math.ceil((t1 - t0) * 24)) : 1;
+    const steps = isArcLane(lane) ? Math.max(2, Math.ceil((t1 - t0) * 24)) : 1;
     ctx.beginPath();
     for (let k = 0; k <= steps; k += 1) {
       const t = t0 + ((t1 - t0) * k) / steps;
@@ -435,7 +441,10 @@ const boardMethods = {
     const features = this.terrainFeatures || [];
     const fogRegions = this.fogRegions || [];
     const labelsOn = showTerrainLabels(this);
+    const board = Path.activeBoard();
     return [
+      board.mapId || "",
+      Path.laneIds().join(","),
       features.map((f) => `${f.id}:${f.centerPaces}:${f.halfWidthPaces || 0}`).join("|"),
       fogRegions.map((r) => `${r.lane}:${r.sublane}:${r.minPaces}:${r.maxPaces}:${r.fogged ? 1 : 0}`).join(";"),
       labelsOn ? "1" : "0",
@@ -478,16 +487,21 @@ const boardMethods = {
    * terrain footprints are drawn separately and are not darkened here.
    */
   paintMapUnderlay(ctx) {
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
-
-    ctx.fillStyle = CONFIG.colors.topLane;
-    ctx.fillRect(
-      left.x,
-      left.y - CONFIG.topLaneHeight / 2,
-      right.x - left.x,
-      CONFIG.topLaneHeight,
-    );
+    const boardGeo = Path.activeBoard();
+    const left = boardGeo.playerCapital;
+    const right = boardGeo.enemyCapital;
+    const lineIds = Path.laneIds().filter((id) => !isArcLane(id));
+    for (let i = 0; i < lineIds.length; i += 1) {
+      const def = Path.laneDef(lineIds[i]);
+      const height = (def && def.geometry && def.geometry.height) || CONFIG.topLaneHeight;
+      ctx.fillStyle = CONFIG.colors.topLane;
+      ctx.fillRect(
+        left.x,
+        left.y - height / 2,
+        right.x - left.x,
+        height,
+      );
+    }
 
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -536,20 +550,17 @@ const boardMethods = {
       }
     };
 
-    drawRowBase(
-      "top",
-      CONFIG.topSublaneCount,
-      CONFIG.colors.topSublane,
-      "#1a2e28",
-      CONFIG.topSublaneWidth,
-    );
-    drawRowBase(
-      "bottom",
-      CONFIG.bottomSublaneCount,
-      CONFIG.colors.bottomSublane,
-      "#2a2218",
-      CONFIG.bottomSublaneWidth,
-    );
+    const laneIds = Path.laneIds();
+    for (let li = 0; li < laneIds.length; li += 1) {
+      const laneId = laneIds[li];
+      drawRowBase(
+        laneId,
+        Path.sublaneCount(laneId),
+        laneRowColor(laneId),
+        laneFogColor(laneId),
+        laneStrokeWidth(laneId),
+      );
+    }
 
     this.drawQuarterLines(ctx);
     this.drawTerrain(ctx);
@@ -566,8 +577,7 @@ const boardMethods = {
         CONFIG.canvasHeight,
       );
     }
-    this.drawTopCenter(ctx);
-    this.drawBottomCenter(ctx);
+    this.drawLaneCenters(ctx);
   },
 
   /**
@@ -586,7 +596,7 @@ const boardMethods = {
       if (!(total > 0)) continue;
       const half = f.halfWidthPaces || 0;
       const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.4)";
-      const width = f.lane === "top" ? CONFIG.topSublaneWidth : CONFIG.bottomSublaneWidth;
+      const width = laneStrokeWidth(f.lane);
       for (let s = 0; s < f.sublanes.length; s += 1) {
         const sub = f.sublanes[s];
         ctx.lineWidth = width;
@@ -633,14 +643,33 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Vertical divider on the top band at the cost-weighted center. */
-  drawTopCenter(ctx) {
-    const left = CONFIG.playerCapital;
-    const right = CONFIG.enemyCapital;
-    const t = this.topCenter;
+  /** Draw push-share markers for every lane on the active map. */
+  drawLaneCenters(ctx) {
+    const ids = Path.laneIds();
+    for (let i = 0; i < ids.length; i += 1) {
+      const laneId = ids[i];
+      const def = Path.laneDef(laneId);
+      if (!def || !def.geometry) continue;
+      const t = (this.laneCenters && this.laneCenters[laneId] != null)
+        ? this.laneCenters[laneId]
+        : (laneId === "top" ? this.topCenter : this.bottomCenter);
+      const res = def.resource || {};
+      if (def.geometry.kind === "line") {
+        this.drawLineLaneCenter(ctx, laneId, def, t, res);
+      } else if (def.geometry.kind === "arc") {
+        this.drawArcLaneCenter(ctx, laneId, def, t, res);
+      }
+    }
+  },
+
+  drawLineLaneCenter(ctx, laneId, def, t, res) {
+    const board = Path.activeBoard();
+    const left = board.playerCapital;
+    const right = board.enemyCapital;
     const x = left.x + (right.x - left.x) * t;
-    const top = left.y - CONFIG.topLaneHeight / 2;
-    const bottom = left.y + CONFIG.topLaneHeight / 2;
+    const height = def.geometry.height || CONFIG.topLaneHeight;
+    const top = left.y - height / 2;
+    const bottom = left.y + height / 2;
     ctx.save();
     ctx.strokeStyle = CONFIG.colors.laneCenter;
     ctx.lineWidth = 3;
@@ -649,17 +678,19 @@ const boardMethods = {
     ctx.lineTo(x, bottom);
     ctx.stroke();
     ctx.restore();
-    const playerGps = Math.round(CONFIG.centerIncome * t);
-    this.drawLaneBonus(ctx, x, top - 2, `+${playerGps}💰`, "bottom");
+    if (res.type === "gold" || laneId === "top") {
+      const max = res.max != null ? res.max : CONFIG.centerIncome;
+      const min = res.min != null ? res.min : 0;
+      const playerGps = Math.round(min + (max - min) * t);
+      this.drawLaneBonus(ctx, x, top - 2, `+${playerGps}💰`, "bottom");
+    }
   },
 
-  /** Short ray that only crosses the bottom rings. */
-  drawBottomCenter(ctx) {
-    const c = Path.bottomCenter();
-    const t = this.bottomCenter;
+  drawArcLaneCenter(ctx, laneId, def, t, res) {
+    const c = Path.arcCenter(laneId);
     const theta = Math.PI * (1 - t);
-    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - 10;
-    const rOut = Path.bottomRadius(0) + 10;
+    const rIn = Path.arcRadius(laneId, def.geometry.sublaneCount - 1) - 10;
+    const rOut = Path.arcRadius(laneId, 0) + 10;
     ctx.save();
     ctx.strokeStyle = CONFIG.colors.laneCenter;
     ctx.lineWidth = 3;
@@ -671,15 +702,19 @@ const boardMethods = {
     ctx.lineTo(ox, oy);
     ctx.stroke();
     ctx.restore();
-    const playerLps = Math.round(CONFIG.centerLand * t);
-    const pad = 16;
-    this.drawLaneBonus(
-      ctx,
-      c.x + (rOut + pad) * Math.cos(theta),
-      c.y + (rOut + pad) * Math.sin(theta),
-      `+${playerLps}🌿`,
-      "middle",
-    );
+    if (res.type === "land" || laneId === "bottom") {
+      const max = res.max != null ? res.max : CONFIG.centerLand;
+      const min = res.min != null ? res.min : 0;
+      const playerLps = Math.round(min + (max - min) * t);
+      const pad = 16;
+      this.drawLaneBonus(
+        ctx,
+        c.x + (rOut + pad) * Math.cos(theta),
+        c.y + (rOut + pad) * Math.sin(theta),
+        `+${playerLps}🌿`,
+        "middle",
+      );
+    }
   },
 
   /** Current player's lane bonus, sitting just off one end of the center line. */
@@ -706,18 +741,18 @@ const boardMethods = {
     ctx.globalAlpha = 0.8;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    if (troop.lane === "top") {
-      ctx.lineWidth = CONFIG.topSublaneWidth + 6;
-      const pts = Path.worldPoints("top", row);
+    if (!isArcLane(troop.lane)) {
+      ctx.lineWidth = laneStrokeWidth(troop.lane) + 6;
+      const pts = Path.worldPoints(troop.lane, row);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       ctx.lineTo(pts[1].x, pts[1].y);
       ctx.stroke();
     } else {
-      ctx.lineWidth = CONFIG.bottomSublaneWidth + 6;
-      const ring = Path.bottomCenter();
+      ctx.lineWidth = laneStrokeWidth(troop.lane) + 6;
+      const ring = Path.arcCenter(troop.lane);
       ctx.beginPath();
-      ctx.arc(ring.x, ring.y, Path.bottomRadius(row), Math.PI, 0, true);
+      ctx.arc(ring.x, ring.y, Path.arcRadius(troop.lane, row), Math.PI, 0, true);
       ctx.stroke();
     }
     ctx.restore();

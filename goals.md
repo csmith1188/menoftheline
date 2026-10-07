@@ -21,7 +21,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 # Ideas (May add to game)
 - officers make order sounds when near lines given orders
 - Reinforced Learning player
-- Game -> Client API
-- Site Services -> Client API (play without ever visiting site)
+- ~~Game -> Client API~~ (`/api/v1` session/me/play + socket `auth.token`)
+- ~~Site Services -> Client API (play without ever visiting site)~~ (Formbar login, tickets, ranked/listed/join, lobbies)
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories

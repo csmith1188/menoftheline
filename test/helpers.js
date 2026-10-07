@@ -5,17 +5,12 @@ import { BotController } from "../server/bot.js";
 /** Fresh sim. Defaults to the empty map so combat tests ignore terrain LOS. */
 export function makeSim(opts = {}) {
   const sim = new GameSim();
-  sim.mapId = opts.mapId || "empty";
-  if (opts.fortsEnabled != null || opts.fogEnabled != null || opts.baseGps != null) {
-    sim.applyMatchOptions({
-      mapId: sim.mapId,
-      fortsEnabled: opts.fortsEnabled,
-      fogEnabled: opts.fogEnabled,
-      baseGps: opts.baseGps,
-    });
-  } else {
-    sim.syncTerrainFx();
-  }
+  sim.applyMatchOptions({
+    mapId: opts.mapId || "empty",
+    fortsEnabled: opts.fortsEnabled,
+    fogEnabled: opts.fogEnabled,
+    baseGps: opts.baseGps,
+  });
   return sim;
 }
 

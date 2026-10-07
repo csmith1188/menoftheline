@@ -1,6 +1,6 @@
 # The Map
 
-There are two lanes, Top and Bottom. Each lane is a line of paces with parallel rows.
+Named maps own lane layout, forts, towns, terrain, and optional special rules. The classic Default map still uses two lanes (Top and Bottom). Each lane is a line of paces with parallel rows.
 
 - The Top lane is 1000 paces long and has five rows.
 - The Bottom lane is 1500 paces long and has three rows. The [[Towns]] are on this lane.

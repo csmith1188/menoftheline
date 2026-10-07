@@ -2,6 +2,7 @@ import { CONFIG } from "../shared/config.js";
 import { unitStats } from "../shared/units.js";
 import { fortFootprintPaces, Path } from "../shared/path.js";
 import { engineerAuraPaces } from "../shared/terrain.js";
+import { isArcLane, laneStrokeWidth } from "./mapView.js";
 
 /** True when the server was started with the debug script. */
 export function debugRangesOn() {
@@ -25,13 +26,13 @@ function aheadSpan(lane, centerT, paces, sideId) {
 }
 
 function rowWidth(lane) {
-  return lane === "bottom" ? CONFIG.bottomSublaneWidth : CONFIG.topSublaneWidth;
+  return laneStrokeWidth(lane);
 }
 
 /** Points along one row from progress t0 to t1, measured from the player keep. */
 export function spanPolyline(lane, sublane, t0, t1) {
   const pts = Path.worldPoints(lane, sublane);
-  const steps = lane === "bottom" ? 18 : 1;
+  const steps = isArcLane(lane) ? 18 : 1;
   const out = [];
   const from = Math.max(0, Math.min(1, t0));
   const to = Math.max(0, Math.min(1, t1));
@@ -104,7 +105,7 @@ export function collectDebugMarks(board) {
       }
     }
   }
-  const lanes = ["top", "bottom"];
+  const lanes = Path.laneIds();
   for (let n = 0; n < lanes.length; n += 1) {
     const lane = lanes[n];
     const rows = Path.sublaneCount(lane);

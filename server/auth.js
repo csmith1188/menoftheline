@@ -36,12 +36,22 @@ export function formbarLoginEnabled() {
   return envFlag("FORMBAR_LOGIN", true);
 }
 
+/** Discord OAuth login (needs DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET). Default off. */
+export function discordLoginEnabled() {
+  return envFlag("DISCORD_LOGIN", false);
+}
+
 export function authEmailEnabled() {
   return envFlag("AUTH_EMAIL", true);
 }
 
 export function anyLoginEnabled() {
-  return localAccountsEnabled() || formbarLoginEnabled();
+  return localAccountsEnabled() || formbarLoginEnabled() || discordLoginEnabled();
+}
+
+/** In-match player chat (Socket.IO `chat` event + play-page chrome). */
+export function matchChatEnabled() {
+  return envFlag("MATCH_CHAT", true);
 }
 
 export function smtpConfigured() {
@@ -57,8 +67,15 @@ let bootWarned = false;
 export function warnAuthConfig() {
   if (bootWarned) return;
   bootWarned = true;
-  if (!localAccountsEnabled() && !formbarLoginEnabled()) {
-    console.warn("Auth: LOCAL_ACCOUNTS and FORMBAR_LOGIN are both off; login is disabled.");
+  if (!anyLoginEnabled()) {
+    console.warn("Auth: LOCAL_ACCOUNTS, FORMBAR_LOGIN, and DISCORD_LOGIN are all off; login is disabled.");
+  }
+  if (discordLoginEnabled()) {
+    const hasId = Boolean(String(process.env.DISCORD_CLIENT_ID || "").trim());
+    const hasSecret = Boolean(String(process.env.DISCORD_CLIENT_SECRET || "").trim());
+    if ((!hasId || !hasSecret) && process.env.DISCORD_OAUTH_MOCK !== "1") {
+      console.warn("Auth: DISCORD_LOGIN is on but DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET are incomplete.");
+    }
   }
   if (localAccountsEnabled() && authEmailEnabled() && !smtpConfigured()) {
     console.warn("Auth: AUTH_EMAIL is on but SMTP_HOST/SMTP_FROM are incomplete; verify/forgot will fail.");
@@ -123,6 +140,30 @@ export function validateDisplayName(raw) {
     return { ok: false, error: "Choose a different display name." };
   }
   return { ok: true, name };
+}
+
+/**
+ * Build "Name", then "Name 2", "Name 3", … truncated to 32 chars.
+ * @returns {string | null} null if the candidate fails validation
+ */
+export function buildDiscriminatedDisplayName(base, index = 1) {
+  const n = Number(index);
+  if (!Number.isInteger(n) || n < 1) return null;
+  const rootCheck = validateDisplayName(base);
+  const root = rootCheck.ok
+    ? rootCheck.name
+    : sanitizeDisplayName(base) || "Player";
+  if (n === 1) {
+    const check = validateDisplayName(root);
+    return check.ok ? check.name : null;
+  }
+  const suffix = ` ${n}`;
+  const maxRoot = Math.max(1, 32 - suffix.length);
+  let trimmed = root.slice(0, maxRoot).trimEnd();
+  if (trimmed.length < 1) trimmed = "P";
+  const candidate = `${trimmed}${suffix}`;
+  const check = validateDisplayName(candidate);
+  return check.ok ? check.name : null;
 }
 
 export function isValidPassword(raw) {

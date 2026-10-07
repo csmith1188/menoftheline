@@ -2,6 +2,11 @@ import fs from "fs";
 import path from "path";
 import sqlite3 from "sqlite3";
 import { fileURLToPath } from "url";
+import {
+  buildDiscriminatedDisplayName,
+  sanitizeDisplayName,
+  validateDisplayName,
+} from "./auth.js";
 import { metricsEnabled, noteSqliteBusy, noteSqliteWrite } from "./metrics.js";
 import { ownerBase, pickLeastLoaded, workerCount } from "./owners.js";
 
@@ -240,7 +245,7 @@ export async function initDb() {
   await seedWikiHome();
 }
 
-const ACCOUNT_SELECT = `id, formbar_id, email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume, created_at, updated_at`;
+const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume, created_at, updated_at`;
 
 async function ensureAccountsTable() {
   const existing = await get(
@@ -250,6 +255,7 @@ async function ensureAccountsTable() {
     await run(`CREATE TABLE accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       formbar_id INTEGER UNIQUE,
+      discord_id TEXT UNIQUE,
       email TEXT UNIQUE,
       password_hash TEXT,
       email_verified_at INTEGER,
@@ -272,6 +278,7 @@ async function ensureAccountsTable() {
     await run(`CREATE TABLE accounts_new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       formbar_id INTEGER UNIQUE,
+      discord_id TEXT UNIQUE,
       email TEXT UNIQUE,
       password_hash TEXT,
       email_verified_at INTEGER,
@@ -290,10 +297,10 @@ async function ensureAccountsTable() {
     const hasBgm = accountCols.some((col) => col.name === "bgm_volume");
     await run(
       `INSERT INTO accounts_new (
-        formbar_id, email, password_hash, email_verified_at, name, mmr, tickets, held,
+        formbar_id, discord_id, email, password_hash, email_verified_at, name, mmr, tickets, held,
         wins, losses, tooltips, bgm_volume, created_at, updated_at
       )
-      SELECT formbar_id, NULL, NULL, NULL, name, mmr, tickets, held, wins, losses,
+      SELECT formbar_id, NULL, NULL, NULL, NULL, name, mmr, tickets, held, wins, losses,
         ${hasTooltips ? "tooltips" : "1"},
         ${hasBgm ? "bgm_volume" : "50"},
         created_at, updated_at
@@ -303,6 +310,7 @@ async function ensureAccountsTable() {
     await run("ALTER TABLE accounts_new RENAME TO accounts");
     await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_email ON accounts (email)");
     await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_formbar ON accounts (formbar_id)");
+    await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord ON accounts (discord_id)");
     return;
   }
   if (!accountCols.some((col) => col.name === "email")) {
@@ -320,8 +328,12 @@ async function ensureAccountsTable() {
   if (!accountCols.some((col) => col.name === "bgm_volume")) {
     await run("ALTER TABLE accounts ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 50");
   }
+  if (!accountCols.some((col) => col.name === "discord_id")) {
+    await run("ALTER TABLE accounts ADD COLUMN discord_id TEXT");
+  }
   await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_email ON accounts (email)");
   await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_formbar ON accounts (formbar_id)");
+  await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord ON accounts (discord_id)");
 }
 
 function pickName() {
@@ -414,6 +426,16 @@ export async function getAccountByEmail(email) {
   return row || null;
 }
 
+export async function getAccountByDiscord(discordId) {
+  const key = String(discordId || "").trim();
+  if (!key || key.length > 32) return null;
+  const row = await get(
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE discord_id = ?`,
+    [key],
+  );
+  return row || null;
+}
+
 /** Resolve profile URL id: internal account id, else legacy Formbar id. */
 export async function findAccountForProfile(rawId) {
   const id = Number(rawId);
@@ -423,24 +445,99 @@ export async function findAccountForProfile(rawId) {
   return getAccountByFormbar(id);
 }
 
+export async function getAccountByName(name) {
+  const key = String(name || "").trim();
+  if (!key) return null;
+  const row = await get(
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE name = ? COLLATE NOCASE`,
+    [key],
+  );
+  return row || null;
+}
+
+/** True if another account already uses this display name (case-insensitive). */
+export async function isDisplayNameTaken(name, excludeAccountId = null) {
+  const existing = await getAccountByName(name);
+  if (!existing) return false;
+  if (excludeAccountId != null && Number(existing.id) === Number(excludeAccountId)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Pick a free MOTL display name from a preferred provider/local name.
+ * Adds " 2", " 3", … when taken. Returns `{ name, adjusted }`.
+ */
+export async function allocateUniqueDisplayName(desired, options = {}) {
+  const excludeAccountId = options.excludeAccountId != null
+    ? Number(options.excludeAccountId)
+    : null;
+  const preferredCheck = validateDisplayName(desired);
+  const preferred = preferredCheck.ok
+    ? preferredCheck.name
+    : (sanitizeDisplayName(desired) || "Player");
+  const baseCheck = validateDisplayName(preferred);
+  const base = baseCheck.ok ? baseCheck.name : "Player";
+
+  for (let n = 1; n <= 9999; n += 1) {
+    const candidate = buildDiscriminatedDisplayName(base, n);
+    if (!candidate) continue;
+    if (!(await isDisplayNameTaken(candidate, excludeAccountId))) {
+      return {
+        name: candidate,
+        adjusted: !preferredCheck.ok || candidate !== preferredCheck.name,
+      };
+    }
+  }
+  const fallback = `Player ${Date.now().toString(36).slice(-6)}`;
+  return { name: fallback, adjusted: true };
+}
+
+export async function setAccountDisplayName(accountId, name) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+  const check = validateDisplayName(name);
+  if (!check.ok) return { ok: false, error: "invalid", message: check.error };
+  if (await isDisplayNameTaken(check.name, id)) {
+    return { ok: false, error: "taken" };
+  }
+  const result = await run(
+    "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
+    [check.name, Date.now(), id],
+  );
+  if (!result.changes) return { ok: false, error: "missing" };
+  return { ok: true, name: check.name, account: await getAccount(id) };
+}
+
 export async function upsertAccount(formbarId, name) {
   const fid = Number(formbarId);
   if (!Number.isInteger(fid) || fid <= 0) return null;
   const existing = await getAccountByFormbar(fid);
+  if (existing) return existing;
   const now = Date.now();
-  if (existing) {
-    await run(
-      "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
-      [name, now, existing.id],
-    );
-    existing.name = name;
-    return existing;
-  }
+  const { name: uniqueName } = await allocateUniqueDisplayName(name);
   const result = await run(
     `INSERT INTO accounts (
       formbar_id, name, mmr, tickets, held, wins, losses, created_at, updated_at
     ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?)`,
-    [fid, name, startingMmr(), now, now],
+    [fid, uniqueName, startingMmr(), now, now],
+  );
+  return getAccount(result.lastID);
+}
+
+export async function upsertDiscordAccount(discordId, name) {
+  const did = String(discordId || "").trim();
+  if (!did || did.length > 32) return null;
+  const existing = await getAccountByDiscord(did);
+  if (existing) return existing;
+  const now = Date.now();
+  const { name: uniqueName } = await allocateUniqueDisplayName(name);
+  const result = await run(
+    `INSERT INTO accounts (
+      discord_id, name, mmr, tickets, held, wins, losses, created_at, updated_at
+    ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+    [did, uniqueName, startingMmr(), now, now],
   );
   return getAccount(result.lastID);
 }
@@ -452,12 +549,13 @@ export async function createLocalAccount({
   verifiedAt = null,
 }) {
   const now = Date.now();
+  const { name: uniqueName } = await allocateUniqueDisplayName(name);
   const result = await run(
     `INSERT INTO accounts (
       email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses,
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
-    [email, passwordHash, verifiedAt, name, startingMmr(), now, now],
+    [email, passwordHash, verifiedAt, uniqueName, startingMmr(), now, now],
   );
   return getAccount(result.lastID);
 }
@@ -502,12 +600,14 @@ export async function linkFormbarToAccount(accountId, formbarId) {
   const target = await getAccount(id);
   if (!target) return { ok: false, error: "missing" };
   if (target.formbar_id && Number(target.formbar_id) === fid) {
-    return { ok: true, account: target };
+    return { ok: true, account: target, merged: false };
   }
   if (target.formbar_id) return { ok: false, error: "already_linked" };
   const other = await getAccountByFormbar(fid);
   if (other && other.id !== id) {
-    return mergeAccounts(id, other.id, { formbarId: fid });
+    const merged = await mergeAccounts(id, other.id, { formbarId: fid });
+    if (!merged.ok) return merged;
+    return { ok: true, account: merged.account, merged: true };
   }
   try {
     await run(
@@ -520,12 +620,44 @@ export async function linkFormbarToAccount(accountId, formbarId) {
     }
     throw err;
   }
-  return { ok: true, account: await getAccount(id) };
+  return { ok: true, account: await getAccount(id), merged: false };
+}
+
+export async function linkDiscordToAccount(accountId, discordId) {
+  const id = Number(accountId);
+  const did = String(discordId || "").trim();
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+  if (!did || did.length > 32) return { ok: false, error: "bad_discord" };
+  const target = await getAccount(id);
+  if (!target) return { ok: false, error: "missing" };
+  if (target.discord_id && String(target.discord_id) === did) {
+    return { ok: true, account: target, merged: false };
+  }
+  if (target.discord_id) return { ok: false, error: "already_linked" };
+  const other = await getAccountByDiscord(did);
+  if (other && other.id !== id) {
+    const merged = await mergeAccounts(id, other.id, { discordId: did });
+    if (!merged.ok) return merged;
+    return { ok: true, account: merged.account, merged: true };
+  }
+  try {
+    await run(
+      "UPDATE accounts SET discord_id = ?, updated_at = ? WHERE id = ?",
+      [did, Date.now(), id],
+    );
+  } catch (err) {
+    if (err && err.code === "SQLITE_CONSTRAINT") {
+      return { ok: false, error: "conflict" };
+    }
+    throw err;
+  }
+  return { ok: true, account: await getAccount(id), merged: false };
 }
 
 /**
- * Merge donor into survivor (logged-in account). Sums tickets/wins/losses;
- * MMR is the max; keeps survivor name.
+ * Merge donor into survivor (logged-in account). Unions Formbar / Discord / email
+ * when only one side has each; refuses if both have different values for the same
+ * provider. Sums tickets/wins/losses; MMR is the max; keeps survivor name.
  */
 export async function mergeAccounts(survivorId, donorId, options = {}) {
   const survivor = await getAccount(survivorId);
@@ -533,12 +665,37 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
   if (!survivor || !donor) return { ok: false, error: "missing" };
   if (survivor.id === donor.id) return { ok: true, account: survivor };
 
-  const formbarId = options.formbarId != null
-    ? Number(options.formbarId)
-    : (survivor.formbar_id || donor.formbar_id || null);
-  const email = options.email != null
-    ? options.email
-    : (survivor.email || donor.email || null);
+  const survivorFormbar = survivor.formbar_id != null ? Number(survivor.formbar_id) : null;
+  const donorFormbar = donor.formbar_id != null ? Number(donor.formbar_id) : null;
+  if (
+    survivorFormbar
+    && donorFormbar
+    && survivorFormbar !== donorFormbar
+  ) {
+    return { ok: false, error: "conflict_formbar" };
+  }
+
+  const survivorDiscord = survivor.discord_id ? String(survivor.discord_id) : null;
+  const donorDiscord = donor.discord_id ? String(donor.discord_id) : null;
+  if (survivorDiscord && donorDiscord && survivorDiscord !== donorDiscord) {
+    return { ok: false, error: "conflict_discord" };
+  }
+
+  const survivorEmail = survivor.email ? String(survivor.email) : null;
+  const donorEmail = donor.email ? String(donor.email) : null;
+  if (survivorEmail && donorEmail && survivorEmail !== donorEmail) {
+    return { ok: false, error: "conflict_email" };
+  }
+
+  let formbarId = survivorFormbar || donorFormbar || null;
+  if (options.formbarId != null) formbarId = Number(options.formbarId);
+
+  let discordId = survivorDiscord || donorDiscord || null;
+  if (options.discordId != null) discordId = String(options.discordId).trim() || null;
+
+  let email = survivorEmail || donorEmail || null;
+  if (options.email != null) email = options.email;
+
   const passwordHash = options.passwordHash != null
     ? options.passwordHash
     : (survivor.password_hash || donor.password_hash || null);
@@ -547,6 +704,12 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
 
   if (formbarId) {
     const clash = await getAccountByFormbar(formbarId);
+    if (clash && clash.id !== survivor.id && clash.id !== donor.id) {
+      return { ok: false, error: "conflict" };
+    }
+  }
+  if (discordId) {
+    const clash = await getAccountByDiscord(discordId);
     if (clash && clash.id !== survivor.id && clash.id !== donor.id) {
       return { ok: false, error: "conflict" };
     }
@@ -569,16 +732,17 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
     await execRun("BEGIN IMMEDIATE");
     try {
       await execRun(
-        "UPDATE accounts SET formbar_id = NULL, email = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE accounts SET formbar_id = NULL, discord_id = NULL, email = NULL, updated_at = ? WHERE id = ?",
         [now, donor.id],
       );
       await execRun(
         `UPDATE accounts SET
-          formbar_id = ?, email = ?, password_hash = ?, email_verified_at = ?,
+          formbar_id = ?, discord_id = ?, email = ?, password_hash = ?, email_verified_at = ?,
           tickets = ?, held = ?, wins = ?, losses = ?, mmr = ?, updated_at = ?
          WHERE id = ?`,
         [
           formbarId,
+          discordId,
           email,
           passwordHash,
           verifiedAt,
@@ -597,6 +761,14 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
       );
       await execRun(
         "UPDATE games SET account_b = ? WHERE account_b = ?",
+        [survivor.id, donor.id],
+      );
+      await execRun(
+        "UPDATE suggestions SET account_id = ? WHERE account_id = ?",
+        [survivor.id, donor.id],
+      );
+      await execRun(
+        "UPDATE wiki_revisions SET account_id = ? WHERE account_id = ?",
         [survivor.id, donor.id],
       );
       await execRun("DELETE FROM auth_tokens WHERE account_id = ?", [donor.id]);

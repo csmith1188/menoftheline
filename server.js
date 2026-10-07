@@ -37,6 +37,7 @@ import {
   getWikiPageBySlug,
   getWikiRevision,
   initDb,
+  linkDiscordToAccount,
   linkFormbarToAccount,
   listOpenWikiRevisions,
   listSuggestions,
@@ -52,6 +53,8 @@ import {
   saveWikiPage,
   bgmVolumePercent,
   clampBgmVolumePercent,
+  isDisplayNameTaken,
+  setAccountDisplayName,
   setAccountPassword,
   setEmailVerified,
   setLocalCredentials,
@@ -68,6 +71,7 @@ import {
   tooltipsEnabled,
   undoWikiRevision,
   upsertAccount,
+  upsertDiscordAccount,
   wikiRewardAmount,
   wikiSlug,
   WIKI_BODY_MAX,
@@ -76,11 +80,13 @@ import {
 import {
   anyLoginEnabled,
   authEmailEnabled,
+  discordLoginEnabled,
   formbarLoginEnabled,
   hashPassword,
   hashToken,
   isValidEmail,
   localAccountsEnabled,
+  matchChatEnabled,
   newAuthToken,
   normalizeEmail,
   passwordError,
@@ -109,6 +115,13 @@ import {
   sessionCookieOptions,
 } from "./server/hardening.js";
 import { allowSocketEvent } from "./server/commandLimit.js";
+import {
+  discordAuthorizeUrl,
+  discordConfigured,
+  discordDisplayName,
+  fetchDiscordUserFromCode,
+  newDiscordOAuthState,
+} from "./server/discord.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
 import { renderWikiBody } from "./server/wiki-render.js";
@@ -306,8 +319,10 @@ app.use((req, res, next) => {
   res.locals.isAdmin = isAdmin(req.session);
   res.locals.localAccountsEnabled = localAccountsEnabled();
   res.locals.formbarLoginEnabled = formbarLoginEnabled();
+  res.locals.discordLoginEnabled = discordLoginEnabled();
   res.locals.authEmailEnabled = authEmailEnabled();
   res.locals.anyLoginEnabled = anyLoginEnabled();
+  res.locals.matchChatEnabled = matchChatEnabled();
   next();
 });
 const staticHour = { maxAge: "1h", etag: true };
@@ -341,6 +356,52 @@ function safeNext(value) {
   return text;
 }
 
+/** Public base URL for OAuth callbacks (Host / forwarded headers, else THIS_URL). */
+function publicBase(req) {
+  const host = String(req.get("x-forwarded-host") || req.get("host") || "")
+    .split(",")[0]
+    .trim();
+  if (!host || /[/\s\\]/.test(host)) return THIS_URL;
+  const proto = String(req.get("x-forwarded-proto") || req.protocol || "http")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (proto !== "http" && proto !== "https") return THIS_URL;
+  return `${proto}://${host}`;
+}
+
+/** Native app deep-link allowlist for Formbar login return. */
+function safeAppReturn(value) {
+  const text = String(value || "").trim();
+  if (text === "pocketmotl://auth" || text === "pocketmotl://auth/") {
+    return "pocketmotl://auth";
+  }
+  return null;
+}
+
+function accountPublic(account) {
+  if (!account) return null;
+  return {
+    formbarId: account.formbar_id,
+    discordId: account.discord_id || null,
+    name: account.name,
+    mmr: account.mmr,
+    tickets: account.tickets,
+    held: account.held,
+    wins: account.wins,
+    losses: account.losses,
+  };
+}
+
+function playerPublic(player) {
+  if (!player) return null;
+  return {
+    id: player.id,
+    name: player.name,
+    formbarId: player.formbarId || null,
+  };
+}
+
 function setAccountSession(sess, account) {
   sess.accountId = account.id;
   sess.formbarId = account.formbar_id || null;
@@ -364,6 +425,26 @@ async function establishAccountSession(req, account, notice) {
   await regenerateSession(req);
   setAccountSession(req.session, account);
   if (notice) req.session.notice = notice;
+}
+
+/** User-facing notice for profile link / merge failures. */
+function linkMergeNotice(error, provider) {
+  if (error === "already_linked") {
+    return `This account already has ${provider} linked.`;
+  }
+  if (error === "conflict_formbar") {
+    return "That account already has a different Formbar login linked. Use a different account.";
+  }
+  if (error === "conflict_discord") {
+    return "That account already has a different Discord login linked. Use a different account.";
+  }
+  if (error === "conflict_email") {
+    return "That account already has a different email linked. Use a different account.";
+  }
+  if (error === "conflict") {
+    return `That ${provider} account cannot be linked.`;
+  }
+  return `Could not link ${provider} account.`;
 }
 
 function clientIp(req) {
@@ -410,6 +491,22 @@ async function resolveSessionAccount(sess) {
     }
   }
   return null;
+}
+
+/** Attach a verified Formbar OAuth JWT to a session. Returns the account or null if invalid. */
+async function applyFormbarToken(sess, tokenString) {
+  let identity;
+  try {
+    identity = await authenticateFormbarToken(tokenString, AUTH_URL);
+  } catch {
+    return null;
+  }
+  const nameCheck = validateDisplayName(identity.rawName);
+  const name = nameCheck.ok ? nameCheck.name : `Player ${identity.id}`;
+  const account = await upsertAccount(identity.id, name);
+  if (!account) return null;
+  setAccountSession(sess, account);
+  return account;
 }
 
 async function playerFromSession(sess, options = {}) {
@@ -469,6 +566,65 @@ async function issueResetEmail(account) {
 
 const matchmaker = new Matchmaker(io);
 
+/**
+ * Set session.intent the same way startPlay does. Returns a JSON-ready result
+ * `{ ok, mode }` / `{ ok, rejoin }` or `{ error, status }`.
+ */
+async function preparePlayIntent(sess, intent) {
+  const mode = intent && intent.mode;
+  const paid = PAID_PLAY_MODES.has(mode);
+  if (!GUEST_PLAY_MODES.has(mode) && !paid) {
+    return { error: "bad_mode", status: 400 };
+  }
+  if (paid && !sess.formbarId) {
+    return { error: "login_required", status: 403 };
+  }
+  const player = await playerFromSession(sess, { createGuest: !paid });
+  if (!player) {
+    return { error: "unauthorized", status: 401 };
+  }
+  if (matchmaker.isBusy(player.id)) {
+    return { ok: true, rejoin: true };
+  }
+  if (paid) {
+    const account = await resolveSessionAccount(sess);
+    if (!account || account.tickets <= account.held) {
+      return { error: "no_ticket", status: 403 };
+    }
+  }
+  if (mode === "join") {
+    const roomId = intent.roomId || null;
+    if (!roomId) {
+      return { error: "bad_room", status: 400 };
+    }
+    const room = matchmaker.openLobby(roomId);
+    if (!room) {
+      return { error: "lobby_closed", status: 404 };
+    }
+    if (room.seat.a.userId === player.id) {
+      return { ok: true, rejoin: true };
+    }
+  }
+  const matchOptions = mode === "listed"
+    ? normalizeMatchOptions(intent.matchOptions || {})
+    : null;
+  sess.view3d = null;
+  sess.intent = {
+    mode,
+    roomId: intent.roomId || null,
+    view: null,
+    matchOptions,
+  };
+  await saveSession(sess);
+  const assigned = workerCount() > 1 ? await assignOwner(player.id, mode) : null;
+  return {
+    ok: true,
+    mode,
+    worker: assigned ? assigned.worker : 0,
+    owner: assigned && assigned.owner ? assigned.owner : null,
+  };
+}
+
 if (process.env.METRICS === "1") {
   startMetrics({
     log: process.env.METRICS_LOG !== "0",
@@ -519,6 +675,7 @@ async function gamesData(req) {
     viewer,
     rejoin,
     canTicket: Boolean(viewer && viewer.tickets > viewer.held && !rejoin),
+    waiting: matchmaker.waitingCounts(),
     lobbies: matchmaker.listLobbies(),
     packSize: pack.size,
     packCost: pack.cost,
@@ -571,18 +728,16 @@ async function completeFormbarLogin(req, res, token) {
   if (Number.isInteger(linkId) && linkId > 0) {
     const result = await linkFormbarToAccount(linkId, userId);
     if (!result.ok) {
-      req.session.notice = result.error === "already_linked"
-        ? "This account already has Formbar linked."
-        : result.error === "conflict"
-          ? "That Formbar account cannot be linked."
-          : "Could not link Formbar account.";
+      req.session.notice = linkMergeNotice(result.error, "Formbar");
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
     }
     await upsertAccount(userId, name);
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
-    req.session.notice = "Formbar account linked.";
+    req.session.notice = result.merged
+      ? "Accounts merged. Formbar is linked."
+      : "Formbar account linked.";
     req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
     return;
   }
@@ -590,6 +745,118 @@ async function completeFormbarLogin(req, res, token) {
   const account = await upsertAccount(userId, name);
   setAccountSession(req.session, account);
   req.session.save(() => res.redirect("/"));
+}
+
+function discordCallbackUrl(req) {
+  return `${publicBase(req)}/login/discord/callback`;
+}
+
+function discordApiCallbackUrl(req) {
+  return `${publicBase(req)}/api/v1/login/discord/callback`;
+}
+
+function nameFromDiscordUser(user) {
+  const raw = discordDisplayName(user);
+  const nameCheck = validateDisplayName(raw);
+  if (nameCheck.ok) return nameCheck.name;
+  const tail = String(user && user.id || "").slice(-6) || "user";
+  return `Player ${tail}`;
+}
+
+async function beginDiscordOAuth(req, res, { callbackUrl, nextPath = "/" } = {}) {
+  if (!discordLoginEnabled()) {
+    res.status(404).send("Discord login is disabled.");
+    return;
+  }
+  if (!discordConfigured() && process.env.DISCORD_OAUTH_MOCK !== "1") {
+    res.status(503).send("Discord login is not configured.");
+    return;
+  }
+  const state = newDiscordOAuthState();
+  req.session.discordOAuthState = state;
+  req.session.discordOAuthNext = nextPath;
+  const redirectUri = callbackUrl || discordCallbackUrl(req);
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).send("Could not start Discord login.");
+      return;
+    }
+    if (process.env.DISCORD_OAUTH_MOCK === "1") {
+      const mockUser = process.env.DISCORD_MOCK_USER
+        || JSON.stringify({ id: "999001", username: "MockDiscord", global_name: "Mock Discord" });
+      const code = Buffer.from(mockUser).toString("base64url");
+      const dest = new URL(redirectUri, publicBase(req));
+      dest.searchParams.set("code", code);
+      dest.searchParams.set("state", state);
+      res.redirect(dest.toString());
+      return;
+    }
+    res.redirect(discordAuthorizeUrl(redirectUri, state));
+  });
+}
+
+async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "/" } = {}) {
+  if (!discordLoginEnabled()) {
+    res.status(404).send("Discord login is disabled.");
+    return;
+  }
+  const state = String(req.query.state || "");
+  const expected = String(req.session.discordOAuthState || "");
+  delete req.session.discordOAuthState;
+  const nextPath = req.session.discordOAuthNext || successRedirect;
+  delete req.session.discordOAuthNext;
+  if (!state || !expected || state !== expected) {
+    req.session.notice = "Discord login expired. Try again.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  if (req.query.error) {
+    req.session.notice = "Discord login was cancelled.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  const code = String(req.query.code || "");
+  if (!code) {
+    res.status(400).send("Missing Discord authorization code.");
+    return;
+  }
+  let user;
+  try {
+    user = await fetchDiscordUserFromCode(code, redirectUri || discordCallbackUrl(req));
+  } catch {
+    req.session.notice = "Discord login failed. Try again.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  const name = nameFromDiscordUser(user);
+
+  const linkId = Number(req.session.linkAccountId);
+  if (Number.isInteger(linkId) && linkId > 0) {
+    req.session.linkAccountId = null;
+    const result = await linkDiscordToAccount(linkId, user.id);
+    if (!result.ok) {
+      req.session.notice = linkMergeNotice(result.error, "Discord");
+      req.session.save(() => res.redirect(`/profile/${linkId}`));
+      return;
+    }
+    await upsertDiscordAccount(user.id, name);
+    const linked = await getAccount(result.account.id);
+    setAccountSession(req.session, linked || result.account);
+    req.session.notice = result.merged
+      ? "Accounts merged. Discord is linked."
+      : "Discord account linked.";
+    req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
+    return;
+  }
+
+  const account = await upsertDiscordAccount(user.id, name);
+  if (!account) {
+    res.status(500).send("Could not create account.");
+    return;
+  }
+  setAccountSession(req.session, account);
+  const dest = typeof nextPath === "string" && nextPath.startsWith("/") ? nextPath : "/";
+  req.session.save(() => res.redirect(dest === "/login" ? "/" : dest));
 }
 
 app.get("/login", async (req, res, next) => {
@@ -605,6 +872,10 @@ app.get("/login", async (req, res, next) => {
       }
       const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      return;
+    }
+    if (req.query.discord === "1") {
+      await beginDiscordOAuth(req, res, { callbackUrl: discordCallbackUrl(req) });
       return;
     }
     if (!anyLoginEnabled()) {
@@ -630,6 +901,17 @@ app.get("/login", async (req, res, next) => {
       email: "",
       disabled: false,
     }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/login/discord/callback", async (req, res, next) => {
+  try {
+    await completeDiscordLogin(req, res, {
+      redirectUri: discordCallbackUrl(req),
+      successRedirect: "/",
+    });
   } catch (err) {
     next(err);
   }
@@ -757,6 +1039,9 @@ app.post("/signup", async (req, res, next) => {
       }
       throw err;
     }
+    const nameNote = account.name !== name
+      ? ` Display name set to "${account.name}" because "${name}" was taken.`
+      : "";
     if (needVerify) {
       try {
         await issueVerifyEmail(account);
@@ -765,11 +1050,11 @@ app.post("/signup", async (req, res, next) => {
         renderFail("Could not send verification email. Try again later.");
         return;
       }
-      req.session.notice = "Check your email to verify your account.";
+      req.session.notice = `Check your email to verify your account.${nameNote}`;
       req.session.save(() => res.redirect("/login"));
       return;
     }
-    await establishAccountSession(req, account);
+    await establishAccountSession(req, account, nameNote ? nameNote.trim() : undefined);
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1021,6 +1306,11 @@ app.get("/profile/:id", async (req, res, next) => {
         && !account.formbar_id
         && formbarLoginEnabled(),
       ),
+      canLinkDiscord: Boolean(
+        account && viewer && account.id === viewer.id
+        && !account.discord_id
+        && discordLoginEnabled(),
+      ),
       canAddLocal: Boolean(
         account && viewer && account.id === viewer.id
         && !account.email
@@ -1034,6 +1324,51 @@ app.get("/profile/:id", async (req, res, next) => {
       }
       res.render("profile", body);
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/name", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
+      res.redirect("/login");
+      return;
+    }
+    const back = `/profile/${viewer.id}`;
+    const nameCheck = validateDisplayName(req.body && req.body.name);
+    if (!nameCheck.ok) {
+      req.session.notice = nameCheck.error;
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (viewer.name === nameCheck.name) {
+      req.session.notice = "Display name unchanged.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (await isDisplayNameTaken(nameCheck.name, viewer.id)) {
+      req.session.notice = "That display name is already taken.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (!rateLimit(`displayname:${viewer.id}`, { max: 3, windowMs: 60 * 60 * 1000 })) {
+      req.session.notice = "Display name changed too often. Try again in an hour.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const result = await setAccountDisplayName(viewer.id, nameCheck.name);
+    if (!result.ok) {
+      req.session.notice = result.error === "taken"
+        ? "That display name is already taken."
+        : result.message || "Could not update display name.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    setAccountSession(req.session, result.account);
+    req.session.notice = "Display name updated.";
+    req.session.save(() => res.redirect(`/profile/${result.account.id}`));
   } catch (err) {
     next(err);
   }
@@ -1059,6 +1394,32 @@ app.post("/profile/link/formbar", async (req, res, next) => {
     const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
     req.session.save(() => {
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/link/discord", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
+      res.redirect("/login");
+      return;
+    }
+    if (!discordLoginEnabled()) {
+      res.status(404).send("Discord login is disabled.");
+      return;
+    }
+    if (viewer.discord_id) {
+      req.session.notice = "Discord is already linked.";
+      req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+      return;
+    }
+    req.session.linkAccountId = viewer.id;
+    await beginDiscordOAuth(req, res, {
+      callbackUrl: discordCallbackUrl(req),
+      nextPath: `/profile/${viewer.id}`,
     });
   } catch (err) {
     next(err);
@@ -1111,7 +1472,7 @@ app.post("/profile/link/local", async (req, res, next) => {
         verifiedAt: other.email_verified_at || (authEmailEnabled() ? null : Date.now()),
       });
       if (!merged.ok) {
-        req.session.notice = "Could not link that email account.";
+        req.session.notice = linkMergeNotice(merged.error, "email");
         req.session.save(() => res.redirect(back));
         return;
       }
@@ -1812,6 +2173,7 @@ app.get("/play", async (req, res, next) => {
       || (room && room.view3d);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: debugRangesEnabled(),
+      matchChatEnabled: matchChatEnabled(),
       tooltipsDefault: player.tooltips !== false,
       bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 50,
     });
@@ -1871,8 +2233,151 @@ app.post("/api/v1/session", async (req, res, next) => {
     }
     res.json({
       token: req.sessionID,
-      player: { id: player.id, name: player.name },
+      player: playerPublic(player),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Start Formbar OAuth for the native app (Custom Tabs).
+ * Browser cookie session stores the deep-link return; callback redirects with ?token=sessionId.
+ */
+app.get("/api/v1/login", (req, res, next) => {
+  try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).json({ error: "formbar_disabled" });
+      return;
+    }
+    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    req.session.apiReturn = ret;
+    req.session.save((err) => {
+      if (err) {
+        next(err);
+        return;
+      }
+      const redirectURL = encodeURIComponent(`${publicBase(req)}/api/v1/login/callback`);
+      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Formbar redirect target for native login. */
+app.get("/api/v1/login/callback", async (req, res, next) => {
+  try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).send("Formbar login is disabled.");
+      return;
+    }
+    const account = await applyFormbarToken(req.session, req.query && req.query.token);
+    if (!account) {
+      res.status(400).send("Invalid Formbar token.");
+      return;
+    }
+    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    delete req.session.apiReturn;
+    await saveSession(req.session);
+    res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Attach a Formbar JWT to the Bearer session (tests / alternate clients).
+ * Body: `{ "token": "<formbar jwt>" }`.
+ */
+app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
+  try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).json({ error: "formbar_disabled" });
+      return;
+    }
+    const account = await applyFormbarToken(req.session, req.body && req.body.token);
+    if (!account) {
+      res.status(400).json({ error: "invalid_token" });
+      return;
+    }
+    await saveSession(req.session);
+    const player = await playerFromSession(req.session, { createGuest: false });
+    res.json({
+      token: req.sessionID,
+      player: playerPublic(player),
+      account: accountPublic(account),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Start Discord OAuth for the native app (Custom Tabs).
+ * Callback deep-links with ?token=sessionId like Formbar.
+ */
+app.get("/api/v1/login/discord", async (req, res, next) => {
+  try {
+    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    req.session.apiReturn = ret;
+    await beginDiscordOAuth(req, res, { callbackUrl: discordApiCallbackUrl(req) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/login/discord/callback", async (req, res, next) => {
+  try {
+    if (!discordLoginEnabled()) {
+      res.status(404).send("Discord login is disabled.");
+      return;
+    }
+    const state = String(req.query.state || "");
+    const expected = String(req.session.discordOAuthState || "");
+    delete req.session.discordOAuthState;
+    delete req.session.discordOAuthNext;
+    if (!state || !expected || state !== expected) {
+      res.status(400).send("Discord login expired.");
+      return;
+    }
+    if (req.query.error) {
+      res.status(400).send("Discord login was cancelled.");
+      return;
+    }
+    const code = String(req.query.code || "");
+    if (!code) {
+      res.status(400).send("Missing Discord authorization code.");
+      return;
+    }
+    let user;
+    try {
+      user = await fetchDiscordUserFromCode(code, discordApiCallbackUrl(req));
+    } catch {
+      res.status(400).send("Discord login failed.");
+      return;
+    }
+    const account = await upsertDiscordAccount(user.id, nameFromDiscordUser(user));
+    if (!account) {
+      res.status(500).send("Could not create account.");
+      return;
+    }
+    setAccountSession(req.session, account);
+    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    delete req.session.apiReturn;
+    await saveSession(req.session);
+    res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/logout", requireApiSession, async (req, res, next) => {
+  try {
+    await new Promise((resolve, reject) => {
+      req.session.destroy((err) => (err ? reject(err) : resolve()));
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -1885,9 +2390,78 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    const busy = matchmaker.isBusy(player.id);
+    const account = await resolveSessionAccount(req.session);
+    const pack = ticketPack();
     res.json({
-      player: { id: player.id, name: player.name },
-      busy: matchmaker.isBusy(player.id),
+      player: playerPublic(player),
+      busy,
+      account: accountPublic(account),
+      canTicket: Boolean(account && account.tickets > account.held && !busy),
+      pack: { size: pack.size, cost: pack.cost },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/lobbies", requireApiSession, async (req, res, next) => {
+  try {
+    res.json({ lobbies: matchmaker.listLobbies() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/match-options", requireApiSession, async (req, res, next) => {
+  try {
+    const defaults = defaultMatchOptions();
+    res.json({
+      defaults,
+      speeds: MATCH_SPEEDS,
+      maps: mapPresetIds().map((id) => ({
+        id,
+        label: (MAP_PRESETS[id] && MAP_PRESETS[id].label) || id,
+      })),
+      baseGpsMin: BASE_GPS_MIN,
+      baseGpsMax: BASE_GPS_MAX,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
+  try {
+    const account = await resolveSessionAccount(req.session);
+    if (!account || !account.formbar_id) {
+      res.status(403).json({ error: "login_required" });
+      return;
+    }
+    const pack = ticketPack();
+    const transfer = await payPool(formbarSocket, {
+      userId: account.formbar_id,
+      poolId: POOL_ID,
+      amount: pack.cost,
+      pin: req.body && req.body.pin,
+      reason: `${pack.size} game tickets`,
+    });
+    if (!transfer.success) {
+      res.status(400).json({
+        error: "payment_failed",
+        message: transfer.message || "Payment failed.",
+      });
+      return;
+    }
+    await addTickets(account.id, pack.size, pack.cost, account.formbar_id);
+    const updated = await getAccount(account.id);
+    const player = await playerFromSession(req.session, { createGuest: false });
+    const busy = player ? matchmaker.isBusy(player.id) : false;
+    res.json({
+      ok: true,
+      account: accountPublic(updated),
+      canTicket: Boolean(updated && updated.tickets > updated.held && !busy),
+      pack: { size: pack.size, cost: pack.cost },
     });
   } catch (err) {
     next(err);
@@ -1896,48 +2470,47 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
 
 app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
   try {
-    const mode = req.body && req.body.mode;
-    if (PAID_PLAY_MODES.has(mode)) {
-      res.status(403).json({ error: "login_required" });
-      return;
-    }
-    if (!GUEST_PLAY_MODES.has(mode)) {
-      res.status(400).json({ error: "bad_mode" });
-      return;
-    }
-    if (!rateLimit(`play:${clientIp(req)}`, { max: LIMITS.play, windowMs: 60 * 1000 })) {
+    const body = req.body || {};
+    const mode = body.mode;
+    const paid = PAID_PLAY_MODES.has(mode);
+    const playMax = mode === "listed" ? LIMITS.lobby : LIMITS.play;
+    if (!rateLimit(`play:${clientIp(req)}`, { max: playMax, windowMs: 60 * 1000 })) {
       res.status(429).json({ error: "rate_limited" });
       return;
     }
     const accountId = req.session && req.session.accountId;
-    if (accountId && !rateLimit(`play-acct:${accountId}`, { max: LIMITS.play, windowMs: 60 * 1000 })) {
+    if (accountId && !rateLimit(`play-acct:${accountId}`, { max: playMax, windowMs: 60 * 1000 })) {
       res.status(429).json({ error: "rate_limited" });
       return;
     }
-    const needsNewGuest = !req.session.accountId && !req.session.guestId && !req.session.userId;
+    const needsNewGuest = !paid && !req.session.accountId && !req.session.guestId && !req.session.userId;
     if (needsNewGuest && !rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
       res.status(429).json({ error: "rate_limited" });
       return;
     }
-    const player = await playerFromSession(req.session, { createGuest: true });
-    if (!player) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    if (matchmaker.isBusy(player.id)) {
-      res.json({ ok: true, rejoin: true });
-      return;
-    }
-    req.session.view3d = null;
-    req.session.intent = { mode, roomId: null, view: null };
-    await saveSession(req.session);
-    const assigned = workerCount() > 1 ? await assignOwner(player.id, mode) : null;
-    res.json({
-      ok: true,
+    const matchOptions = body.matchOptions && typeof body.matchOptions === "object"
+      ? body.matchOptions
+      : {
+        speed: body.speed,
+        fogEnabled: body.fogEnabled,
+        fog: body.fog,
+        mapId: body.mapId,
+        map: body.map,
+        fortsEnabled: body.fortsEnabled,
+        forts: body.forts,
+        baseGps: body.baseGps,
+        baseIncome: body.baseIncome,
+      };
+    const result = await preparePlayIntent(req.session, {
       mode,
-      worker: assigned ? assigned.worker : 0,
-      owner: assigned && assigned.owner ? assigned.owner : null,
+      roomId: body.roomId || null,
+      matchOptions,
     });
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error });
+      return;
+    }
+    res.json(result);
   } catch (err) {
     next(err);
   }
@@ -2037,6 +2610,10 @@ io.on("connection", (socket) => {
   matchmaker.connect(socket);
   capUserSockets(socket);
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
+  socket.on("chat", (payload) => matchmaker.chat(socket, payload));
+  socket.on("pause", () => matchmaker.pause(socket));
+  socket.on("pauseSeen", () => matchmaker.pauseSeen(socket));
+  socket.on("settingsOpen", (open) => matchmaker.settingsOpen(socket, open));
   socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
   socket.on("debugPlay", (payload) => matchmaker.debugPlay(socket, payload));
   socket.on("tooltips", (on) => {

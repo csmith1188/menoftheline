@@ -3,6 +3,12 @@ import { CONFIG } from "../shared/config.js";
 import { allowCommand, allowSocketEvent, sanitizeCommand } from "./commandLimit.js";
 import { debugRangesEnabled } from "./hardening.js";
 import {
+  allowChat,
+  chatHistoryMax,
+  matchChatEnabled,
+  sanitizeChatText,
+} from "./chat.js";
+import {
   metricsEnabled,
   noteBroadcast,
   noteCommand,
@@ -40,6 +46,12 @@ export function stateIntervalMs() {
 export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 10000;
 /** Match-start countdown for bot games. */
 export const BOT_COUNTDOWN_MS = Number(process.env.BOT_COUNTDOWN_MS) || 5000;
+/** Mutual-unpause countdown after one player requests resume. */
+export const UNPAUSE_MS = Number(process.env.UNPAUSE_MS) || 60000;
+/** Grace before a mid-match disconnect pauses for reconnect. */
+export const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 5000;
+/** How long to wait for a reconnect before auto-concede. */
+export const RECONNECT_WAIT_MS = Number(process.env.RECONNECT_WAIT_MS) || 60000;
 
 export const BOT_SPEEDS = MATCH_SPEEDS;
 
@@ -55,6 +67,8 @@ function emptySeat(key, sideId) {
     socket: null,
     bot: null,
     queue: [],
+    chatBucket: null,
+    reconnectAt: [],
   };
 }
 
@@ -81,7 +95,7 @@ export class GameRoom {
     this.closing = false;
     this.view3d = false;
     this.botDifficulty = "simple";
-    this.botStrategy = { top: "auto", bottom: "auto" };
+    this.botStrategy = this.defaultBotStrategy();
     this.speedScale = 1;
     this.speedAccum = 0;
     this.matchOptions = null;
@@ -98,6 +112,28 @@ export class GameRoom {
     this.stateAccumMs = 0;
     this.playSnapshotSent = false;
     this.winnerSent = false;
+    /** Ephemeral match chat (user + system). */
+    this.chatLog = [];
+    this.chatSeq = 0;
+    /** Bot/training: freeze sim while a human has settings open. */
+    this.menuPaused = false;
+    /** Human vs human: both seats must request before the match freezes. */
+    this.pauseWant = { a: false, b: false };
+    /** Seat key that should see the red chat pause alert (the non-requester). */
+    this.pauseAlertSeat = null;
+    /** True after both humans agreed to pause. */
+    this.paused = false;
+    /** Votes to resume; either both, or the unpause countdown finishing. */
+    this.unpauseWant = { a: false, b: false };
+    this.unpauseEnds = null;
+    this.unpauseTimer = null;
+    /** Seat key in the short post-disconnect grace window (sim still runs). */
+    this.disconnectGraceSeat = null;
+    this.disconnectGraceTimer = null;
+    /** Seat key being waited on after grace; freezes sim until reconnect or forfeit. */
+    this.reconnectWaitSeat = null;
+    this.reconnectWaitEnds = null;
+    this.reconnectWaitTimer = null;
     if (process.env.LOAD_TEST === "1") {
       const gold = Number(process.env.LOAD_TEST_GOLD);
       const amount = Number.isFinite(gold) && gold > 0 ? gold : 20000;
@@ -112,6 +148,14 @@ export class GameRoom {
     }
   }
 
+  /** Per-lane bot strategy defaults from the active map. */
+  defaultBotStrategy() {
+    const ids = (this.sim && this.sim.map && this.sim.map.laneIds()) || ["top", "bottom"];
+    const out = {};
+    for (let i = 0; i < ids.length; i += 1) out[ids[i]] = "auto";
+    return out;
+  }
+
   /** Custom lobby settings (listed rooms). */
   applyMatchOptions(raw) {
     const opts = normalizeMatchOptions(raw);
@@ -119,6 +163,7 @@ export class GameRoom {
     this.speedScale = opts.speed;
     this.speedAccum = 0;
     this.sim.applyMatchOptions(opts);
+    this.botStrategy = { ...this.defaultBotStrategy(), ...this.botStrategy };
   }
 
   /** Public summary for Open Games cards. */
@@ -154,6 +199,8 @@ export class GameRoom {
     seat.socket = null;
     seat.bot = null;
     seat.queue = [];
+    seat.chatBucket = null;
+    seat.reconnectAt = [];
   }
 
   remember(socket) {
@@ -183,19 +230,75 @@ export class GameRoom {
   seatHuman(key, socket) {
     const seat = this.seat[key];
     const previous = seat.socket;
+    const other = key === "a" ? this.seat.b : this.seat.a;
+    // Someone already in the other seat was waiting; do not announce this join to them.
+    const otherAlreadyWaiting = Boolean(other.userId && !other.bot);
+    const rejoining = Boolean(seat.userId)
+      && (this.status === "playing" || this.status === "countdown");
+    const tabReplace = Boolean(previous && previous !== socket);
+    const name = socket.data.user && socket.data.user.name
+      ? String(socket.data.user.name)
+      : "Player";
     this.copyPlayer(seat, socket.data.user);
     seat.socket = socket;
     socket.data.gameId = this.id;
     socket.data.seatKey = key;
     socket.join(this.roomName);
     this.remember(socket);
-    if (previous && previous !== socket) {
+    if (tabReplace) {
       previous.data.replaced = true;
       previous.emit("replaced");
       previous.disconnect(true);
     }
+    const midMatchReconnect = (tabReplace || rejoining)
+      && this.status === "playing"
+      && !this.sim.winner;
+    if (midMatchReconnect && this.noteReconnectSpam(seat)) {
+      this.clearDisconnectForSeat(seat);
+      return;
+    }
+    if (tabReplace || rejoining) {
+      this.systemChat(`${name} reconnected`);
+    } else if (!otherAlreadyWaiting) {
+      this.systemChat(`${name} joined`);
+    }
+    this.clearDisconnectForSeat(seat);
     this.pushLobby();
     this.broadcastState();
+  }
+
+  /**
+   * Track mid-match reconnects. Returns true if the seat was force-conceded.
+   */
+  noteReconnectSpam(seat, now = Date.now()) {
+    if (!seat || this.status !== "playing" || this.sim.winner || this.closing) {
+      return false;
+    }
+    const max = CONFIG.reconnectSpamMax || 3;
+    const windowMs = CONFIG.reconnectSpamWindowMs || 15000;
+    if (!Array.isArray(seat.reconnectAt)) seat.reconnectAt = [];
+    seat.reconnectAt.push(now);
+    seat.reconnectAt = seat.reconnectAt.filter((at) => now - at <= windowMs);
+    if (seat.reconnectAt.length < max) return false;
+    this.forceConcedeSeat(seat, {
+      chatLine: `${seat.name || "Player"} forfeited (reconnect spam)`,
+    });
+    return true;
+  }
+
+  /** Opponent wins; shared by concede, disconnect timeout, reconnect spam. */
+  forceConcedeSeat(seat, { chatLine } = {}) {
+    if (this.status !== "playing" || this.sim.winner || this.closing) return false;
+    if (!seat || !seat.userId) return false;
+    this.resetPauseState();
+    this.sim.winner = seat.sideId === "player" ? "enemy" : "player";
+    this.sim.winReason = "concede";
+    this.sim.sounds = [];
+    seat.queue = [];
+    if (chatLine) this.systemChat(chatLine);
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+    return true;
   }
 
   seatReserved(key, player) {
@@ -263,7 +366,7 @@ export class GameRoom {
     if (payload.strategy && typeof payload.strategy === "object") {
       const lane = payload.strategy.lane;
       const mode = payload.strategy.mode;
-      if ((lane === "top" || lane === "bottom") && STRATEGY_MODES.includes(mode)) {
+      if (this.sim.map.hasLane(lane) && STRATEGY_MODES.includes(mode)) {
         this.botStrategy[lane] = mode;
         this.forEachBot((bot) => bot.setLaneStrategy(lane, mode));
       }
@@ -388,30 +491,279 @@ export class GameRoom {
     }
   }
 
+  /** True when the authoritative sim must not advance. */
+  simFrozen() {
+    return this.menuPaused
+      || this.paused
+      || Boolean(this.unpauseEnds)
+      || Boolean(this.reconnectWaitEnds);
+  }
+
+  /** Human vs human seats (no bots) — mutual pause is available. */
+  humanPauseMatch() {
+    const a = this.seat.a;
+    const b = this.seat.b;
+    if (a.bot || b.bot) return false;
+    if (!a.userId || !b.userId) return false;
+    return true;
+  }
+
+  /** Bot (or training-vs-bot): settings menu freezes the match. */
+  menuPauseAllowed() {
+    return Boolean(this.seat.a.bot || this.seat.b.bot);
+  }
+
+  clearPauseVotes() {
+    this.pauseWant = { a: false, b: false };
+    this.pauseAlertSeat = null;
+  }
+
+  clearUnpauseVotes() {
+    this.unpauseWant = { a: false, b: false };
+  }
+
+  cancelUnpauseCountdown() {
+    if (this.unpauseTimer) {
+      clearTimeout(this.unpauseTimer);
+      this.unpauseTimer = null;
+    }
+    this.unpauseEnds = null;
+  }
+
+  resetPauseState() {
+    this.menuPaused = false;
+    this.paused = false;
+    this.clearPauseVotes();
+    this.clearUnpauseVotes();
+    this.cancelUnpauseCountdown();
+    this.clearDisconnectTimers();
+  }
+
+  clearDisconnectGrace() {
+    if (this.disconnectGraceTimer) {
+      clearTimeout(this.disconnectGraceTimer);
+      this.disconnectGraceTimer = null;
+    }
+    this.disconnectGraceSeat = null;
+  }
+
+  cancelReconnectWait() {
+    if (this.reconnectWaitTimer) {
+      clearTimeout(this.reconnectWaitTimer);
+      this.reconnectWaitTimer = null;
+    }
+    this.reconnectWaitEnds = null;
+    this.reconnectWaitSeat = null;
+  }
+
+  clearDisconnectTimers() {
+    this.clearDisconnectGrace();
+    this.cancelReconnectWait();
+  }
+
+  reconnectWaitLeftMs() {
+    if (!this.reconnectWaitEnds) return null;
+    return Math.max(0, this.reconnectWaitEnds - Date.now());
+  }
+
+  /** Clear grace / reconnect wait for a seat that came back. */
+  clearDisconnectForSeat(seat) {
+    if (!seat) return;
+    if (this.disconnectGraceSeat === seat.key) this.clearDisconnectGrace();
+    if (this.reconnectWaitSeat === seat.key) this.cancelReconnectWait();
+  }
+
+  /**
+   * After disconnect grace: freeze and wait for reconnect, then auto-concede.
+   */
+  beginReconnectWait(seat) {
+    if (this.status !== "playing" || this.sim.winner || this.closing) return;
+    if (!seat || seat.socket || seat.bot) return;
+    if (this.connectedSockets().length === 0) {
+      this.destroy();
+      return;
+    }
+    this.clearDisconnectGrace();
+    this.cancelUnpauseCountdown();
+    this.clearUnpauseVotes();
+    this.reconnectWaitSeat = seat.key;
+    const wait = RECONNECT_WAIT_MS;
+    this.reconnectWaitEnds = Date.now() + wait;
+    this.systemChat(`Waiting for ${seat.name || "Player"} to reconnect`);
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+    this.reconnectWaitTimer = setTimeout(() => {
+      this.reconnectWaitTimer = null;
+      this.forfeitDisconnect(seat.key);
+    }, wait);
+  }
+
+  /** Disconnected player loses after the reconnect window. */
+  forfeitDisconnect(seatKey) {
+    if (this.status !== "playing" || this.sim.winner || this.closing) return;
+    const seat = this.seat[seatKey];
+    if (!seat || seat.socket) {
+      this.cancelReconnectWait();
+      return;
+    }
+    this.forceConcedeSeat(seat, {
+      chatLine: `${seat.name || "Player"} forfeited (disconnected)`,
+    });
+  }
+
+  unpauseLeftMs() {
+    if (!this.unpauseEnds) return null;
+    return Math.max(0, this.unpauseEnds - Date.now());
+  }
+
+  /** Freeze after both humans requested pause. */
+  enterPaused() {
+    this.paused = true;
+    this.clearPauseVotes();
+    this.pauseAlertSeat = null;
+    this.clearUnpauseVotes();
+    this.cancelUnpauseCountdown();
+    this.systemChat("Match paused");
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+  }
+
+  /** Resume play (both unpaused, or countdown finished). */
+  resumePlay() {
+    if (!this.paused && !this.unpauseEnds) return;
+    this.paused = false;
+    this.clearUnpauseVotes();
+    this.cancelUnpauseCountdown();
+    this.clearPauseVotes();
+    this.pauseAlertSeat = null;
+    this.systemChat("Match resumed");
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+  }
+
+  beginUnpauseCountdown() {
+    if (!this.paused || this.unpauseEnds) return;
+    const wait = UNPAUSE_MS;
+    this.unpauseEnds = Date.now() + wait;
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+    this.unpauseTimer = setTimeout(() => this.resumePlay(), wait);
+  }
+
+  /**
+   * Bot games: client reports settings open/closed.
+   * Freezes the sim while open so the player can adjust without the bot playing on.
+   */
+  settingsOpen(socket, open) {
+    if (!this.menuPauseAllowed()) return;
+    if (this.status !== "playing" || this.sim.winner) return;
+    const seat = this.seatBySocket(socket);
+    if (!seat || seat.bot) return;
+    const next = Boolean(open);
+    if (this.menuPaused === next) return;
+    this.menuPaused = next;
+    this.broadcastState({ volatile: false });
+  }
+
+  /**
+   * Human mutual pause / unpause.
+   * First click while live: pause request (chat + red alert for the other).
+   * Both requested → pause. While paused: unpause vote; both or 60s → resume.
+   */
+  pause(socket) {
+    if (this.status !== "playing" || this.sim.winner) return;
+    if (this.reconnectWaitEnds) return;
+    if (!this.humanPauseMatch()) return;
+    const seat = this.seatBySocket(socket);
+    if (!seat || seat.bot || !seat.userId) return;
+    const other = this.opponentSeat(seat);
+    if (!other) return;
+
+    if (this.paused) {
+      if (this.unpauseWant[seat.key]) return;
+      this.unpauseWant[seat.key] = true;
+      if (this.unpauseWant.a && this.unpauseWant.b) {
+        this.resumePlay();
+        return;
+      }
+      if (!this.unpauseEnds) this.beginUnpauseCountdown();
+      else {
+        this.pushLobby();
+        this.broadcastState({ volatile: false });
+      }
+      return;
+    }
+
+    // Cancel a solo pause request.
+    if (this.pauseWant[seat.key] && !this.pauseWant[other.key]) {
+      this.pauseWant[seat.key] = false;
+      this.pauseAlertSeat = null;
+      this.systemChat(`${seat.name || "Player"} cancelled the pause request`);
+      this.pushLobby();
+      this.broadcastState({ volatile: false });
+      return;
+    }
+
+    if (this.pauseWant[seat.key]) return;
+    this.pauseWant[seat.key] = true;
+    if (this.pauseWant.a && this.pauseWant.b) {
+      this.enterPaused();
+      return;
+    }
+    this.pauseAlertSeat = other.key;
+    this.systemChat(`${seat.name || "Player"} requested a pause`);
+    this.pushLobby();
+    this.broadcastState({ volatile: false });
+  }
+
+  /** Clear the red chat pause alert (opening chat). */
+  pauseSeen(socket) {
+    const seat = this.seatBySocket(socket);
+    if (!seat) return;
+    if (this.pauseAlertSeat !== seat.key) return;
+    this.pauseAlertSeat = null;
+    this.pushLobby();
+  }
+
+  opponentSeat(seat) {
+    return seat.key === "a" ? this.seat.b : this.seat.a;
+  }
+
   tick() {
     if (this.status !== "playing") return;
     const watch = metricsEnabled();
     const t0 = watch ? performance.now() : 0;
-    const scale = (this.mode === "bot" || this.mode === "training" || this.mode === "listed")
-      ? this.speedScale
-      : 1;
-    this.speedAccum += scale;
-    const cap = CONFIG.botSpeedStepCap || 4;
-    let steps = Math.floor(this.speedAccum);
-    if (steps > cap) steps = cap;
-    this.speedAccum -= steps;
-    const simStart = watch ? performance.now() : 0;
-    for (let s = 0; s < steps; s += 1) {
-      // Install this match's terrain overlay before commands/bots/sim read LOS.
-      this.sim.installTerrainFx();
-      if (!this.sim.beginStep(STEP_DT)) break;
-      this.applyQueued();
-      this.runBots();
-      this.sim.finishStep(STEP_DT);
+    if (
+      this.sim.winner
+      && (this.paused || this.menuPaused || this.unpauseEnds || this.pauseAlertSeat
+        || this.pauseWant.a || this.pauseWant.b
+        || this.reconnectWaitEnds || this.disconnectGraceSeat)
+    ) {
+      this.resetPauseState();
+      this.pushLobby();
     }
-    if (watch) noteSim(performance.now() - simStart);
-    // Visual splats age on wall time so they do not freeze at slow speeds.
-    this.sim.updateSplats(STEP_DT);
+    if (!this.simFrozen()) {
+      const scale = (this.mode === "bot" || this.mode === "training" || this.mode === "listed")
+        ? this.speedScale
+        : 1;
+      this.speedAccum += scale;
+      const cap = CONFIG.botSpeedStepCap || 4;
+      let steps = Math.floor(this.speedAccum);
+      if (steps > cap) steps = cap;
+      this.speedAccum -= steps;
+      const simStart = watch ? performance.now() : 0;
+      for (let s = 0; s < steps; s += 1) {
+        // Install this match's terrain overlay before commands/bots/sim read LOS.
+        this.sim.installTerrainFx();
+        if (!this.sim.beginStep(STEP_DT)) break;
+        this.applyQueued();
+        this.runBots();
+        this.sim.finishStep(STEP_DT);
+      }
+      if (watch) noteSim(performance.now() - simStart);
+      // Visual splats age on wall time so they do not freeze at slow speeds.
+      this.sim.updateSplats(STEP_DT);
+    }
     this.stateAccumMs += TICK_MS;
     const winner = Boolean(this.sim.winner);
     if (winner && !this.winnerSent) {
@@ -454,6 +806,10 @@ export class GameRoom {
 
   command(socket, cmd) {
     if (this.status !== "playing" || this.sim.winner) return;
+    if (this.simFrozen()) {
+      noteCommand(false);
+      return;
+    }
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
     const clean = sanitizeCommand(cmd);
@@ -473,15 +829,90 @@ export class GameRoom {
     noteCommand(true);
   }
 
-  concede(socket) {
-    if (this.status !== "playing" || this.sim.winner) return;
+  nextChatId() {
+    this.chatSeq += 1;
+    return `${this.id}:${this.chatSeq}`;
+  }
+
+  /**
+   * Chat only for human vs human when both seats are logged-in accounts.
+   * Off when either seat is a bot, a guest, or empty.
+   */
+  roomChatActive() {
+    if (!matchChatEnabled()) return false;
+    const a = this.seat.a;
+    const b = this.seat.b;
+    if (a.bot || b.bot) return false;
+    if (!a.userId || !b.userId) return false;
+    if (!a.accountId || !b.accountId) return false;
+    return true;
+  }
+
+  appendChat(msg) {
+    this.chatLog.push(msg);
+    const max = chatHistoryMax();
+    if (this.chatLog.length > max) {
+      this.chatLog.splice(0, this.chatLog.length - max);
+    }
+  }
+
+  broadcastChat(msg) {
+    const seats = this.connectedSockets();
+    for (let i = 0; i < seats.length; i += 1) {
+      seats[i].socket.emit("chat", msg);
+    }
+  }
+
+  /** System line into history + live broadcast (no-op when chat inactive). */
+  systemChat(text) {
+    if (!this.roomChatActive()) return;
+    const line = String(text || "").trim();
+    if (!line) return;
+    const msg = {
+      id: this.nextChatId(),
+      kind: "system",
+      text: line,
+      at: Date.now(),
+    };
+    this.appendChat(msg);
+    this.broadcastChat(msg);
+  }
+
+  /**
+   * Player chat. Allowed while seated in waiting / countdown / playing
+   * (including post-win until leave), only when roomChatActive().
+   */
+  chat(socket, payload) {
+    if (!this.roomChatActive()) return;
+    if (this.status === "dead" || this.closing) return;
+    if (
+      this.status !== "waiting"
+      && this.status !== "countdown"
+      && this.status !== "playing"
+    ) {
+      return;
+    }
     const seat = this.seatBySocket(socket);
-    if (!seat || !seat.userId) return;
-    this.sim.winner = seat.sideId === "player" ? "enemy" : "player";
-    this.sim.winReason = "concede";
-    this.sim.sounds = [];
-    seat.queue = [];
-    this.broadcastState({ volatile: false });
+    if (!seat || seat.bot || !seat.userId || !seat.accountId) return;
+    const raw = payload && typeof payload === "object" ? payload.text : payload;
+    const text = sanitizeChatText(raw);
+    if (!text) return;
+    if (!allowChat(seat)) return;
+    const msg = {
+      id: this.nextChatId(),
+      kind: "user",
+      from: { name: seat.name || "Player" },
+      text,
+      at: Date.now(),
+    };
+    this.appendChat(msg);
+    this.broadcastChat(msg);
+  }
+
+  concede(socket) {
+    const seat = this.seatBySocket(socket);
+    if (!seat) return;
+    this.forceConcedeSeat(seat);
   }
 
   leave(socket) {
@@ -508,8 +939,32 @@ export class GameRoom {
       });
       return;
     }
+    const name = seat.name || "Player";
     seat.socket = null;
-    if (this.connectedSockets().length === 0) this.destroy();
+    this.systemChat(`${name} disconnected`);
+    if (this.connectedSockets().length === 0) {
+      this.clearDisconnectTimers();
+      this.destroy();
+      return;
+    }
+    if (this.status === "playing" && !this.sim.winner && !seat.bot) {
+      this.armDisconnectGrace(seat);
+    }
+  }
+
+  /** 5s grace, then reconnect wait + pause if they stay gone. */
+  armDisconnectGrace(seat) {
+    if (!seat || seat.socket || this.status !== "playing" || this.sim.winner) return;
+    if (this.reconnectWaitSeat === seat.key) return;
+    this.clearDisconnectGrace();
+    this.disconnectGraceSeat = seat.key;
+    this.disconnectGraceTimer = setTimeout(() => {
+      this.disconnectGraceTimer = null;
+      this.disconnectGraceSeat = null;
+      if (this.status !== "playing" || this.sim.winner || this.closing) return;
+      if (seat.socket) return;
+      this.beginReconnectWait(seat);
+    }, DISCONNECT_GRACE_MS);
   }
 
   sendHome(socket) {
@@ -542,7 +997,27 @@ export class GameRoom {
     return Math.max(0, this.countdownEnds - Date.now());
   }
 
+  pausePublicFor(seat) {
+    const human = this.humanPauseMatch();
+    const reconnectWaiting = Boolean(this.reconnectWaitEnds);
+    return {
+      canPause: human && this.status === "playing" && !this.sim.winner && !reconnectWaiting,
+      paused: this.paused || reconnectWaiting,
+      pauseWant: Boolean(this.pauseWant[seat.key]),
+      unpauseWant: Boolean(this.unpauseWant[seat.key]),
+      pauseAlert: this.pauseAlertSeat === seat.key,
+      unpauseEnds: this.unpauseEnds,
+      unpauseLeft: this.unpauseLeftMs(),
+      menuPaused: this.menuPaused,
+      reconnectWaiting,
+      reconnectWaitEnds: this.reconnectWaitEnds,
+      reconnectWaitLeft: this.reconnectWaitLeftMs(),
+    };
+  }
+
   lobbyFor(seat) {
+    const chatOn = this.roomChatActive();
+    const pause = this.pausePublicFor(seat);
     return {
       seat: seat.key,
       status: this.status,
@@ -554,6 +1029,9 @@ export class GameRoom {
       opponent: this.opponentOf(seat),
       botSettings: this.botSettingsPublic(),
       debugPlay: this.debugPlayPublic(),
+      chatEnabled: chatOn,
+      chatHistory: chatOn ? this.chatLog.slice() : [],
+      ...pause,
     };
   }
 
@@ -565,17 +1043,34 @@ export class GameRoom {
     }
   }
 
-  decorateState(snap) {
+  decorateState(snap, seat = null) {
     snap.status = this.status;
     snap.countdownEnds = this.countdownEnds;
     snap.countdownLeft = this.countdownLeftMs();
+    const pause = seat
+      ? this.pausePublicFor(seat)
+      : {
+        canPause: this.humanPauseMatch() && this.status === "playing" && !this.sim.winner
+          && !this.reconnectWaitEnds,
+        paused: this.paused || Boolean(this.reconnectWaitEnds),
+        pauseWant: false,
+        unpauseWant: false,
+        pauseAlert: false,
+        unpauseEnds: this.unpauseEnds,
+        unpauseLeft: this.unpauseLeftMs(),
+        menuPaused: this.menuPaused,
+        reconnectWaiting: Boolean(this.reconnectWaitEnds),
+        reconnectWaitEnds: this.reconnectWaitEnds,
+        reconnectWaitLeft: this.reconnectWaitLeftMs(),
+      };
+    Object.assign(snap, pause);
     return snap;
   }
 
   /** Match state for one seat (terrain fog filtered to that side). */
   publicStateFor(seat) {
     const sideId = seat && seat.sideId ? seat.sideId : "player";
-    return this.decorateState(this.sim.snapshot({ forSideId: sideId }));
+    return this.decorateState(this.sim.snapshot({ forSideId: sideId }), seat);
   }
 
   /** Omniscient snapshot (tests / spectators). Prefer publicStateFor. */
@@ -614,9 +1109,9 @@ export class GameRoom {
     const fogOn = this.sim.fogEnabled !== false;
     let payloadForBytes = null;
     if (!fogOn) {
-      const snap = this.decorateState(this.sim.snapshot());
-      payloadForBytes = snap;
       for (let i = 0; i < connected.length; i += 1) {
+        const snap = this.decorateState(this.sim.snapshot(), connected[i]);
+        if (!payloadForBytes) payloadForBytes = snap;
         this.emitState(connected[i].socket, snap, volatile);
       }
     } else if (connected.length === 1) {
@@ -628,7 +1123,7 @@ export class GameRoom {
       for (let i = 0; i < connected.length; i += 1) sideIds.push(connected[i].sideId);
       const views = this.sim.snapshotViews(sideIds);
       for (let i = 0; i < connected.length; i += 1) {
-        const snap = this.decorateState(views.get(connected[i].sideId));
+        const snap = this.decorateState(views.get(connected[i].sideId), connected[i]);
         if (!payloadForBytes) payloadForBytes = snap;
         this.emitState(connected[i].socket, snap, volatile);
       }
@@ -710,6 +1205,7 @@ export class GameRoom {
     if (this.status === "dead") return;
     this.status = "dead";
     this.cancelCountdown();
+    this.resetPauseState();
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;

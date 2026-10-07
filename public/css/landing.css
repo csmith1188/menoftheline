@@ -492,6 +492,18 @@ select:focus {
   flex: 1;
 }
 
+.open-games h3 {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.open-queues {
+  margin-bottom: 18px;
+}
+
 .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;

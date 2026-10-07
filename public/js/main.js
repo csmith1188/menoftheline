@@ -1,5 +1,10 @@
 import { applySnapshot, createBoard, writeSouthpaw, writeTerrainLabels } from "./render.js";
-import { applyCountdownTiming, countdownSecondsLeft } from "./board.js";
+import {
+  applyCountdownTiming,
+  countdownSecondsLeft,
+  reconnectSecondsLeft,
+  unpauseSecondsLeft,
+} from "./board.js";
 import { bindInput } from "./input.js";
 import {
   getBgmVolume,
@@ -15,6 +20,7 @@ import {
 } from "./audio.js";
 import { bindRules } from "./rules.js";
 import { bindUnitInfo } from "./unitInfo.js";
+import { bindChat } from "./chat.js";
 import { readTooltipsDefault } from "./tooltips.js";
 import { createTutorial } from "./tutorial.js";
 
@@ -31,6 +37,7 @@ const menu = document.getElementById("menu");
 const menuYou = document.getElementById("menu-you");
 const oppName = document.getElementById("opp-name");
 const oppKind = document.getElementById("opp-kind");
+const pauseBtn = document.getElementById("pause-btn");
 const concede = document.getElementById("concede");
 const confirmBox = document.getElementById("confirm");
 const concedeYes = document.getElementById("concede-yes");
@@ -49,17 +56,23 @@ const debugPlay = document.getElementById("debug-play");
 const debugSide = document.getElementById("debug-side");
 const debugBots = document.getElementById("debug-bots");
 
+let chatUi = { close() {}, applyLobby() {}, setPauseAlert() {} };
+let matchMode = null;
+let lastUnpauseBeep = null;
+
 const rulesUi = bindRules({
   onOpen() {
-    menu.classList.add("hidden");
+    closeMenu();
     unitInfoUi.close();
+    chatUi.close();
   },
 });
 
 const unitInfoUi = bindUnitInfo({
   onOpen() {
-    menu.classList.add("hidden");
+    closeMenu();
     rulesUi.close();
+    chatUi.close();
   },
 });
 
@@ -177,6 +190,17 @@ let lastCountdownBeep = null;
 const socket = window.io({
   transports: ["websocket", "polling"],
 });
+chatUi = bindChat({
+  socket,
+  onOpen() {
+    closeMenu();
+    rulesUi.close();
+    unitInfoUi.close();
+  },
+  onPauseClear() {
+    board.pauseAlert = false;
+  },
+});
 const tutorial = createTutorial(document.getElementById("tutorial"));
 board.onCommand = (cmd) => {
   socket.emit("command", cmd);
@@ -230,12 +254,46 @@ function bannerCopy() {
   return iWon ? "You win" : "Opponent wins";
 }
 
+function syncPauseButton() {
+  if (!pauseBtn) return;
+  const show = Boolean(board.canPause) && board.status === "playing" && !board.winner;
+  pauseBtn.classList.toggle("hidden", !show);
+  if (!show) return;
+  if (board.paused) {
+    pauseBtn.textContent = board.unpauseWant ? "Unpausing…" : "Unpause";
+    pauseBtn.setAttribute("aria-pressed", board.unpauseWant ? "true" : "false");
+    return;
+  }
+  if (board.pauseWant) {
+    pauseBtn.textContent = "Cancel pause";
+    pauseBtn.setAttribute("aria-pressed", "true");
+    return;
+  }
+  pauseBtn.textContent = "Pause";
+  pauseBtn.setAttribute("aria-pressed", "false");
+}
+
+function setSettingsOpen(open) {
+  const next = Boolean(open);
+  if (matchMode === "bot" || (matchMode === "training" && meta.opponent && meta.opponent.kind === "bot")) {
+    socket.emit("settingsOpen", next);
+  }
+}
+
 function syncChrome() {
   const waiting = board.status === "waiting";
   const countdown = board.status === "countdown";
   const playing = board.status === "playing";
-  lobby.classList.toggle("hidden", !(waiting || countdown) || Boolean(board.winner));
-  lobbyLeave.classList.toggle("hidden", lobby.classList.contains("hidden"));
+  const reconnecting = playing && Boolean(board.reconnectWaiting || board.reconnectWaitEnds);
+  const unpausing = playing && Boolean(board.unpauseEnds) && !reconnecting;
+  const pausedBanner = playing && board.paused && !unpausing && !reconnecting;
+  const showLobby = (waiting || countdown || unpausing || pausedBanner || reconnecting)
+    && !board.winner;
+  lobby.classList.toggle("hidden", !showLobby);
+  lobbyLeave.classList.toggle(
+    "hidden",
+    lobby.classList.contains("hidden") || unpausing || pausedBanner || reconnecting,
+  );
   if (waiting) lobbyText.textContent = lobbyMessage || "Waiting for an opponent";
   if (countdown) {
     const left = countdownSecondsLeft(board);
@@ -246,6 +304,23 @@ function syncChrome() {
     }
   } else {
     lastCountdownBeep = null;
+  }
+  if (reconnecting) {
+    const left = reconnectSecondsLeft(board);
+    lobbyText.textContent = `Waiting for opponent to reconnect (${left})`;
+    lastUnpauseBeep = null;
+  } else if (unpausing) {
+    const left = unpauseSecondsLeft(board);
+    lobbyText.textContent = `Match resumes in ${left}`;
+    if (Number.isFinite(left) && left !== lastUnpauseBeep) {
+      lastUnpauseBeep = left;
+      playCountdownBeep();
+    }
+  } else if (pausedBanner) {
+    lobbyText.textContent = "Match paused";
+    lastUnpauseBeep = null;
+  } else {
+    lastUnpauseBeep = null;
   }
   lobbyYou.textContent = meta.you ? `You are ${meta.you.name}` : "";
   const showBanner = Boolean(board.winner);
@@ -258,6 +333,8 @@ function syncChrome() {
   const confirming = !confirmBox.classList.contains("hidden");
   concede.classList.toggle("hidden", !canConcede || confirming);
   if (!canConcede) confirmBox.classList.add("hidden");
+  syncPauseButton();
+  chatUi.setPauseAlert(Boolean(board.pauseAlert));
   syncMatchBgm();
 }
 
@@ -268,9 +345,18 @@ function apply(snap) {
     lastTick = snap.tick;
   }
   tutorial.noteState(snap);
-  // Avoid DOM thrash every tick while playing; lobby/countdown/end still sync.
-  if (board.status !== "playing" || board.winner) syncChrome();
-  else syncMatchBgm();
+  // Avoid DOM thrash every tick while playing; lobby/countdown/pause/end still sync.
+  if (
+    board.status !== "playing"
+    || board.winner
+    || board.paused
+    || board.unpauseEnds
+    || board.reconnectWaitEnds
+  ) {
+    syncChrome();
+  } else {
+    syncMatchBgm();
+  }
 }
 
 let latestState = null;
@@ -299,8 +385,10 @@ socket.on("lobby", (lobbyState) => {
   seat = lobbyState.seat;
   meta.you = lobbyState.you;
   meta.opponent = lobbyState.opponent;
+  matchMode = lobbyState.mode || null;
   applyBotSettingsUi(lobbyState.botSettings || null);
   applyDebugPlayUi(lobbyState.debugPlay || null);
+  chatUi.applyLobby(lobbyState);
   if (lobbyState.text) lobbyMessage = lobbyState.text;
   board.status = lobbyState.status;
   const isTraining = lobbyState.mode === "training";
@@ -319,6 +407,7 @@ socket.on("lobby", (lobbyState) => {
     lastTick = -1;
     menu.classList.add("hidden");
     confirmBox.classList.add("hidden");
+    setSettingsOpen(false);
   }
   if (pending) {
     const snap = pending;
@@ -349,6 +438,7 @@ socket.on("replaced", () => {
   menu.classList.add("hidden");
   rulesUi.close();
   unitInfoUi.close();
+  chatUi.close();
 });
 
 socket.on("go-home", () => {
@@ -368,6 +458,7 @@ socket.on("disconnect", () => {
   banner.classList.add("hidden");
   rulesUi.close();
   unitInfoUi.close();
+  chatUi.close();
 });
 
 function askLeave() {
@@ -377,14 +468,33 @@ function askLeave() {
 lobbyLeave.addEventListener("click", askLeave);
 leave.addEventListener("click", askLeave);
 
+function closeMenu() {
+  if (menu.classList.contains("hidden")) return;
+  menu.classList.add("hidden");
+  gear.setAttribute("aria-expanded", "false");
+  setSettingsOpen(false);
+}
+
 gear.addEventListener("click", () => {
   rulesUi.close();
   unitInfoUi.close();
+  chatUi.close();
+  const opening = menu.classList.contains("hidden");
   menu.classList.toggle("hidden");
   gear.setAttribute("aria-expanded", menu.classList.contains("hidden") ? "false" : "true");
   confirmBox.classList.add("hidden");
-  if (board.status === "playing" && !board.winner) concede.classList.remove("hidden");
+  if (board.status === "playing" && !board.winner) {
+    concede.classList.remove("hidden");
+    syncPauseButton();
+  }
+  setSettingsOpen(opening);
 });
+
+if (pauseBtn) {
+  pauseBtn.addEventListener("click", () => {
+    socket.emit("pause");
+  });
+}
 
 concede.addEventListener("click", () => {
   concede.classList.add("hidden");
@@ -398,8 +508,7 @@ concedeNo.addEventListener("click", () => {
 
 concedeYes.addEventListener("click", () => {
   socket.emit("concede");
-  menu.classList.add("hidden");
-  gear.setAttribute("aria-expanded", "false");
+  closeMenu();
   confirmBox.classList.add("hidden");
 });
 
@@ -409,8 +518,7 @@ document.addEventListener("keydown", () => unlockAudio());
 document.addEventListener("pointerdown", (event) => {
   if (menu.classList.contains("hidden")) return;
   if (menu.contains(event.target) || event.target === gear) return;
-  menu.classList.add("hidden");
-  gear.setAttribute("aria-expanded", "false");
+  closeMenu();
 });
 
 // Warm BGM while the play page / lobby is idle (never during match sockets).
@@ -441,7 +549,9 @@ if (showPerf) {
 
 function frame(now) {
   board.render();
-  if (board.status === "countdown") syncChrome();
+  if (board.status === "countdown" || board.unpauseEnds || board.reconnectWaitEnds) {
+    syncChrome();
+  }
   if (perfEl) {
     perfFrames += 1;
     if (!perfLast) perfLast = now;

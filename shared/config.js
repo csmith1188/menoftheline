@@ -286,6 +286,18 @@ export const CONFIG = {
   commandRefillPerSec: 20,
   /** Reject command payloads larger than this many JSON bytes. */
   commandMaxBytes: 4096,
+  /** Per-seat chat burst before refill (survives socket reconnect). */
+  chatBurst: 5,
+  /** Sustained chat messages per second after the burst is spent. */
+  chatRefillPerSec: 1,
+  /** Max characters in a chat message (after sanitize). */
+  chatMaxChars: 200,
+  /** Ring buffer size for in-room chat history. */
+  chatHistoryMax: 50,
+  /** Mid-match reconnects in the window before forced concede. */
+  reconnectSpamMax: 10,
+  /** Sliding window (ms) for reconnect spam detection. */
+  reconnectSpamWindowMs: 10000,
 
   // Bot — lane posture and keep threat
 

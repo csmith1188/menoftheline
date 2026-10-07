@@ -34,15 +34,31 @@
       </section>
       <% if (isOwner) { %>
         <section>
+          <h2>Display name</h2>
+          <form method="post" action="/profile/name">
+            <label for="display-name">Name</label>
+            <input id="display-name" name="name" type="text" autocomplete="nickname" required minlength="2" maxlength="32" value="<%= account.name %>">
+            <p class="hint">Letters, numbers, spaces, hyphens, apostrophes, and underscores. Up to 3 changes per hour.</p>
+            <button type="submit" class="action">Save display name</button>
+          </form>
+        </section>
+        <section>
           <h2>Account links</h2>
+          <p class="hint">Linking a login that already belongs to another account merges that account’s stats and other logins into this one.</p>
           <ul class="list">
             <li class="hint">Email: <%= account.email || "not linked" %><% if (account.email && !account.email_verified_at && authEmailEnabled) { %> (unverified)<% } %></li>
             <li class="hint">Formbar: <%= account.formbar_id ? ("#" + account.formbar_id) : "not linked" %></li>
+            <li class="hint">Discord: <%= account.discord_id ? ("#" + account.discord_id) : "not linked" %></li>
           </ul>
           <% if (canLinkFormbar) { %>
             <form method="post" action="/profile/link/formbar">
 <%- include("csrf-field") %>
               <button type="submit" class="action">Link Formbar account</button>
+            </form>
+          <% } %>
+          <% if (canLinkDiscord) { %>
+            <form method="post" action="/profile/link/discord">
+              <button type="submit" class="action">Link Discord account</button>
             </form>
           <% } %>
           <% if (canAddLocal) { %>
@@ -52,6 +68,7 @@
               <input id="link-email" name="email" type="email" autocomplete="email" required>
               <label for="link-password">Password</label>
               <input id="link-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+              <p class="hint">New email creates credentials here. Password of an existing account merges it here.</p>
               <button type="submit" class="action">Add email &amp; password</button>
             </form>
           <% } %>

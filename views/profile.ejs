@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <%- include("pwa-head") %>
   <title><%= account ? account.name : "Player" %> · Men Of The Line</title>
-  <link rel="stylesheet" href="/css/landing.css">
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
 </head>
 <body>
   <div class="page">
@@ -16,7 +16,7 @@
     <% if (!account) { %>
       <section>
         <h2>Player not found</h2>
-        <p class="hint">No account uses that Formbar id.</p>
+        <p class="hint">No account uses that id.</p>
         <a class="action" href="/">Back</a>
       </section>
     <% } else { %>
@@ -34,12 +34,37 @@
       </section>
       <% if (isOwner) { %>
         <section>
+          <h2>Account links</h2>
+          <ul class="list">
+            <li class="hint">Email: <%= account.email || "not linked" %><% if (account.email && !account.email_verified_at && authEmailEnabled) { %> (unverified)<% } %></li>
+            <li class="hint">Formbar: <%= account.formbar_id ? ("#" + account.formbar_id) : "not linked" %></li>
+          </ul>
+          <% if (canLinkFormbar) { %>
+            <form method="post" action="/profile/link/formbar">
+              <button type="submit" class="action">Link Formbar account</button>
+            </form>
+          <% } %>
+          <% if (canAddLocal) { %>
+            <form method="post" action="/profile/link/local">
+              <label for="link-email">Email</label>
+              <input id="link-email" name="email" type="email" autocomplete="email" required>
+              <label for="link-password">Password</label>
+              <input id="link-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+              <button type="submit" class="action">Add email &amp; password</button>
+            </form>
+          <% } %>
+        </section>
+        <section>
           <h2>Tickets</h2>
-          <%- include("buy", { nextPath: "/profile/" + account.formbar_id }) %>
+          <% if (account.formbar_id) { %>
+            <%- include("buy", { nextPath: "/profile/" + account.id }) %>
+          <% } else { %>
+            <p class="hint">Digipog ticket packs need a linked Formbar account. Another payment method will be added later.</p>
+          <% } %>
         </section>
       <% } %>
     <% } %>
   </div>
-  <%- include("suggestion-modal", { nextPath: account ? "/profile/" + account.formbar_id : "/" }) %>
+  <%- include("suggestion-modal", { nextPath: account ? "/profile/" + account.id : "/" }) %>
 </body>
 </html>

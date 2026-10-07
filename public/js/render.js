@@ -13,6 +13,7 @@ import {
 import {
   applySnapshot,
   boardStateMethods,
+  presentTroopMotion,
   canvasFont,
   createBoardState,
   inspectReadout,
@@ -435,11 +436,57 @@ const boardMethods = {
     ctx.stroke();
   },
 
+  /** Fog + terrain + label key; rebuild underlay when this changes. */
+  mapUnderlayKey() {
+    const features = this.terrainFeatures || [];
+    const fogRegions = this.fogRegions || [];
+    const labelsOn = showTerrainLabels(this);
+    const board = Path.activeBoard();
+    return [
+      board.mapId || "",
+      Path.laneIds().join(","),
+      features.map((f) => `${f.id}:${f.centerPaces}:${f.halfWidthPaces || 0}`).join("|"),
+      fogRegions.map((r) => `${r.lane}:${r.sublane}:${r.minPaces}:${r.maxPaces}:${r.fogged ? 1 : 0}`).join(";"),
+      labelsOn ? "1" : "0",
+      this.devicePixelRatio(),
+    ].join("::");
+  },
+
+  /**
+   * Rebuild the offscreen fog/terrain/lane layer when the key or DPR changes.
+   * Lane centers stay out of this cache so economy easing stays per-frame.
+   */
+  ensureMapUnderlay() {
+    const dpr = this.devicePixelRatio();
+    const key = this.mapUnderlayKey();
+    const bufW = Math.round(CONFIG.canvasWidth * dpr);
+    const bufH = Math.round(CONFIG.canvasHeight * dpr);
+    if (
+      this._underlay
+      && this._underlayKey === key
+      && this._underlay.width === bufW
+      && this._underlay.height === bufH
+    ) {
+      return;
+    }
+    if (!this._underlay) {
+      this._underlay = document.createElement("canvas");
+      this._underlayCtx = this._underlay.getContext("2d");
+    }
+    this._underlay.width = bufW;
+    this._underlay.height = bufH;
+    this._underlayKey = key;
+    const uctx = this._underlayCtx;
+    uctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    uctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    this.paintMapUnderlay(uctx);
+  },
+
   /**
    * Row segments between keeps and terrain. Fogged open segments draw dark;
    * terrain footprints are drawn separately and are not darkened here.
    */
-  drawLanes(ctx) {
+  paintMapUnderlay(ctx) {
     const boardGeo = Path.activeBoard();
     const left = boardGeo.playerCapital;
     const right = boardGeo.enemyCapital;
@@ -478,7 +525,11 @@ const boardMethods = {
           });
         }
         terrainCuts.sort((a, b) => a.min - b.min);
-        const open = fogRegions.filter((r) => r.lane === lane && r.sublane === s);
+        const open = [];
+        for (let i = 0; i < fogRegions.length; i += 1) {
+          const r = fogRegions[i];
+          if (r.lane === lane && r.sublane === s) open.push(r);
+        }
 
         if (!open.length && !terrainCuts.length) {
           ctx.strokeStyle = litColor;
@@ -513,6 +564,19 @@ const boardMethods = {
 
     this.drawQuarterLines(ctx);
     this.drawTerrain(ctx);
+  },
+
+  drawLanes(ctx) {
+    this.ensureMapUnderlay();
+    if (this._underlay) {
+      ctx.drawImage(
+        this._underlay,
+        0,
+        0,
+        CONFIG.canvasWidth,
+        CONFIG.canvasHeight,
+      );
+    }
     this.drawLaneCenters(ctx);
   },
 
@@ -694,6 +758,29 @@ const boardMethods = {
     ctx.restore();
   },
 
+  /** Reuse one array for troop draw order instead of concat every frame. */
+  everyoneTroops() {
+    const mine = this.player.troops;
+    const theirs = this.enemy.troops;
+    const n = mine.length + theirs.length;
+    if (!this._everyone || this._everyone.length !== n) {
+      this._everyone = new Array(n);
+    }
+    const out = this._everyone;
+    for (let i = 0; i < mine.length; i += 1) out[i] = mine[i];
+    for (let i = 0; i < theirs.length; i += 1) out[mine.length + i] = theirs[i];
+    return out;
+  },
+
+  /** One inspect/bonus pass per paint frame. */
+  frameInspect() {
+    if (!this._frameInspectReady) {
+      this._frameInspect = inspectReadout(this);
+      this._frameInspectReady = true;
+    }
+    return this._frameInspect;
+  },
+
   drawBattlefield(ctx) {
     this.inspectedTroop();
     this.drawLanes(ctx);
@@ -702,7 +789,7 @@ const boardMethods = {
     }
     this.player.drawCapital(ctx);
     this.enemy.drawCapital(ctx);
-    const everyone = this.player.troops.concat(this.enemy.troops);
+    const everyone = this.everyoneTroops();
     for (let i = 0; i < everyone.length; i += 1) {
       everyone[i].draw(ctx);
     }
@@ -719,11 +806,18 @@ const boardMethods = {
   /** Paint the map, checkpoints, keeps, troops, and in-flight shells. */
   render() {
     if (!this.player) return;
+    this._frameInspectReady = false;
+    this._frameInspect = null;
     this.presentLaneCenters();
+    presentTroopMotion(this);
     if (this.refreshHoldSelect) this.refreshHoldSelect();
     const ctx = this.ctx;
     const dpr = this.devicePixelRatio();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Clear/fill in screen space (avoids huge telescope fills on weak GPUs).
+    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+    ctx.fillStyle = CONFIG.colors.bg;
+    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
     if (this.telescope) {
       this.stepTelescope();
       ctx.save();
@@ -733,8 +827,6 @@ const boardMethods = {
       ctx.rotate(-cam.angle);
       ctx.scale(cam.scale, cam.scale);
       ctx.translate(-cam.x, -cam.y);
-      ctx.fillStyle = CONFIG.colors.bg;
-      ctx.fillRect(cam.x - 4000, cam.y - 4000, 8000, 8000);
       this.drawBattlefield(ctx);
       ctx.restore();
       applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
@@ -747,9 +839,6 @@ const boardMethods = {
       return;
     }
     applySouthpaw(ctx, CONFIG.canvasWidth, this.southpaw);
-    ctx.clearRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
-    ctx.fillStyle = CONFIG.colors.bg;
-    ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
     this.drawBattlefield(ctx);
     this.drawCanvasUI(ctx);
   },
@@ -772,7 +861,7 @@ const boardMethods = {
    * centered above the buy row until it dies or another unit is selected.
    */
   drawInspectedUnit(ctx) {
-    const info = inspectReadout(this);
+    const info = this.frameInspect();
     if (!info) return;
     const layout = this.buyRowLayout();
     const gap = 6 * CONFIG.uiScale;
@@ -802,7 +891,7 @@ const boardMethods = {
    * pinned to the bottom of the screen.
    */
   drawTelescopeHud(ctx) {
-    const info = inspectReadout(this);
+    const info = this.frameInspect();
     const troop = this.inspectedTroop ? this.inspectedTroop() : null;
     if (troop && troop.broken) this.orderCallout = null;
     const call = this.orderCallout;
@@ -866,7 +955,7 @@ const boardMethods = {
     }
     const fade = left < 280 ? left / 280 : 1;
     const layout = this.buyRowLayout();
-    const info = inspectReadout(this);
+    const info = this.frameInspect();
     const gap = 6 * CONFIG.uiScale;
     let y = layout.y - gap;
     if (info) {
@@ -1143,6 +1232,9 @@ function nativeTextFns(ctx) {
   return saved;
 }
 
+/** Per-context southpaw text wrappers so we do not rebuild them every frame. */
+const southpawTextState = new WeakMap();
+
 /**
  * Mirror the view so the player side is on the right. Glyphs stay readable:
  * each text call is flipped back, and left/right alignment swaps so labels
@@ -1150,25 +1242,36 @@ function nativeTextFns(ctx) {
  */
 export function applySouthpaw(ctx, width, on) {
   const saved = nativeTextFns(ctx);
+  let state = southpawTextState.get(ctx);
+  if (!state) {
+    state = { on: false, fill: null, stroke: null };
+    southpawTextState.set(ctx, state);
+  }
   if (!on) {
     ctx.fillText = saved.fill;
     ctx.strokeText = saved.stroke;
+    state.on = false;
     return;
   }
   ctx.translate(width, 0);
   ctx.scale(-1, 1);
-  const mirror = (fn) => (text, x, y, maxWidth) => {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(-1, 1);
-    if (ctx.textAlign === "left") ctx.textAlign = "right";
-    else if (ctx.textAlign === "right") ctx.textAlign = "left";
-    if (maxWidth === undefined) fn(text, 0, 0);
-    else fn(text, 0, 0, maxWidth);
-    ctx.restore();
-  };
-  ctx.fillText = mirror(saved.fill);
-  ctx.strokeText = mirror(saved.stroke);
+  if (!state.on || !state.fill || !state.stroke) {
+    const mirror = (fn) => (text, x, y, maxWidth) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(-1, 1);
+      if (ctx.textAlign === "left") ctx.textAlign = "right";
+      else if (ctx.textAlign === "right") ctx.textAlign = "left";
+      if (maxWidth === undefined) fn(text, 0, 0);
+      else fn(text, 0, 0, maxWidth);
+      ctx.restore();
+    };
+    state.fill = mirror(saved.fill);
+    state.stroke = mirror(saved.stroke);
+    state.on = true;
+  }
+  ctx.fillText = state.fill;
+  ctx.strokeText = state.stroke;
 }
 
 function fillChevron(ctx, cx, cy, up) {

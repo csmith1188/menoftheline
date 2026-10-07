@@ -1,0 +1,73 @@
+# Example reverse proxy for one Node process.
+# Do not set PM2 instances above 1. Matchmaker, GameRoom, and GameSim
+# live in that process. A Socket.IO Redis adapter does not copy sim state.
+#
+#   pm2 start server.js --name motl -i 1
+#
+# Nginx serves JS, CSS, images, shared modules, and BGM.
+# Node keeps HTML, /api/, and /socket.io/.
+
+upstream motl_node {
+  server 127.0.0.1:3000;
+  keepalive 16;
+}
+
+server {
+  listen 80;
+  server_name example.com;
+
+  root /var/www/menoftheline;
+
+  location /socket.io/ {
+    proxy_pass http://motl_node;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_buffering off;
+    proxy_read_timeout 60s;
+  }
+
+  location /api/ {
+    proxy_pass http://motl_node;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  location /js/ {
+    alias /var/www/menoftheline/public/js/;
+    expires 1h;
+    etag on;
+  }
+
+  location /css/ {
+    alias /var/www/menoftheline/public/css/;
+    expires 1h;
+    etag on;
+  }
+
+  location /shared/ {
+    alias /var/www/menoftheline/shared/;
+    expires 1h;
+    etag on;
+  }
+
+  location /vendor/three/ {
+    alias /var/www/menoftheline/node_modules/three/;
+    expires 1h;
+    etag on;
+  }
+
+  location /bgm/ {
+    alias /var/www/menoftheline/public/bgm/;
+    expires 7d;
+    etag on;
+  }
+
+  location / {
+    proxy_pass http://motl_node;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+}

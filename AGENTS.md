@@ -15,22 +15,31 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run dev` | Nodemon on `server.js` |
 | `npm run debug` | Same server with `DEBUG_RANGES=1` overlays |
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
+| `npm run sim-bench` | One crowded match: step and snapshot times |
+| `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 
-Env template: `.env.template`. Local data/DB under `data/`. Auth/tickets integrate with Formbar (`server/formbar.js`).
+Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*) and/or Formbar OAuth (`FORMBAR_LOGIN`); Digipog tickets still use Formbar (`server/formbar.js`).
 
 ## Layout (start here)
 
 ```
-server.js              HTTP + sessions + OAuth + Socket.IO + wiki/admin routes
+server.js              HTTP + sessions + local/Formbar auth + Socket.IO + wiki/admin routes
 server/
-  room.js              GameRoom: seats, ticks, command queue → sim, emit "state"
+  room.js              GameRoom: seats, command queue → sim, emit "state"
+  ticker.js            One 50ms loop for every playing room; snapshots at STATE_MS
+  metrics.js           METRICS=1 counters (tick, snapshot, event loop, sqlite)
+  commandLimit.js      Per-socket command token bucket
+  settingsWrite.js     Debounced tooltip / BGM preference writes
   sim.js               GameSim + Unit classes + combat/economy rules (large)
-  matchmaking.js       Queues, ranked/listed/bot/training rooms
+  matchmaking.js       Queues, ranked/listed/bot/training rooms, userId indexes
+  owners.js            Optional WORKER_COUNT owner assignment (not sim sync)
   bot.js               Re-exports BotController
   bot/                 AI: controller, assess, tactics, formations, economy, commands
   training.js          Training-mode rule tweaks
   trainingBot.js       Scripted training opponent
-  db.js                SQLite accounts, tickets, wiki, suggestions, games
+  db.js                SQLite accounts (internal id), tickets, wiki, suggestions, games
+  auth.js              Local auth flags, scrypt passwords, tokens, rate limits, EN/ES name filter (glin-profanity)
+  mail.js              Nodemailer verify/reset email (SMTP_*)
   rating.js            MMR/Elo
   news.js              Landing news from data/news.json
   wiki-render.js       Markdown → HTML for wiki
@@ -62,6 +71,8 @@ views/                 EJS shells (landing, play, wiki, admin, scores, lobby-cre
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports server.js
+scripts/load/          socket-load.js (100-player harness), sim-bench.js
+deploy/nginx.conf.example  One Node process behind Nginx; static files cached
 goals.md               Backlog / roadmap (not docs)
 data/                  Runtime DB, news.json (do not commit secrets)
 ```
@@ -80,9 +91,11 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
+| Local signup / verify / reset / Formbar login flags | `server/auth.js`, `server/mail.js` | `server/db.js` accounts, `server.js` routes, `views/login.ejs` / signup / forgot / reset |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
+| Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `server.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
 | In-match rules diagrams | `public/js/rules.js` | Must stay consistent with `shared/` + `wikidocs/` |

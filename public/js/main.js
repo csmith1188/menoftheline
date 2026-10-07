@@ -416,9 +416,42 @@ document.addEventListener("pointerdown", (event) => {
 // Warm BGM while the play page / lobby is idle (never during match sockets).
 prefetchMatchBgm();
 
-function frame() {
+const showPerf = new URLSearchParams(window.location.search).has("perf");
+let perfEl = null;
+let perfFrames = 0;
+let perfLast = 0;
+if (showPerf) {
+  perfEl = document.createElement("div");
+  perfEl.id = "perf-fps";
+  perfEl.setAttribute("aria-hidden", "true");
+  Object.assign(perfEl.style, {
+    position: "fixed",
+    left: "8px",
+    top: "8px",
+    zIndex: "9999",
+    padding: "2px 6px",
+    font: "12px/1.2 monospace",
+    color: "#8f8",
+    background: "rgba(0,0,0,0.55)",
+    pointerEvents: "none",
+  });
+  perfEl.textContent = "— fps";
+  document.body.appendChild(perfEl);
+}
+
+function frame(now) {
   board.render();
   if (board.status === "countdown") syncChrome();
+  if (perfEl) {
+    perfFrames += 1;
+    if (!perfLast) perfLast = now;
+    const dt = now - perfLast;
+    if (dt >= 500) {
+      perfEl.textContent = `${Math.round((perfFrames * 1000) / dt)} fps`;
+      perfFrames = 0;
+      perfLast = now;
+    }
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

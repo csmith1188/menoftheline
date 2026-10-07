@@ -55,6 +55,14 @@ export function classicBoardContext() {
 /** @type {ReturnType<typeof classicBoardContext> | null} */
 let _board = null;
 
+/** Memoized `worldPoints` results keyed by `lane:sublane`. */
+const worldPointsCache = new Map();
+
+/** Drop cached polylines (tests that mutate CONFIG, or board swaps). */
+export function clearWorldPointsCache() {
+  worldPointsCache.clear();
+}
+
 /**
  * Polyline helpers shared by movement, capture tests, and lane drawing.
  * progress 0 is the buying side's capital; progress 1 is the enemy capital.
@@ -64,11 +72,13 @@ export const Path = {
   /** Install board geometry from a GameMap (or compatible context). */
   useBoard(ctx) {
     _board = ctx || null;
+    clearWorldPointsCache();
   },
 
   /** Clear installed board (tests / teardown). */
   clearBoard() {
     _board = null;
+    clearWorldPointsCache();
   },
 
   /** Active board context, or classic CONFIG fallback. */
@@ -114,13 +124,19 @@ export const Path = {
   /**
    * World-space waypoints traveling player-left to enemy-right.
    * Enemy troops walk the same points reversed so sublanes stay aligned.
+   * Results are memoized; do not mutate the returned array.
    */
   worldPoints(lane, sublane) {
+    const key = `${lane}:${sublane}`;
+    const cached = worldPointsCache.get(key);
+    if (cached) return cached;
+
     const board = Path.activeBoard();
     const left = board.playerCapital;
     const right = board.enemyCapital;
     const def = Path.laneDef(lane);
     const kind = def && def.geometry ? def.geometry.kind : (lane === "bottom" ? "arc" : "line");
+    let points;
 
     if (kind === "line") {
       const geo = def ? def.geometry : {
@@ -129,23 +145,24 @@ export const Path = {
       };
       const n = Path.sublaneNorm(sublane, geo.sublaneCount);
       const y = left.y + n * geo.sublaneSpread;
-      return [
+      points = [
         { x: left.x, y },
         { x: right.x, y },
       ];
+    } else {
+      const c = Path.arcCenter(lane);
+      const radius = Path.arcRadius(lane, sublane);
+      points = [];
+      const segs = (def && def.geometry && def.geometry.arcSegments) || CONFIG.bottomArcSegments;
+      for (let i = 0; i <= segs; i += 1) {
+        const theta = Math.PI * (1 - i / segs);
+        points.push({
+          x: c.x + radius * Math.cos(theta),
+          y: c.y + radius * Math.sin(theta),
+        });
+      }
     }
-
-    const c = Path.arcCenter(lane);
-    const radius = Path.arcRadius(lane, sublane);
-    const points = [];
-    const segs = (def && def.geometry && def.geometry.arcSegments) || CONFIG.bottomArcSegments;
-    for (let i = 0; i <= segs; i += 1) {
-      const theta = Math.PI * (1 - i / segs);
-      points.push({
-        x: c.x + radius * Math.cos(theta),
-        y: c.y + radius * Math.sin(theta),
-      });
-    }
+    worldPointsCache.set(key, points);
     return points;
   },
 

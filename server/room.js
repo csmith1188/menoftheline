@@ -1,4 +1,14 @@
+import { performance } from "node:perf_hooks";
 import { CONFIG } from "../shared/config.js";
+import { allowCommand } from "./commandLimit.js";
+import {
+  metricsEnabled,
+  noteBroadcast,
+  noteCommand,
+  noteRoomTick,
+  noteSim,
+  shouldSampleBroadcastBytes,
+} from "./metrics.js";
 import {
   MATCH_SPEEDS,
   matchOptionsSummary,
@@ -8,9 +18,8 @@ import { BotController, DIFFICULTIES, STRATEGY_MODES } from "./bot.js";
 import {
   chargeHeld,
   eloK,
-  insertGame,
+  recordMatchResult,
   refundTicket,
-  setRankedResult,
 } from "./db.js";
 import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
@@ -19,6 +28,13 @@ import { TrainingBotController } from "./trainingBot.js";
 
 export const TICK_MS = 50;
 export const STEP_DT = 0.05;
+
+/** Network snapshot interval. Sim steps stay at TICK_MS. */
+export function stateIntervalMs() {
+  const n = Number(process.env.STATE_MS);
+  if (Number.isFinite(n) && n >= TICK_MS) return n;
+  return CONFIG.stateIntervalMs || 100;
+}
 /** Match-start countdown for human vs human games. */
 export const COUNTDOWN_MS = Number(process.env.COUNTDOWN_MS) || 10000;
 /** Match-start countdown for bot games. */
@@ -32,6 +48,7 @@ function emptySeat(key, sideId) {
     sideId,
     userId: null,
     name: null,
+    accountId: null,
     formbarId: null,
     mmr: null,
     socket: null,
@@ -77,6 +94,15 @@ export class GameRoom {
       a: emptySeat("a", "player"),
       b: emptySeat("b", "enemy"),
     };
+    this.stateAccumMs = 0;
+    this.playSnapshotSent = false;
+    this.winnerSent = false;
+    if (process.env.LOAD_TEST === "1") {
+      const gold = Number(process.env.LOAD_TEST_GOLD);
+      const amount = Number.isFinite(gold) && gold > 0 ? gold : 20000;
+      this.sim.player.gold = amount;
+      this.sim.enemy.gold = amount;
+    }
     if (mode === "training") {
       applyTrainingRules(this);
     }
@@ -125,8 +151,12 @@ export class GameRoom {
   }
 
   clearSeat(seat) {
+    if (seat.userId && this.matchmaker && this.matchmaker.forgetUserRoom) {
+      this.matchmaker.forgetUserRoom(seat.userId, this);
+    }
     seat.userId = null;
     seat.name = null;
+    seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
     seat.socket = null;
@@ -144,11 +174,18 @@ export class GameRoom {
   }
 
   copyPlayer(seat, player) {
+    if (seat.userId && seat.userId !== player.id && this.matchmaker && this.matchmaker.forgetUserRoom) {
+      this.matchmaker.forgetUserRoom(seat.userId, this);
+    }
     seat.userId = player.id;
     seat.name = player.name;
+    seat.accountId = player.accountId || null;
     seat.formbarId = player.formbarId || null;
     seat.mmr = Number.isFinite(player.mmr) ? player.mmr : null;
     seat.bot = null;
+    if (player.id && this.matchmaker && this.matchmaker.rememberUserRoom) {
+      this.matchmaker.rememberUserRoom(player.id, this);
+    }
   }
 
   seatHuman(key, socket) {
@@ -174,6 +211,7 @@ export class GameRoom {
     this.copyPlayer(seat, {
       id: player.userId || player.id,
       name: player.name,
+      accountId: player.accountId,
       formbarId: player.formbarId,
       mmr: player.mmr,
     });
@@ -191,6 +229,7 @@ export class GameRoom {
     const seat = this.seat[key];
     seat.userId = null;
     seat.name = "Bot";
+    seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
     seat.socket = null;
@@ -282,7 +321,7 @@ export class GameRoom {
   async startCountdown() {
     if (this.status !== "waiting" || this.closing) return false;
     if (this.paid && !this.charged) {
-      const ids = [this.seat.a.formbarId, this.seat.b.formbarId]
+      const ids = [this.seat.a.accountId, this.seat.b.accountId]
         .filter((id) => Number.isInteger(id) && id > 0);
       if (ids.length < 2) return false;
       const done = [];
@@ -300,8 +339,8 @@ export class GameRoom {
     }
     if (this.status !== "waiting" || this.closing) {
       if (this.charged) {
-        await refundTicket(this.seat.a.formbarId);
-        await refundTicket(this.seat.b.formbarId);
+        await refundTicket(this.seat.a.accountId);
+        await refundTicket(this.seat.b.accountId);
         this.charged = false;
       }
       return false;
@@ -342,12 +381,22 @@ export class GameRoom {
     this.status = "playing";
     this.countdownEnds = null;
     this.pushLobby();
-    this.broadcastState();
-    this.tickTimer = setInterval(() => this.tick(), TICK_MS);
+    this.stateAccumMs = 0;
+    this.playSnapshotSent = false;
+    this.winnerSent = false;
+    this.broadcastState({ volatile: false });
+    this.playSnapshotSent = true;
+    if (this.matchmaker && this.matchmaker.ticker) {
+      this.matchmaker.ticker.add(this);
+    } else {
+      this.tickTimer = setInterval(() => this.tick(), TICK_MS);
+    }
   }
 
   tick() {
     if (this.status !== "playing") return;
+    const watch = metricsEnabled();
+    const t0 = watch ? performance.now() : 0;
     const scale = (this.mode === "bot" || this.mode === "training" || this.mode === "listed")
       ? this.speedScale
       : 1;
@@ -356,6 +405,7 @@ export class GameRoom {
     let steps = Math.floor(this.speedAccum);
     if (steps > cap) steps = cap;
     this.speedAccum -= steps;
+    const simStart = watch ? performance.now() : 0;
     for (let s = 0; s < steps; s += 1) {
       // Install this match's terrain overlay before commands/bots/sim read LOS.
       this.sim.installTerrainFx();
@@ -364,9 +414,20 @@ export class GameRoom {
       this.runBots();
       this.sim.finishStep(STEP_DT);
     }
+    if (watch) noteSim(performance.now() - simStart);
     // Visual splats age on wall time so they do not freeze at slow speeds.
     this.sim.updateSplats(STEP_DT);
-    this.broadcastState();
+    this.stateAccumMs += TICK_MS;
+    const winner = Boolean(this.sim.winner);
+    if (winner && !this.winnerSent) {
+      this.broadcastState({ volatile: false });
+      this.stateAccumMs = 0;
+    } else if (this.stateAccumMs + 1e-6 >= stateIntervalMs()) {
+      this.stateAccumMs = 0;
+      const volatile = this.status === "playing" && !winner && this.playSnapshotSent;
+      this.broadcastState({ volatile });
+    }
+    if (watch) noteRoomTick(performance.now() - t0);
   }
 
   /** Bot AI when enabled; skips a side the human is currently controlling. */
@@ -400,12 +461,20 @@ export class GameRoom {
     if (this.status !== "playing" || this.sim.winner) return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
-    if (!cmd || typeof cmd !== "object" || Array.isArray(cmd)) return;
-    if (this.mode === "training" && cmd.type === "buy" && cmd.lane !== "bottom") {
+    if (!allowCommand(socket, cmd)) {
+      noteCommand(false);
       return;
     }
-    if (seat.queue.length >= 30) return;
+    if (this.mode === "training" && cmd.type === "buy" && cmd.lane !== "bottom") {
+      noteCommand(false);
+      return;
+    }
+    if (seat.queue.length >= 30) {
+      noteCommand(false);
+      return;
+    }
     seat.queue.push(cmd);
+    noteCommand(true);
   }
 
   concede(socket) {
@@ -416,7 +485,7 @@ export class GameRoom {
     this.sim.winReason = "concede";
     this.sim.sounds = [];
     seat.queue = [];
-    this.broadcastState();
+    this.broadcastState({ volatile: false });
   }
 
   leave(socket) {
@@ -500,32 +569,89 @@ export class GameRoom {
     }
   }
 
-  /** Match state for one seat (terrain fog filtered to that side). */
-  publicStateFor(seat) {
-    const sideId = seat && seat.sideId ? seat.sideId : "player";
-    const snap = this.sim.snapshot({ forSideId: sideId });
+  decorateState(snap) {
     snap.status = this.status;
     snap.countdownEnds = this.countdownEnds;
     snap.countdownLeft = this.countdownLeftMs();
     return snap;
+  }
+
+  /** Match state for one seat (terrain fog filtered to that side). */
+  publicStateFor(seat) {
+    const sideId = seat && seat.sideId ? seat.sideId : "player";
+    return this.decorateState(this.sim.snapshot({ forSideId: sideId }));
   }
 
   /** Omniscient snapshot (tests / spectators). Prefer publicStateFor. */
   publicState() {
-    const snap = this.sim.snapshot();
-    snap.status = this.status;
-    snap.countdownEnds = this.countdownEnds;
-    snap.countdownLeft = this.countdownLeftMs();
-    return snap;
+    return this.decorateState(this.sim.snapshot());
   }
 
-  broadcastState() {
+  emitState(socket, snap, volatile) {
+    if (volatile && socket.volatile && typeof socket.volatile.emit === "function") {
+      socket.volatile.emit("state", snap);
+      return;
+    }
+    socket.emit("state", snap);
+  }
+
+  /**
+   * Push state to connected seats.
+   * Interim playing updates are volatile. Countdown, the first playing
+   * snapshot, concede, and any snapshot that carries a winner are reliable.
+   */
+  broadcastState(opts = {}) {
     this.noteOutcome();
     const seats = [this.seat.a, this.seat.b];
+    const connected = [];
     for (let i = 0; i < seats.length; i += 1) {
-      const seat = seats[i];
-      if (!seat.socket) continue;
-      seat.socket.emit("state", this.publicStateFor(seat));
+      if (seats[i].socket) connected.push(seats[i]);
+    }
+    if (!connected.length) {
+      if (this.sim.winner) this.winnerSent = true;
+      return;
+    }
+    const watch = metricsEnabled();
+    const t0 = watch ? performance.now() : 0;
+    const sampleBytes = shouldSampleBroadcastBytes();
+    const volatile = opts.volatile === true && !this.sim.winner && this.status === "playing";
+    const fogOn = this.sim.fogEnabled !== false;
+    let payloadForBytes = null;
+    if (!fogOn) {
+      const snap = this.decorateState(this.sim.snapshot());
+      payloadForBytes = snap;
+      for (let i = 0; i < connected.length; i += 1) {
+        this.emitState(connected[i].socket, snap, volatile);
+      }
+    } else if (connected.length === 1) {
+      const snap = this.publicStateFor(connected[0]);
+      payloadForBytes = snap;
+      this.emitState(connected[0].socket, snap, volatile);
+    } else {
+      const sideIds = [];
+      for (let i = 0; i < connected.length; i += 1) sideIds.push(connected[i].sideId);
+      const views = this.sim.snapshotViews(sideIds);
+      for (let i = 0; i < connected.length; i += 1) {
+        const snap = this.decorateState(views.get(connected[i].sideId));
+        if (!payloadForBytes) payloadForBytes = snap;
+        this.emitState(connected[i].socket, snap, volatile);
+      }
+    }
+    if (this.sim.winner) this.winnerSent = true;
+    if (watch) {
+      let bytes = 0;
+      if (sampleBytes && payloadForBytes) {
+        try {
+          bytes = Buffer.byteLength(JSON.stringify(payloadForBytes));
+        } catch {
+          bytes = 0;
+        }
+      }
+      const troops = payloadForBytes
+        ? (payloadForBytes.sides.player.troops.length + payloadForBytes.sides.enemy.troops.length)
+        : 0;
+      const projectiles = payloadForBytes ? payloadForBytes.projectiles.length : 0;
+      noteBroadcast(performance.now() - t0, bytes, troops, projectiles);
     }
   }
 
@@ -537,40 +663,51 @@ export class GameRoom {
     const b = this.seat.b;
     let mmrAAfter = null;
     let mmrBAfter = null;
-    const tasks = [];
-    if (
-      this.mode === "ranked"
-      && a.formbarId
-      && b.formbarId
-      && Number.isFinite(a.mmr)
-      && Number.isFinite(b.mmr)
-    ) {
-      const aScore = winner === "player" ? 1 : 0;
-      const bScore = winner === "enemy" ? 1 : 0;
-      const k = eloK();
-      mmrAAfter = nextMmr(a.mmr, b.mmr, aScore, k);
-      mmrBAfter = nextMmr(b.mmr, a.mmr, bScore, k);
-      tasks.push(setRankedResult(a.formbarId, mmrAAfter, aScore === 1));
-      tasks.push(setRankedResult(b.formbarId, mmrBAfter, bScore === 1));
+    let ranked = null;
+    try {
+      if (
+        this.mode === "ranked"
+        && a.accountId
+        && b.accountId
+        && Number.isFinite(a.mmr)
+        && Number.isFinite(b.mmr)
+      ) {
+        const aScore = winner === "player" ? 1 : 0;
+        const bScore = winner === "enemy" ? 1 : 0;
+        const k = eloK();
+        mmrAAfter = nextMmr(a.mmr, b.mmr, aScore, k);
+        mmrBAfter = nextMmr(b.mmr, a.mmr, bScore, k);
+        ranked = [
+          { accountId: a.accountId, mmr: mmrAAfter, won: aScore === 1 },
+          { accountId: b.accountId, mmr: mmrBAfter, won: bScore === 1 },
+        ];
+      }
+    } catch (err) {
+      console.error(err);
+      ranked = null;
     }
-    tasks.push(insertGame({
-      id: this.id,
-      mode: this.mode,
-      playerA: a.userId,
-      playerB: b.userId,
-      nameA: a.name,
-      nameB: b.name,
-      formbarA: a.formbarId,
-      formbarB: b.formbarId,
-      winnerSide: winner,
-      mmrABefore: Number.isFinite(a.mmr) ? a.mmr : null,
-      mmrBBefore: Number.isFinite(b.mmr) ? b.mmr : null,
-      mmrAAfter,
-      mmrBAfter,
-      createdAt: this.createdAt,
-      endedAt: Date.now(),
-    }));
-    Promise.all(tasks).catch((err) => console.error(err));
+    recordMatchResult({
+      ranked,
+      game: {
+        id: this.id,
+        mode: this.mode,
+        playerA: a.userId,
+        playerB: b.userId,
+        nameA: a.name,
+        nameB: b.name,
+        formbarA: a.formbarId,
+        formbarB: b.formbarId,
+        accountA: a.accountId,
+        accountB: b.accountId,
+        winnerSide: winner,
+        mmrABefore: Number.isFinite(a.mmr) ? a.mmr : null,
+        mmrBBefore: Number.isFinite(b.mmr) ? b.mmr : null,
+        mmrAAfter,
+        mmrBAfter,
+        createdAt: this.createdAt,
+        endedAt: Date.now(),
+      },
+    }).catch((err) => console.error(err));
   }
 
   destroy() {
@@ -581,6 +718,7 @@ export class GameRoom {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+    if (this.matchmaker && this.matchmaker.ticker) this.matchmaker.ticker.remove(this);
     const sockets = this.connectedSockets();
     for (let i = 0; i < sockets.length; i += 1) {
       sockets[i].socket.leave(this.roomName);

@@ -9,31 +9,52 @@ import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import {
   addTickets,
+  assignOwner,
   archiveSuggestion,
   claimSuggestionReward,
   canEditWiki,
   confirmWikiRevision,
+  consumeAuthToken,
+  countOpenBugs,
+  countOpenSuggestions,
+  createAuthToken,
+  createLocalAccount,
   createSuggestion,
   dataPath,
   ensureGuest,
+  findAccountForProfile,
+  FREE_OPEN_SUGGESTIONS,
   getAccount,
+  getAccountByEmail,
+  getAccountByFormbar,
   getSuggestion,
   getUser,
   getWikiPageBySlug,
   getWikiRevision,
   initDb,
+  linkFormbarToAccount,
   listOpenWikiRevisions,
   listSuggestions,
   listWikiPages,
   listWikiSlugs,
   deleteWikiPageBySlug,
+  MAX_OPEN_BUGS,
+  MAX_OPEN_WIKI_REVISIONS,
+  mergeAccounts,
   reopenSuggestion,
+  sanitizeUserText,
   saveWikiPage,
   bgmVolumePercent,
   clampBgmVolumePercent,
+  setAccountPassword,
+  setEmailVerified,
+  setLocalCredentials,
   setPlayerBgmVolume,
   setPlayerTooltips,
   setWikiRevisionRewarded,
+  spendFreeTicket,
+  SUGGESTION_BODY_MAX,
+  SUGGESTION_REPRO_MAX,
   systemStats,
   ticketPack,
   topAccounts,
@@ -45,6 +66,29 @@ import {
   WIKI_BODY_MAX,
   WIKI_TITLE_MAX,
 } from "./server/db.js";
+import {
+  anyLoginEnabled,
+  authEmailEnabled,
+  formbarLoginEnabled,
+  hashPassword,
+  hashToken,
+  isValidEmail,
+  localAccountsEnabled,
+  newAuthToken,
+  normalizeEmail,
+  passwordError,
+  rateLimit,
+  resetTokenTtlMs,
+  validateDisplayName,
+  validateSignupFields,
+  verifyPassword,
+  verifyTokenTtlMs,
+  warnAuthConfig,
+} from "./server/auth.js";
+import { mailReady, sendResetEmail, sendVerifyEmail } from "./server/mail.js";
+import { ensureMetrics, report as metricsReport, startMetrics } from "./server/metrics.js";
+import { workerCount } from "./server/owners.js";
+import { scheduleSettingWrite } from "./server/settingsWrite.js";
 import { connectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
@@ -72,6 +116,7 @@ const THIS_URL = String(process.env.THIS_URL || `http://localhost:${PORT}`).repl
 const POOL_ID = Number(process.env.POOL_ID);
 
 await initDb();
+warnAuthConfig();
 
 const app = express();
 const httpServer = createServer(app);
@@ -80,6 +125,8 @@ const io = new Server(httpServer, {
   transports: ["websocket", "polling"],
   pingInterval: 20000,
   pingTimeout: 20000,
+  // Game commands are tiny. A 1 MB default buffer is a memory lever, not a need.
+  maxHttpBufferSize: 64 * 1024,
   // Skip websocket payload compression — decompressing every tick hammers phones.
   perMessageDeflate: false,
   httpCompression: true,
@@ -91,6 +138,9 @@ const sessionStore = new SQLiteStore({
   dir: dataPath,
   concurrentDb: true,
 });
+if (sessionStore.db && sessionStore.db.configure) {
+  sessionStore.db.configure("busyTimeout", 5000);
+}
 const sessionMiddleware = session({
   store: sessionStore,
   secret: process.env.SESSION_SECRET || "lane-pusher-local",
@@ -176,14 +226,27 @@ function saveSession(sess) {
 
 app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
+app.locals.assetVersion = process.env.ASSET_VERSION || "1";
+app.locals.suggestionBodyMax = SUGGESTION_BODY_MAX;
+app.locals.suggestionReproMax = SUGGESTION_REPRO_MAX;
+app.locals.wikiTitleMax = WIKI_TITLE_MAX;
+app.locals.wikiBodyMax = WIKI_BODY_MAX;
+app.locals.maxOpenBugs = MAX_OPEN_BUGS;
+app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
+app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
 app.use(express.urlencoded({ extended: false }));
 app.use(sessionMiddleware);
 app.use((req, res, next) => {
   res.locals.isAdmin = isAdmin(req.session);
+  res.locals.localAccountsEnabled = localAccountsEnabled();
+  res.locals.formbarLoginEnabled = formbarLoginEnabled();
+  res.locals.authEmailEnabled = authEmailEnabled();
+  res.locals.anyLoginEnabled = anyLoginEnabled();
   next();
 });
-app.use("/shared", express.static(path.join(root, "shared")));
-app.use("/vendor/three", express.static(path.join(root, "node_modules", "three")));
+const staticHour = { maxAge: "1h", etag: true };
+app.use("/shared", express.static(path.join(root, "shared"), staticHour));
+app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticHour));
 app.get("/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json");
   res.sendFile(path.join(root, "public", "manifest.webmanifest"));
@@ -193,7 +256,7 @@ app.use("/bgm", express.static(path.join(root, "public", "bgm"), {
   maxAge: "7d",
   fallthrough: false,
 }));
-app.use(express.static(path.join(root, "public")));
+app.use(express.static(path.join(root, "public"), staticHour));
 
 function adminId() {
   const id = Number(process.env.ADMIN_USER_ID);
@@ -202,7 +265,8 @@ function adminId() {
 
 function isAdmin(sess) {
   const id = adminId();
-  return id != null && Number(sess && sess.formbarId) === id;
+  if (id == null || !sess) return false;
+  return Number(sess.formbarId) === id;
 }
 
 function safeNext(value) {
@@ -262,6 +326,36 @@ function playerPublic(player) {
   };
 }
 
+function setAccountSession(sess, account) {
+  sess.accountId = account.id;
+  sess.formbarId = account.formbar_id || null;
+  sess.formbarName = account.name;
+}
+
+function clientIp(req) {
+  const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return fwd || req.ip || "unknown";
+}
+
+async function resolveSessionAccount(sess) {
+  if (!sess) return null;
+  if (sess.accountId) {
+    const account = await getAccount(sess.accountId);
+    if (account) {
+      setAccountSession(sess, account);
+      return account;
+    }
+  }
+  if (sess.formbarId) {
+    const account = await getAccountByFormbar(sess.formbarId);
+    if (account) {
+      setAccountSession(sess, account);
+      return account;
+    }
+  }
+  return null;
+}
+
 /** Attach a Formbar OAuth JWT to a session. Returns the account or null if invalid. */
 async function applyFormbarToken(sess, tokenString) {
   const tokenData = jwt.decode(String(tokenString || ""));
@@ -272,21 +366,21 @@ async function applyFormbarToken(sess, tokenString) {
   const name = String(
     tokenData.displayName || tokenData.name || `Player ${userId}`,
   ).trim().slice(0, 80) || `Player ${userId}`;
-  await upsertAccount(userId, name);
-  sess.formbarId = userId;
-  sess.formbarName = name;
-  return getAccount(userId);
+  const account = await upsertAccount(userId, name);
+  if (!account) return null;
+  setAccountSession(sess, account);
+  return account;
 }
 
 async function playerFromSession(sess, options = {}) {
   if (!sess) return null;
-  if (sess.formbarId) {
-    const account = await getAccount(sess.formbarId);
-    if (!account) return null;
+  const account = await resolveSessionAccount(sess);
+  if (account) {
     return {
-      id: `f:${account.formbar_id}`,
+      id: `a:${account.id}`,
       name: account.name,
-      formbarId: account.formbar_id,
+      accountId: account.id,
+      formbarId: account.formbar_id || null,
       mmr: account.mmr,
       tooltips: tooltipsEnabled(account),
       bgmVolume: bgmVolumePercent(account),
@@ -301,11 +395,36 @@ async function playerFromSession(sess, options = {}) {
   return {
     id: guest.id,
     name: guest.name,
+    accountId: null,
     formbarId: null,
     mmr: null,
     tooltips: tooltipsEnabled(guest),
     bgmVolume: bgmVolumePercent(guest),
   };
+}
+
+async function issueVerifyEmail(account) {
+  const token = newAuthToken();
+  await createAuthToken(
+    account.id,
+    "verify",
+    hashToken(token),
+    Date.now() + verifyTokenTtlMs(),
+  );
+  const verifyUrl = `${THIS_URL}/verify?token=${encodeURIComponent(token)}`;
+  await sendVerifyEmail({ to: account.email, name: account.name, verifyUrl });
+}
+
+async function issueResetEmail(account) {
+  const token = newAuthToken();
+  await createAuthToken(
+    account.id,
+    "reset",
+    hashToken(token),
+    Date.now() + resetTokenTtlMs(),
+  );
+  const resetUrl = `${THIS_URL}/reset?token=${encodeURIComponent(token)}`;
+  await sendResetEmail({ to: account.email, name: account.name, resetUrl });
 }
 
 const matchmaker = new Matchmaker(io);
@@ -331,7 +450,7 @@ async function preparePlayIntent(sess, intent) {
     return { ok: true, rejoin: true };
   }
   if (paid) {
-    const account = await getAccount(sess.formbarId);
+    const account = await resolveSessionAccount(sess);
     if (!account || account.tickets <= account.held) {
       return { error: "no_ticket", status: 403 };
     }
@@ -360,7 +479,34 @@ async function preparePlayIntent(sess, intent) {
     matchOptions,
   };
   await saveSession(sess);
-  return { ok: true, mode };
+  const assigned = workerCount() > 1 ? await assignOwner(player.id, mode) : null;
+  return {
+    ok: true,
+    mode,
+    worker: assigned ? assigned.worker : 0,
+    owner: assigned && assigned.owner ? assigned.owner : null,
+  };
+}
+
+if (process.env.METRICS === "1") {
+  startMetrics({
+    log: process.env.METRICS_LOG !== "0",
+    gauges() {
+      let socketBacklog = 0;
+      const sockets = io.sockets && io.sockets.sockets;
+      if (sockets) {
+        for (const sock of sockets.values()) {
+          const buf = sock.conn && sock.conn.writeBuffer;
+          if (buf) socketBacklog += buf.length;
+        }
+      }
+      return {
+        rooms: matchmaker.rooms.size,
+        sockets: io.engine ? io.engine.clientsCount : 0,
+        socketBacklog,
+      };
+    },
+  });
 }
 
 function takeNotice(req) {
@@ -370,7 +516,7 @@ function takeNotice(req) {
 }
 
 async function pageViewer(req) {
-  return req.session.formbarId ? await getAccount(req.session.formbarId) : null;
+  return resolveSessionAccount(req.session);
 }
 
 async function homeData(req) {
@@ -419,19 +565,378 @@ async function adminData(req) {
   };
 }
 
+async function completeFormbarLogin(req, res, token) {
+  if (!formbarLoginEnabled()) {
+    res.status(404).send("Formbar login is disabled.");
+    return;
+  }
+  const tokenData = jwt.decode(String(token));
+  const userId = tokenData && typeof tokenData === "object"
+    ? formbarUserIdFromToken(tokenData)
+    : null;
+  if (!tokenData || userId == null) {
+    res.status(400).send("Invalid Formbar token.");
+    return;
+  }
+  const rawName = String(
+    tokenData.displayName || tokenData.name || `Player ${userId}`,
+  );
+  const nameCheck = validateDisplayName(rawName);
+  const name = nameCheck.ok ? nameCheck.name : `Player ${userId}`;
+
+  const linkId = Number(req.session.linkAccountId);
+  if (Number.isInteger(linkId) && linkId > 0) {
+    req.session.linkAccountId = null;
+    const result = await linkFormbarToAccount(linkId, userId);
+    if (!result.ok) {
+      req.session.notice = result.error === "already_linked"
+        ? "This account already has Formbar linked."
+        : result.error === "conflict"
+          ? "That Formbar account cannot be linked."
+          : "Could not link Formbar account.";
+      req.session.save(() => res.redirect(`/profile/${linkId}`));
+      return;
+    }
+    await upsertAccount(userId, name);
+    const linked = await getAccount(result.account.id);
+    setAccountSession(req.session, linked || result.account);
+    req.session.notice = "Formbar account linked.";
+    req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
+    return;
+  }
+
+  const account = await upsertAccount(userId, name);
+  setAccountSession(req.session, account);
+  req.session.save(() => res.redirect("/"));
+}
+
 app.get("/login", async (req, res, next) => {
   try {
     if (req.query.token) {
-      const account = await applyFormbarToken(req.session, req.query.token);
-      if (!account) {
-        res.status(400).send("Invalid Formbar token.");
-        return;
-      }
-      req.session.save(() => res.redirect("/"));
+      await completeFormbarLogin(req, res, req.query.token);
       return;
     }
-    const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-    res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    if (req.query.formbar === "1") {
+      if (!formbarLoginEnabled()) {
+        res.status(404).send("Formbar login is disabled.");
+        return;
+      }
+      const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
+      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      return;
+    }
+    if (!anyLoginEnabled()) {
+      const viewer = await pageViewer(req);
+      req.session.save(() => res.status(404).render("login", {
+        nav: null,
+        viewer,
+        notice: "Login is disabled.",
+        email: "",
+        disabled: true,
+      }));
+      return;
+    }
+    const viewer = await pageViewer(req);
+    if (viewer) {
+      res.redirect("/");
+      return;
+    }
+    req.session.save(() => res.render("login", {
+      nav: null,
+      viewer: null,
+      notice: takeNotice(req),
+      email: "",
+      disabled: false,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/login", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled()) {
+      res.status(404).send("Local accounts are disabled.");
+      return;
+    }
+    const email = normalizeEmail(req.body && req.body.email);
+    const password = String(req.body && req.body.password || "");
+    const renderFail = (notice) => {
+      req.session.save(() => res.status(400).render("login", {
+        nav: null,
+        viewer: null,
+        notice,
+        email,
+        disabled: false,
+      }));
+    };
+    if (!rateLimit(`login:${clientIp(req)}:${email}`, { max: 20 })) {
+      renderFail("Too many login attempts. Try again later.");
+      return;
+    }
+    const account = await getAccountByEmail(email);
+    if (!account || !account.password_hash) {
+      renderFail("Invalid email or password.");
+      return;
+    }
+    const ok = await verifyPassword(password, account.password_hash);
+    if (!ok) {
+      renderFail("Invalid email or password.");
+      return;
+    }
+    if (authEmailEnabled() && !account.email_verified_at) {
+      renderFail("Verify your email before logging in.");
+      return;
+    }
+    setAccountSession(req.session, account);
+    req.session.save(() => res.redirect("/"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/signup", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled()) {
+      res.status(404).send("Local accounts are disabled.");
+      return;
+    }
+    if (await pageViewer(req)) {
+      res.redirect("/");
+      return;
+    }
+    req.session.save(() => res.render("signup", {
+      nav: null,
+      viewer: null,
+      notice: takeNotice(req),
+      email: "",
+      name: "",
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/signup", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled()) {
+      res.status(404).send("Local accounts are disabled.");
+      return;
+    }
+    const fields = validateSignupFields({
+      name: req.body && req.body.name,
+      email: req.body && req.body.email,
+      password: req.body && req.body.password,
+    });
+    const renderFail = (notice) => {
+      req.session.save(() => res.status(400).render("signup", {
+        nav: null,
+        viewer: null,
+        notice,
+        email: fields.email,
+        name: fields.name,
+      }));
+    };
+    if (!rateLimit(`signup:${clientIp(req)}`, { max: 10 })) {
+      renderFail("Too many signups from this address. Try again later.");
+      return;
+    }
+    if (!fields.ok) {
+      renderFail(fields.error);
+      return;
+    }
+    const { email, name, password } = fields;
+    if (await getAccountByEmail(email)) {
+      renderFail("An account with that email already exists.");
+      return;
+    }
+    const passwordHash = await hashPassword(password);
+    const needVerify = authEmailEnabled();
+    if (needVerify && !mailReady()) {
+      renderFail("Email is not configured. Try again later.");
+      return;
+    }
+    let account;
+    try {
+      account = await createLocalAccount({
+        email,
+        passwordHash,
+        name,
+        verifiedAt: needVerify ? null : Date.now(),
+      });
+    } catch (err) {
+      if (err && err.code === "SQLITE_CONSTRAINT") {
+        renderFail("An account with that email already exists.");
+        return;
+      }
+      throw err;
+    }
+    if (needVerify) {
+      try {
+        await issueVerifyEmail(account);
+      } catch (err) {
+        console.error(err);
+        renderFail("Could not send verification email. Try again later.");
+        return;
+      }
+      req.session.notice = "Check your email to verify your account.";
+      req.session.save(() => res.redirect("/login"));
+      return;
+    }
+    setAccountSession(req.session, account);
+    req.session.save(() => res.redirect("/"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/verify", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Email verification is disabled.");
+      return;
+    }
+    const token = String(req.query.token || "");
+    if (!token) {
+      res.status(400).send("Missing verification token.");
+      return;
+    }
+    const account = await consumeAuthToken("verify", hashToken(token));
+    if (!account) {
+      req.session.notice = "That verification link is invalid or expired.";
+      req.session.save(() => res.redirect("/login"));
+      return;
+    }
+    await setEmailVerified(account.id);
+    const fresh = await getAccount(account.id);
+    setAccountSession(req.session, fresh || account);
+    req.session.notice = "Email verified. You are logged in.";
+    req.session.save(() => res.redirect("/"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/verify/resend", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Email verification is disabled.");
+      return;
+    }
+    const email = normalizeEmail(req.body && req.body.email);
+    if (!rateLimit(`resend:${clientIp(req)}:${email}`, { max: 5 })) {
+      req.session.notice = "If that account exists, a new email was sent.";
+      req.session.save(() => res.redirect("/login"));
+      return;
+    }
+    const account = await getAccountByEmail(email);
+    if (account && account.password_hash && !account.email_verified_at && mailReady()) {
+      try {
+        await issueVerifyEmail(account);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    req.session.notice = "If that account exists, a new email was sent.";
+    req.session.save(() => res.redirect("/login"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/forgot", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Password recovery is disabled.");
+      return;
+    }
+    const viewer = await pageViewer(req);
+    req.session.save(() => res.render("forgot", {
+      nav: null,
+      viewer,
+      notice: takeNotice(req),
+      email: "",
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/forgot", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Password recovery is disabled.");
+      return;
+    }
+    const email = normalizeEmail(req.body && req.body.email);
+    if (rateLimit(`forgot:${clientIp(req)}:${email}`, { max: 5 })) {
+      const account = await getAccountByEmail(email);
+      if (account && account.password_hash && account.email_verified_at && mailReady()) {
+        try {
+          await issueResetEmail(account);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    }
+    req.session.notice = "If that account exists, a reset link was sent.";
+    req.session.save(() => res.redirect("/login"));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/reset", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Password recovery is disabled.");
+      return;
+    }
+    const token = String(req.query.token || "");
+    if (!token) {
+      res.status(400).send("Missing reset token.");
+      return;
+    }
+    req.session.save(() => res.render("reset", {
+      nav: null,
+      viewer: null,
+      notice: takeNotice(req),
+      token,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/reset", async (req, res, next) => {
+  try {
+    if (!localAccountsEnabled() || !authEmailEnabled()) {
+      res.status(404).send("Password recovery is disabled.");
+      return;
+    }
+    const token = String(req.body && req.body.token || "");
+    const password = String(req.body && req.body.password || "");
+    const passErr = passwordError(password);
+    if (passErr) {
+      req.session.save(() => res.status(400).render("reset", {
+        nav: null,
+        viewer: null,
+        notice: passErr,
+        token,
+      }));
+      return;
+    }
+    const account = await consumeAuthToken("reset", hashToken(token));
+    if (!account) {
+      req.session.notice = "That reset link is invalid or expired.";
+      req.session.save(() => res.redirect("/forgot"));
+      return;
+    }
+    await setAccountPassword(account.id, await hashPassword(password));
+    const fresh = await getAccount(account.id);
+    setAccountSession(req.session, fresh || account);
+    req.session.notice = "Password updated.";
+    req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
   }
@@ -517,17 +1022,26 @@ app.get("/admin", async (req, res, next) => {
 
 app.get("/profile/:id", async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
-    const account = Number.isInteger(id) && id > 0 ? await getAccount(id) : null;
+    const account = await findAccountForProfile(req.params.id);
     const viewer = await pageViewer(req);
     const pack = ticketPack();
     const body = {
       account,
       viewer,
-      isOwner: Boolean(account && viewer && account.formbar_id === viewer.formbar_id),
+      isOwner: Boolean(account && viewer && account.id === viewer.id),
       notice: takeNotice(req),
       packSize: pack.size,
       packCost: pack.cost,
+      canLinkFormbar: Boolean(
+        account && viewer && account.id === viewer.id
+        && !account.formbar_id
+        && formbarLoginEnabled(),
+      ),
+      canAddLocal: Boolean(
+        account && viewer && account.id === viewer.id
+        && !account.email
+        && localAccountsEnabled(),
+      ),
     };
     req.session.save(() => {
       if (!account) {
@@ -541,20 +1055,141 @@ app.get("/profile/:id", async (req, res, next) => {
   }
 });
 
-app.post("/tickets", async (req, res, next) => {
+app.post("/profile/link/formbar", async (req, res, next) => {
   try {
-    const back = safeNext(req.body && req.body.next);
-    if (!req.session.formbarId) {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
       res.redirect("/login");
       return;
     }
-    const pack = ticketPack();
-    const account = await getAccount(req.session.formbarId);
-    if (!account) {
-      req.session.notice = "Log in again to buy tickets.";
+    if (!formbarLoginEnabled()) {
+      res.status(404).send("Formbar login is disabled.");
+      return;
+    }
+    if (viewer.formbar_id) {
+      req.session.notice = "Formbar is already linked.";
+      req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+      return;
+    }
+    req.session.linkAccountId = viewer.id;
+    const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
+    req.session.save(() => {
+      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/link/local", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
+      res.redirect("/login");
+      return;
+    }
+    if (!localAccountsEnabled()) {
+      res.status(404).send("Local accounts are disabled.");
+      return;
+    }
+    const back = `/profile/${viewer.id}`;
+    if (viewer.email) {
+      req.session.notice = "Email is already linked.";
       req.session.save(() => res.redirect(back));
       return;
     }
+    const email = normalizeEmail(req.body && req.body.email);
+    const password = String(req.body && req.body.password || "");
+    if (!isValidEmail(email)) {
+      req.session.notice = "Enter a valid email address.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const passErr = passwordError(password);
+    if (passErr) {
+      req.session.notice = passErr;
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const passwordHash = await hashPassword(password);
+    const other = await getAccountByEmail(email);
+    if (other && other.id !== viewer.id) {
+      const okPass = other.password_hash
+        && await verifyPassword(password, other.password_hash);
+      if (!okPass) {
+        req.session.notice = "That email belongs to another account. Enter its password to merge.";
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+      const merged = await mergeAccounts(viewer.id, other.id, {
+        email,
+        passwordHash: other.password_hash || passwordHash,
+        verifiedAt: other.email_verified_at || (authEmailEnabled() ? null : Date.now()),
+      });
+      if (!merged.ok) {
+        req.session.notice = "Could not link that email account.";
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+      setAccountSession(req.session, merged.account);
+      if (authEmailEnabled() && !merged.account.email_verified_at && mailReady()) {
+        try {
+          await issueVerifyEmail(merged.account);
+          req.session.notice = "Accounts merged. Check your email to verify.";
+        } catch (err) {
+          console.error(err);
+          req.session.notice = "Accounts merged.";
+        }
+      } else {
+        req.session.notice = "Accounts merged.";
+      }
+      req.session.save(() => res.redirect(`/profile/${merged.account.id}`));
+      return;
+    }
+    const needVerify = authEmailEnabled();
+    if (needVerify && !mailReady()) {
+      req.session.notice = "Email is not configured. Try again later.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    await setLocalCredentials(viewer.id, {
+      email,
+      passwordHash,
+      verifiedAt: needVerify ? null : Date.now(),
+    });
+    const fresh = await getAccount(viewer.id);
+    setAccountSession(req.session, fresh || viewer);
+    if (needVerify) {
+      try {
+        await issueVerifyEmail(fresh);
+        req.session.notice = "Check your email to verify the new address.";
+      } catch (err) {
+        console.error(err);
+        req.session.notice = "Email saved, but verification could not be sent.";
+      }
+    } else {
+      req.session.notice = "Email and password added.";
+    }
+    req.session.save(() => res.redirect(back));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/tickets", async (req, res, next) => {
+  try {
+    const back = safeNext(req.body && req.body.next);
+    const account = await pageViewer(req);
+    if (!account) {
+      res.redirect("/login");
+      return;
+    }
+    if (!account.formbar_id) {
+      req.session.notice = "Link a Formbar account to buy tickets with Digipogs.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const pack = ticketPack();
     const transfer = await payPool(formbarSocket, {
       userId: account.formbar_id,
       poolId: POOL_ID,
@@ -567,7 +1202,7 @@ app.post("/tickets", async (req, res, next) => {
       req.session.save(() => res.redirect(back));
       return;
     }
-    await addTickets(account.formbar_id, pack.size, pack.cost);
+    await addTickets(account.id, pack.size, pack.cost, account.formbar_id);
     req.session.notice = `Added ${pack.size} tickets.`;
     req.session.save(() => res.redirect(back));
   } catch (err) {
@@ -578,19 +1213,20 @@ app.post("/tickets", async (req, res, next) => {
 app.post("/suggestions", async (req, res, next) => {
   try {
     const back = safeNext(req.body && req.body.next);
-    if (!req.session.formbarId) {
+    const account = await pageViewer(req);
+    if (!account) {
       res.redirect("/login");
       return;
     }
-    const account = await getAccount(req.session.formbarId);
-    if (!account) {
-      req.session.notice = "Log in again to send a suggestion.";
-      req.session.save(() => res.redirect(back));
-      return;
-    }
-    const body = String(req.body && req.body.body || "").trim().slice(0, 2000);
+    const body = sanitizeUserText(req.body && req.body.body, {
+      max: SUGGESTION_BODY_MAX,
+      allowNewlines: true,
+    });
     const isBug = Boolean(req.body && (req.body.is_bug === "on" || req.body.is_bug === "1"));
-    const repro = String(req.body && req.body.repro || "").trim().slice(0, 2000);
+    const repro = sanitizeUserText(req.body && req.body.repro, {
+      max: SUGGESTION_REPRO_MAX,
+      allowNewlines: true,
+    });
     if (!body) {
       req.session.notice = "Suggestion text is required.";
       req.session.save(() => res.redirect(back));
@@ -601,14 +1237,36 @@ app.post("/suggestions", async (req, res, next) => {
       req.session.save(() => res.redirect(back));
       return;
     }
+    let spentTicket = false;
+    if (isBug) {
+      const openBugs = await countOpenBugs(account.id);
+      if (openBugs >= MAX_OPEN_BUGS) {
+        req.session.notice = `You already have ${MAX_OPEN_BUGS} unresolved bug reports.`;
+        req.session.save(() => res.redirect(back));
+        return;
+      }
+    } else {
+      const openSuggestions = await countOpenSuggestions(account.id);
+      if (openSuggestions >= FREE_OPEN_SUGGESTIONS) {
+        spentTicket = await spendFreeTicket(account.id);
+        if (!spentTicket) {
+          req.session.notice = "You already have an unanswered suggestion. Extra suggestions cost 1 ticket.";
+          req.session.save(() => res.redirect(back));
+          return;
+        }
+      }
+    }
     await createSuggestion({
-      formbarId: account.formbar_id,
+      accountId: account.id,
+      formbarId: account.formbar_id || 0,
       name: account.name,
       body,
       isBug,
       repro,
     });
-    req.session.notice = "Thanks for the suggestion.";
+    req.session.notice = spentTicket
+      ? "Thanks for the suggestion. Used 1 ticket."
+      : (isBug ? "Thanks for the bug report." : "Thanks for the suggestion.");
     req.session.save(() => res.redirect(back));
   } catch (err) {
     next(err);
@@ -701,9 +1359,10 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
 });
 
 async function viewerCanEditWiki(sess) {
-  if (!sess || !sess.formbarId) return false;
+  const account = await resolveSessionAccount(sess);
+  if (!account) return false;
   if (isAdmin(sess)) return true;
-  return canEditWiki(sess.formbarId);
+  return canEditWiki(account.id);
 }
 
 function titleFromSlug(slug) {
@@ -846,7 +1505,8 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
 async function startPlay(req, res, next, intent) {
   try {
     const paid = intent.mode === "listed" || intent.mode === "ranked" || intent.mode === "join";
-    if (paid && !req.session.formbarId) {
+    const account = await resolveSessionAccount(req.session);
+    if (paid && !account) {
       res.redirect("/login");
       return;
     }
@@ -860,7 +1520,6 @@ async function startPlay(req, res, next, intent) {
       return;
     }
     if (paid) {
-      const account = await getAccount(req.session.formbarId);
       if (!account || account.tickets <= account.held) {
         req.session.notice = "You need a free ticket.";
         req.session.save(() => res.redirect("/games"));
@@ -942,17 +1601,17 @@ app.get("/rules", async (req, res, next) => {
 
 app.get("/rules/:slug/edit", async (req, res, next) => {
   try {
-    if (!req.session.formbarId) {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
       res.redirect("/login");
       return;
     }
     if (!(await viewerCanEditWiki(req.session))) {
-      req.session.notice = "Editing requires buying tickets and finishing a ranked game.";
+      req.session.notice = "Editing requires finishing a ranked game.";
       req.session.save(() => res.redirect(`/rules/${wikiSlug(req.params.slug)}`));
       return;
     }
     const slug = wikiSlug(req.params.slug);
-    const viewer = await getAccount(req.session.formbarId);
     const notice = takeNotice(req);
     const found = await getWikiPageBySlug(slug);
     req.session.save(() => {
@@ -973,32 +1632,34 @@ app.get("/rules/:slug/edit", async (req, res, next) => {
 
 app.post("/rules/:slug/edit", async (req, res, next) => {
   try {
-    if (!req.session.formbarId) {
+    const account = await pageViewer(req);
+    if (!account) {
       res.redirect("/login");
       return;
     }
     const slug = wikiSlug(req.params.slug);
     if (!(await viewerCanEditWiki(req.session))) {
-      req.session.notice = "Editing requires buying tickets and finishing a ranked game.";
+      req.session.notice = "Editing requires finishing a ranked game.";
       req.session.save(() => res.redirect(`/rules/${slug}`));
-      return;
-    }
-    const account = await getAccount(req.session.formbarId);
-    if (!account) {
-      req.session.notice = "Log in again to edit the wiki.";
-      req.session.save(() => res.redirect("/login"));
       return;
     }
     const found = await getWikiPageBySlug(slug);
     const title = found
       ? found.page.title
-      : String(req.body && req.body.title || "").trim().slice(0, WIKI_TITLE_MAX);
-    const body = String(req.body && req.body.body || "").trim().slice(0, WIKI_BODY_MAX);
+      : sanitizeUserText(req.body && req.body.title, {
+        max: WIKI_TITLE_MAX,
+        allowNewlines: false,
+      });
+    const body = sanitizeUserText(req.body && req.body.body, {
+      max: WIKI_BODY_MAX,
+      allowNewlines: true,
+    });
     const result = await saveWikiPage({
       slug,
       title,
       body,
-      formbarId: account.formbar_id,
+      formbarId: account.formbar_id || 0,
+      accountId: account.id,
       name: account.name,
     });
     if (!result.ok) {
@@ -1015,7 +1676,7 @@ app.post("/rules/:slug/edit", async (req, res, next) => {
 
 app.post("/rules/:slug/delete", async (req, res, next) => {
   try {
-    if (!req.session.formbarId) {
+    if (!(await pageViewer(req))) {
       res.redirect("/login");
       return;
     }
@@ -1070,6 +1731,27 @@ app.get("/play", async (req, res, next) => {
 });
 
 app.use("/api/v1", express.json({ limit: "32kb" }));
+
+app.get("/api/v1/metrics", (req, res) => {
+  if (process.env.METRICS !== "1") {
+    res.status(404).end();
+    return;
+  }
+  ensureMetrics();
+  let socketBacklog = 0;
+  const sockets = io.sockets && io.sockets.sockets;
+  if (sockets) {
+    for (const sock of sockets.values()) {
+      const buf = sock.conn && sock.conn.writeBuffer;
+      if (buf) socketBacklog += buf.length;
+    }
+  }
+  res.json(metricsReport({
+    rooms: matchmaker.rooms.size,
+    sockets: io.engine ? io.engine.clientsCount : 0,
+    socketBacklog,
+  }));
+});
 
 app.post("/api/v1/session", async (req, res, next) => {
   try {
@@ -1170,7 +1852,7 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
       return;
     }
     const busy = matchmaker.isBusy(player.id);
-    const account = player.formbarId ? await getAccount(player.formbarId) : null;
+    const account = await resolveSessionAccount(req.session);
     const pack = ticketPack();
     res.json({
       player: playerPublic(player),
@@ -1212,16 +1894,12 @@ app.get("/api/v1/match-options", requireApiSession, async (req, res, next) => {
 
 app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
   try {
-    if (!req.session.formbarId) {
+    const account = await resolveSessionAccount(req.session);
+    if (!account || !account.formbar_id) {
       res.status(403).json({ error: "login_required" });
       return;
     }
     const pack = ticketPack();
-    const account = await getAccount(req.session.formbarId);
-    if (!account) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
     const transfer = await payPool(formbarSocket, {
       userId: account.formbar_id,
       poolId: POOL_ID,
@@ -1236,8 +1914,8 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
       });
       return;
     }
-    await addTickets(account.formbar_id, pack.size, pack.cost);
-    const updated = await getAccount(account.formbar_id);
+    await addTickets(account.id, pack.size, pack.cost, account.formbar_id);
+    const updated = await getAccount(account.id);
     const player = await playerFromSession(req.session, { createGuest: false });
     const busy = player ? matchmaker.isBusy(player.id) : false;
     res.json({
@@ -1338,13 +2016,17 @@ io.on("connection", (socket) => {
   socket.on("tooltips", (on) => {
     const enabled = Boolean(on);
     if (socket.data.user) socket.data.user.tooltips = enabled;
-    setPlayerTooltips(socket.data.user, enabled).catch((err) => console.error(err));
+    scheduleSettingWrite(socket, "tooltips", enabled, (value) => {
+      return setPlayerTooltips(socket.data.user, value);
+    });
   });
   socket.on("bgmVolume", (percent) => {
     if (!Number.isFinite(Number(percent))) return;
     const value = clampBgmVolumePercent(percent);
     if (socket.data.user) socket.data.user.bgmVolume = value;
-    setPlayerBgmVolume(socket.data.user, value).catch((err) => console.error(err));
+    scheduleSettingWrite(socket, "bgmVolume", value, (next) => {
+      return setPlayerBgmVolume(socket.data.user, next);
+    });
   });
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));

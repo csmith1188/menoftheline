@@ -278,6 +278,14 @@ export const CONFIG = {
   botOrderCooldown: 2.5,
   /** Max sim steps per wall tick when game speed is above 1×. */
   botSpeedStepCap: 4,
+  /** How often playing rooms emit a snapshot. Sim steps stay at 50 ms. */
+  stateIntervalMs: 100,
+  /** Per-socket command burst (matches the seat queue cap). */
+  commandBurst: 30,
+  /** Sustained commands per second after the burst is spent. */
+  commandRefillPerSec: 20,
+  /** Reject command payloads larger than this many JSON bytes. */
+  commandMaxBytes: 4096,
 
   // Bot — lane posture and keep threat
 

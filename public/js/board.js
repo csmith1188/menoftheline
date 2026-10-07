@@ -7,6 +7,7 @@ import {
 } from "../shared/path.js";
 import { TERRAIN_EMOJI, terrainCoverParts } from "../shared/terrain.js";
 import { installMapView, isArcLane, isLineLane } from "./mapView.js";
+import { SHOT_SNAP_PX, SNAP_PX, lerpAlpha, lerpPoint, lerpTroop } from "./interp.js";
 
 /** Display face for titles. Body copy and bullets use IM Fell English. */
 export const FONT_HEADER = "Cinzel";
@@ -257,10 +258,13 @@ export const boardStateMethods = {
       || (navigator.maxTouchPoints || 0) > 0;
   },
 
-  /** Cap backing-store DPR; phones pay heavily for fog/terrain strokes above 1.5. */
+  /**
+   * Cap backing-store DPR. Touch (incl. old iPads) stays at 1× so fog/terrain
+   * strokes stay affordable on A8X-class GPUs; desktop may use up to 2×.
+   */
   devicePixelRatio() {
     const raw = window.devicePixelRatio || 1;
-    return Math.min(raw, this.isTouchUi() ? 1.5 : 2);
+    return Math.min(raw, this.isTouchUi() ? 1 : 2);
   },
 
   uiFont(px, weight, role) {
@@ -1558,8 +1562,7 @@ export function useDrawPrototypes(next) {
   if (next.side) sideProto = next.side;
 }
 
-function makeTroop(data, side, mx) {
-  const troop = Object.create(troopProto);
+function writeTroop(troop, data, side, mx) {
   troop.id = data.id;
   troop.lane = data.lane;
   troop.sublane = data.sublane;
@@ -1573,8 +1576,7 @@ function makeTroop(data, side, mx) {
   troop.broken = Boolean(data.broken);
   troop.priorOrder = data.priorOrder === undefined ? null : data.priorOrder;
   troop.radius = data.radius;
-  troop.x = mx(data.x);
-  troop.y = data.y;
+  noteMotion(troop, mx(data.x), data.y, data.lane, data.sublane);
   troop.order = data.order;
   troop.squared = Boolean(data.squared);
   troop.flash = data.flash;
@@ -1583,8 +1585,106 @@ function makeTroop(data, side, mx) {
   return troop;
 }
 
-function makeSide(data, viewId, board, mx) {
-  const side = Object.create(sideProto);
+function noteMotion(troop, x, y, lane, sublane) {
+  const next = { x, y, lane, sublane };
+  const prev = troop.motionNext;
+  const dx = prev ? x - prev.x : 0;
+  const dy = prev ? y - prev.y : 0;
+  const far = prev && (dx * dx + dy * dy > SNAP_PX * SNAP_PX);
+  const rowChanged = prev && (prev.lane !== lane || prev.sublane !== sublane);
+  if (!prev || far || rowChanged) {
+    troop.motionPrev = null;
+    troop.x = x;
+    troop.y = y;
+  } else {
+    troop.motionPrev = prev;
+  }
+  troop.motionNext = next;
+}
+
+function notePointMotion(entity, x, y, snapPx = SNAP_PX) {
+  const next = { x, y };
+  const prev = entity.motionNext;
+  const dx = prev ? x - prev.x : 0;
+  const dy = prev ? y - prev.y : 0;
+  const far = prev && (dx * dx + dy * dy > snapPx * snapPx);
+  if (!prev || far) {
+    entity.motionPrev = null;
+    entity.x = x;
+    entity.y = y;
+  } else {
+    entity.motionPrev = prev;
+  }
+  entity.motionNext = next;
+}
+
+/** Glide troops and shells between the last two authoritative samples. */
+export function presentTroopMotion(board, now = performance.now()) {
+  if (!board) return;
+  const alpha = lerpAlpha(now, board.motionAt || now, board.motionGapMs || 0);
+  const sides = [board.player, board.enemy];
+  for (let s = 0; s < sides.length; s += 1) {
+    const side = sides[s];
+    if (!side || !side.troops) continue;
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (!troop.motionNext) continue;
+      const point = lerpTroop(troop.motionPrev, troop.motionNext, alpha, SNAP_PX);
+      troop.x = point.x;
+      troop.y = point.y;
+    }
+  }
+  const shots = board.projectiles || [];
+  for (let i = 0; i < shots.length; i += 1) {
+    const shot = shots[i];
+    if (!shot || !shot.motionNext) continue;
+    const point = lerpPoint(shot.motionPrev, shot.motionNext, alpha, SHOT_SNAP_PX);
+    shot.x = point.x;
+    shot.y = point.y;
+  }
+}
+
+function syncProjectiles(board, shots, mx) {
+  const prev = board.projectiles || [];
+  const byId = new Map();
+  for (let i = 0; i < prev.length; i += 1) {
+    const shot = prev[i];
+    if (shot && shot.id != null) byId.set(shot.id, shot);
+  }
+  const next = new Array(shots.length);
+  for (let i = 0; i < shots.length; i += 1) {
+    const data = shots[i];
+    const id = data.id != null ? data.id : i;
+    const existing = byId.get(id) || {};
+    notePointMotion(existing, mx(data.x), data.y, SHOT_SNAP_PX);
+    existing.id = id;
+    existing.size = data.size;
+    existing.color = data.color;
+    next[i] = existing;
+  }
+  board.projectiles = next;
+}
+
+function makeTroop(data, side, mx) {
+  return writeTroop(Object.create(troopProto), data, side, mx);
+}
+
+function syncTroops(side, dataTroops, mx) {
+  const prev = side.troops;
+  const byId = new Map();
+  for (let i = 0; i < prev.length; i += 1) byId.set(prev[i].id, prev[i]);
+  const next = new Array(dataTroops.length);
+  for (let i = 0; i < dataTroops.length; i += 1) {
+    const data = dataTroops[i];
+    const existing = byId.get(data.id);
+    next[i] = existing
+      ? writeTroop(existing, data, side, mx)
+      : makeTroop(data, side, mx);
+  }
+  side.troops = next;
+}
+
+function writeSideFields(side, data, viewId, board) {
   side.board = board;
   side.id = viewId;
   side.capital = viewId === "player" ? CONFIG.playerCapital : CONFIG.enemyCapital;
@@ -1602,8 +1702,23 @@ function makeSide(data, viewId, board, mx) {
     top: (data.targeting && data.targeting.top) || "bastion",
     bottom: (data.targeting && data.targeting.bottom) || "bastion",
   };
+}
+
+function makeSide(data, viewId, board, mx) {
+  const side = Object.create(sideProto);
+  writeSideFields(side, data, viewId, board);
   side.troops = data.troops.map((troop) => makeTroop(troop, side, mx));
   return side;
+}
+
+/** Update an existing side in place when possible to cut GC on phones. */
+function syncSide(existing, data, viewId, board, mx) {
+  if (!existing || existing.id !== viewId) {
+    return makeSide(data, viewId, board, mx);
+  }
+  writeSideFields(existing, data, viewId, board);
+  syncTroops(existing, data.troops, mx);
+  return existing;
 }
 
 function makeCheckpoint(data, board) {
@@ -1615,6 +1730,34 @@ function makeCheckpoint(data, board) {
   town.owner = data.owner;
   town.producing = Boolean(data.producing);
   return town;
+}
+
+function syncCheckpoints(board, snapTowns, mx, viewOwner) {
+  const prev = board.checkpoints || [];
+  const byIndex = new Map();
+  for (let i = 0; i < prev.length; i += 1) byIndex.set(prev[i].index, prev[i]);
+  const next = new Array(snapTowns.length);
+  for (let i = 0; i < snapTowns.length; i += 1) {
+    const town = snapTowns[i];
+    let row = byIndex.get(town.index);
+    if (!row) {
+      row = makeCheckpoint({
+        index: town.index,
+        x: mx(town.x),
+        y: town.y,
+        owner: viewOwner(town.owner),
+        producing: town.producing,
+      }, board);
+    } else {
+      row.board = board;
+      row.x = mx(town.x);
+      row.y = town.y;
+      row.owner = viewOwner(town.owner);
+      row.producing = Boolean(town.producing);
+    }
+    next[i] = row;
+  }
+  board.checkpoints = next;
 }
 
 /**
@@ -1663,6 +1806,16 @@ export function applySnapshot(board, snap, seat, controlSide) {
   installMapView(snap);
   board.mapMeta = snap.map || null;
   board.elapsed = snap.elapsed;
+  const prevElapsed = board.motionElapsed;
+  const elapsed = Number(snap.elapsed);
+  board.motionElapsed = Number.isFinite(elapsed) ? elapsed : prevElapsed;
+  if (prevElapsed == null || !Number.isFinite(elapsed)) {
+    board.motionGapMs = 0;
+  } else {
+    const gap = (elapsed - prevElapsed) * 1000;
+    board.motionGapMs = gap > 0 && gap < 1000 ? gap : 0;
+  }
+  board.motionAt = performance.now();
   board.winner = snap.winner ? viewOwner(snap.winner) : null;
   board.winReason = snap.winReason || null;
   board.status = snap.status;
@@ -1693,59 +1846,67 @@ export function applySnapshot(board, snap, seat, controlSide) {
     board.bottomCenter = board.laneCenters.bottom;
     board.bottomCenterTo = board.laneCentersTo.bottom;
   }
-  board.player = makeSide(snap.sides[mine], "player", board, mx);
-  board.enemy = makeSide(snap.sides[mine === "player" ? "enemy" : "player"], "enemy", board, mx);
-  board.checkpoints = snap.checkpoints.map((town) => makeCheckpoint({
-    index: town.index,
-    x: mx(town.x),
-    y: town.y,
-    owner: viewOwner(town.owner),
-    producing: town.producing,
-  }, board));
-  board.projectiles = snap.projectiles.map((shot) => ({ x: mx(shot.x), y: shot.y }));
-  board.splats = snap.splats.map((splat) => ({
-    x: mx(splat.x),
-    y: splat.y,
-    amount: splat.amount,
-    kind: splat.kind,
-    age: splat.age,
-  }));
+  board.player = syncSide(board.player, snap.sides[mine], "player", board, mx);
+  board.enemy = syncSide(
+    board.enemy,
+    snap.sides[mine === "player" ? "enemy" : "player"],
+    "enemy",
+    board,
+    mx,
+  );
+  syncCheckpoints(board, snap.checkpoints, mx, viewOwner);
+  syncProjectiles(board, snap.projectiles || [], mx);
+  const splatSnap = snap.splats;
+  if (!board.splats || board.splats.length !== splatSnap.length) {
+    board.splats = new Array(splatSnap.length);
+  }
+  for (let i = 0; i < splatSnap.length; i += 1) {
+    const src = splatSnap[i];
+    const prev = board.splats[i] || (board.splats[i] = {});
+    prev.x = mx(src.x);
+    prev.y = src.y;
+    prev.amount = src.amount;
+    prev.kind = src.kind;
+    prev.age = src.age;
+  }
   board.mapId = snap.mapId || snap.terrain && snap.terrain.mapId || CONFIG.defaultMapId;
   const rawFeatures = (snap.terrain && snap.terrain.features) || [];
-  board.terrainFeatures = rawFeatures.map((f) => {
+  if (!board.terrainFeatures || board.terrainFeatures.length !== rawFeatures.length) {
+    board.terrainFeatures = new Array(rawFeatures.length);
+  }
+  for (let i = 0; i < rawFeatures.length; i += 1) {
+    const f = rawFeatures[i];
     const total = Path.lanePaces(f.lane);
     const centerPaces = mirror ? total - f.centerPaces : f.centerPaces;
-    return {
-      id: f.id,
-      kind: f.kind,
-      lane: f.lane,
-      sublanes: f.sublanes.slice(),
-      centerPaces,
-      halfWidthPaces: f.halfWidthPaces,
-      sideId: f.sideId,
-      emoji: TERRAIN_EMOJI[f.kind] || "",
-    };
-  });
+    const row = board.terrainFeatures[i] || (board.terrainFeatures[i] = {});
+    row.id = f.id;
+    row.kind = f.kind;
+    row.lane = f.lane;
+    row.sublanes = f.sublanes.slice();
+    row.centerPaces = centerPaces;
+    row.halfWidthPaces = f.halfWidthPaces;
+    row.sideId = f.sideId;
+    row.emoji = TERRAIN_EMOJI[f.kind] || "";
+  }
   const rawFog = (snap.terrain && snap.terrain.fogRegions) || [];
-  board.fogRegions = rawFog.map((r) => {
+  if (!board.fogRegions || board.fogRegions.length !== rawFog.length) {
+    board.fogRegions = new Array(rawFog.length);
+  }
+  for (let i = 0; i < rawFog.length; i += 1) {
+    const r = rawFog[i];
     const total = Path.lanePaces(r.lane);
+    const row = board.fogRegions[i] || (board.fogRegions[i] = {});
+    row.lane = r.lane;
+    row.sublane = r.sublane;
+    row.fogged = Boolean(r.fogged);
     if (!mirror) {
-      return {
-        lane: r.lane,
-        sublane: r.sublane,
-        minPaces: r.minPaces,
-        maxPaces: r.maxPaces,
-        fogged: Boolean(r.fogged),
-      };
+      row.minPaces = r.minPaces;
+      row.maxPaces = r.maxPaces;
+    } else {
+      row.minPaces = total - r.maxPaces;
+      row.maxPaces = total - r.minPaces;
     }
-    return {
-      lane: r.lane,
-      sublane: r.sublane,
-      minPaces: total - r.maxPaces,
-      maxPaces: total - r.minPaces,
-      fogged: Boolean(r.fogged),
-    };
-  });
+  }
   if (board.drag) {
     const next = board.player.troops.find((troop) => troop.id === board.drag.troop.id);
     if (!next) board.drag = null;

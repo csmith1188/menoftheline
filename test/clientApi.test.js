@@ -9,7 +9,7 @@ process.env.SKIP_FORMBAR = "1";
 
 const { listen, httpServer, io } = await import("../server.js");
 const { disconnectFormbar } = await import("../server/formbar.js");
-const { addTickets } = await import("../server/db.js");
+const { getAccountByFormbar, grantTickets } = await import("../server/db.js");
 
 await listen(0);
 const address = httpServer.address();
@@ -168,7 +168,9 @@ test("client API Formbar login unlocks ranked and listed lobbies", async (t) => 
   assert.equal(noTicket.status, 403);
   assert.equal((await noTicket.json()).error, "no_ticket");
 
-  await addTickets(hostId, 2, 0);
+  const hostAccount = await getAccountByFormbar(hostId);
+  assert.ok(hostAccount);
+  await grantTickets(hostAccount.id, 2);
 
   const meRes = await fetch(`${base}/api/v1/me`, {
     headers: { authorization: `Bearer ${session.token}`, accept: "application/json" },
@@ -235,7 +237,9 @@ test("client API Formbar login unlocks ranked and listed lobbies", async (t) => 
     body: JSON.stringify({ token: joinerJwt }),
   });
   assert.equal(joinerLogin.status, 200);
-  await addTickets(joinerId, 1, 0);
+  const joinerAccount = await getAccountByFormbar(joinerId);
+  assert.ok(joinerAccount);
+  await grantTickets(joinerAccount.id, 1);
 
   const joinRes = await fetch(`${base}/api/v1/play`, {
     method: "POST",

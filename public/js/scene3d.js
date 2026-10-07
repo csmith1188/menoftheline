@@ -3,7 +3,7 @@ import { CONFIG } from "../shared/config.js";
 import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
-import { canvasFont, showTerrainLabels, uiFontsReady } from "./board.js";
+import { canvasFont, presentTroopMotion, showTerrainLabels, uiFontsReady } from "./board.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
 import { isArcLane, laneRowColor } from "./mapView.js";
@@ -824,21 +824,39 @@ export function createScene(canvas) {
   }
 
   function syncShots(board) {
-    while (shots.length < board.projectiles.length) {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(4, 10, 8),
-        new THREE.MeshBasicMaterial({ color: "#f3d27a" }),
-      );
-      world.add(mesh);
-      shots.push(mesh);
+    const byId = new Map();
+    for (let i = 0; i < shots.length; i += 1) {
+      const mesh = shots[i];
+      if (mesh.userData.shotId != null) byId.set(mesh.userData.shotId, mesh);
+    }
+    const live = new Set();
+    const next = [];
+    for (let i = 0; i < board.projectiles.length; i += 1) {
+      const shot = board.projectiles[i];
+      if (!shot) continue;
+      const id = shot.id != null ? shot.id : i;
+      live.add(id);
+      let mesh = byId.get(id);
+      if (!mesh) {
+        mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(4, 10, 8),
+          new THREE.MeshBasicMaterial({ color: shot.color || "#f3d27a" }),
+        );
+        world.add(mesh);
+      }
+      mesh.userData.shotId = id;
+      mesh.visible = true;
+      if (shot.color) mesh.material.color.set(shot.color);
+      mesh.position.set(shot.x, 14, shot.y);
+      next.push(mesh);
     }
     for (let i = 0; i < shots.length; i += 1) {
       const mesh = shots[i];
-      const shot = board.projectiles[i];
-      mesh.visible = Boolean(shot);
-      if (!shot) continue;
-      mesh.position.set(shot.x, 14, shot.y);
+      if (mesh.userData.shotId != null && live.has(mesh.userData.shotId)) continue;
+      world.remove(mesh);
     }
+    shots.length = 0;
+    for (let i = 0; i < next.length; i += 1) shots.push(next[i]);
   }
 
   function syncSplats(board) {
@@ -1169,6 +1187,7 @@ export function createScene(canvas) {
     uiFontsReady();
     if (!board.player) return;
     if (board.presentLaneCenters) board.presentLaneCenters();
+    presentTroopMotion(board);
     if (board.refreshHoldSelect) board.refreshHoldSelect();
     fitBoardMetrics(board);
     frameCamera(board);

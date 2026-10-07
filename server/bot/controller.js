@@ -96,10 +96,11 @@ export class BotController {
 
   applyLaneState(snapshot, profile) {
     const foeId = this.sideId === "player" ? "enemy" : "player";
-    const lanes = ["top", "bottom"];
+    const lanes = snapshot.laneIds || Object.keys(snapshot.lanes || {});
     for (let i = 0; i < lanes.length; i += 1) {
       const lane = lanes[i];
       const info = snapshot.lanes[lane];
+      if (!info) continue;
       const threatIn = snapshot.keepDesperate || info.threat >= CONFIG.botKeepThreatDefend;
       const threatOut = !snapshot.keepDesperate && info.threat < CONFIG.botKeepThreatClear;
       if (this.laneDesperate[lane]) {

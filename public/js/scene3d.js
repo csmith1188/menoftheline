@@ -6,6 +6,7 @@ import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
 import { canvasFont, showTerrainLabels, uiFontsReady } from "./board.js";
 import { collectDebugMarks, debugRangesOn } from "./debugRanges.js";
 import { buyBgImage } from "./buyArt.js";
+import { isArcLane, laneRowColor } from "./mapView.js";
 
 /** Parse rgba(...) tint into a hex-ish color + opacity for 3D materials. */
 function terrainColor(kind) {
@@ -377,39 +378,55 @@ export function createScene(canvas) {
   band.castShadow = true;
   world.add(band);
 
-  const topRows = [];
-  for (let s = 0; s < CONFIG.topSublaneCount; s += 1) {
-    const pts = Path.worldPoints("top", s);
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(span, 2.5, CONFIG.topSublaneWidth * 0.72),
-      std(CONFIG.colors.topSublane),
-    );
-    mesh.position.set((pts[0].x + pts[1].x) / 2, 9, pts[0].y);
-    mesh.receiveShadow = true;
-    world.add(mesh);
-    topRows.push(mesh);
+  /** @type {Record<string, THREE.Mesh[]>} */
+  const rowMeshesByLane = {};
+  const laneIds = Path.laneIds();
+  for (let li = 0; li < laneIds.length; li += 1) {
+    const laneId = laneIds[li];
+    const def = Path.laneDef(laneId);
+    const rows = [];
+    rowMeshesByLane[laneId] = rows;
+    if (!def || !def.geometry) continue;
+    if (def.geometry.kind === "line") {
+      const width = def.geometry.sublaneWidth * 0.72;
+      for (let s = 0; s < def.geometry.sublaneCount; s += 1) {
+        const pts = Path.worldPoints(laneId, s);
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(span, 2.5, width),
+          std(laneRowColor(laneId)),
+        );
+        mesh.position.set((pts[0].x + pts[1].x) / 2, 9, pts[0].y);
+        mesh.receiveShadow = true;
+        world.add(mesh);
+        rows.push(mesh);
+      }
+      continue;
+    }
+    if (def.geometry.kind === "arc") {
+      const center = Path.arcCenter(laneId);
+      const half = def.geometry.sublaneWidth * 0.55;
+      for (let s = 0; s < def.geometry.sublaneCount; s += 1) {
+        const radius = Path.arcRadius(laneId, s);
+        const geo = new THREE.RingGeometry(
+          Math.max(1, radius - half),
+          radius + half,
+          72,
+          1,
+          Math.PI,
+          Math.PI,
+        );
+        const mesh = new THREE.Mesh(geo, std(laneRowColor(laneId)));
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(center.x, 6 + s * 0.35, center.y);
+        mesh.receiveShadow = true;
+        world.add(mesh);
+        rows.push(mesh);
+      }
+    }
   }
-
   const center = Path.bottomCenter();
-  const bottomRows = [];
-  for (let s = 0; s < CONFIG.bottomSublaneCount; s += 1) {
-    const radius = Path.bottomRadius(s);
-    const half = CONFIG.bottomSublaneWidth * 0.55;
-    const geo = new THREE.RingGeometry(
-      Math.max(1, radius - half),
-      radius + half,
-      72,
-      1,
-      Math.PI,
-      Math.PI,
-    );
-    const mesh = new THREE.Mesh(geo, std(CONFIG.colors.bottomSublane));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(center.x, 6 + s * 0.35, center.y);
-    mesh.receiveShadow = true;
-    world.add(mesh);
-    bottomRows.push(mesh);
-  }
+  const topRows = rowMeshesByLane.top || [];
+  const bottomRows = rowMeshesByLane.bottom || [];
 
   const covers = quarterSegments();
   for (let i = 0; i < covers.length; i += 1) {
@@ -551,7 +568,7 @@ export function createScene(canvas) {
       let aimX;
       let aimZ;
       let angle;
-      if (lane === "bottom") {
+      if (isArcLane(lane) && typeof board.bottomCamera === "function") {
         const at = board.bottomCamera(t);
         aimX = at.x;
         aimZ = at.y;
@@ -574,8 +591,8 @@ export function createScene(canvas) {
       const z = aimZ;
       const dist = 170;
       const height = 130;
-      // Toward the camera raises the lane; past it lowers it. Bottom needs a lower frame.
-      const pull = lane === "bottom" ? -24 : 28;
+      // Toward the camera raises the lane; past it lowers it. Arc lanes need a lower frame.
+      const pull = isArcLane(lane) ? -24 : 28;
       camera.position.set(x + px * dist, height, z + pz * dist);
       camera.up.set(0, 1, 0);
       camera.lookAt(x + px * pull, 12, z + pz * pull);
@@ -585,26 +602,35 @@ export function createScene(canvas) {
   }
 
   function syncCenters(board) {
-    const t = board.topCenter;
-    const x = left.x + span * t;
+    const centers = board.laneCenters || {
+      top: board.topCenter,
+      bottom: board.bottomCenter,
+    };
+    const topShare = centers.top != null ? centers.top : 0.5;
+    const x = left.x + span * topShare;
     topCenter.position.x = x;
     const topY = left.y - CONFIG.topLaneHeight / 2;
     topBonus.position.set(x, 28, topY - 8);
     topBonus.scale.set(board.southpaw ? -56 : 56, 22, 1);
-    const playerGps = Math.round(CONFIG.centerIncome * t);
+    const playerGps = Math.round(CONFIG.centerIncome * topShare);
     setBillboard(topBonus, `+${playerGps}💰`, {
       color: CONFIG.colors.player,
       font: canvasFont(34),
       width: 180,
       height: 64,
     });
-    const theta = Math.PI * (1 - board.bottomCenter);
-    const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - 10;
-    const rOut = Path.bottomRadius(0) + 10;
-    const x1 = center.x + rIn * Math.cos(theta);
-    const y1 = center.y + rIn * Math.sin(theta);
-    const x2 = center.x + rOut * Math.cos(theta);
-    const y2 = center.y + rOut * Math.sin(theta);
+    const bottomShare = centers.bottom != null ? centers.bottom : 0.5;
+    const arcId = Path.firstArcLaneId() || "bottom";
+    const arcDef = Path.laneDef(arcId);
+    const arcCount = arcDef && arcDef.geometry ? arcDef.geometry.sublaneCount : CONFIG.bottomSublaneCount;
+    const theta = Math.PI * (1 - bottomShare);
+    const rIn = Path.arcRadius(arcId, arcCount - 1) - 10;
+    const rOut = Path.arcRadius(arcId, 0) + 10;
+    const arcCenter = Path.arcCenter(arcId);
+    const x1 = arcCenter.x + rIn * Math.cos(theta);
+    const y1 = arcCenter.y + rIn * Math.sin(theta);
+    const x2 = arcCenter.x + rOut * Math.cos(theta);
+    const y2 = arcCenter.y + rOut * Math.sin(theta);
     const dx = x2 - x1;
     const dz = y2 - y1;
     const len = Math.hypot(dx, dz) || 1;
@@ -612,11 +638,11 @@ export function createScene(canvas) {
     bottomCenter.position.set((x1 + x2) / 2, 12, (y1 + y2) / 2);
     bottomCenter.rotation.y = Math.atan2(-dz, dx);
     const pad = 16;
-    const bx = center.x + (rOut + pad) * Math.cos(theta);
-    const bz = center.y + (rOut + pad) * Math.sin(theta);
+    const bx = arcCenter.x + (rOut + pad) * Math.cos(theta);
+    const bz = arcCenter.y + (rOut + pad) * Math.sin(theta);
     bottomBonus.position.set(bx, 28, bz);
     bottomBonus.scale.set(board.southpaw ? -56 : 56, 22, 1);
-    const landBonus = Math.round(CONFIG.centerLand * board.bottomCenter);
+    const landBonus = Math.round(CONFIG.centerLand * bottomShare);
     setBillboard(bottomBonus, `+${landBonus}🌿`, {
       color: CONFIG.colors.player,
       font: canvasFont(34),
@@ -626,12 +652,16 @@ export function createScene(canvas) {
   }
 
   function syncHover(board) {
-    for (let i = 0; i < topRows.length; i += 1) topRows[i].material.emissive.set("#000000");
-    for (let i = 0; i < bottomRows.length; i += 1) bottomRows[i].material.emissive.set("#000000");
+    const ids = Object.keys(rowMeshesByLane);
+    for (let i = 0; i < ids.length; i += 1) {
+      const rows = rowMeshesByLane[ids[i]];
+      for (let r = 0; r < rows.length; r += 1) rows[r].material.emissive.set("#000000");
+    }
     const row = typeof board.switchHoverRow === "function" ? board.switchHoverRow() : null;
     if (row == null || !board.drag || !board.drag.troop) return;
     const troop = board.drag.troop;
-    const mesh = troop.lane === "top" ? topRows[row] : bottomRows[row];
+    const rows = rowMeshesByLane[troop.lane] || (troop.lane === "top" ? topRows : bottomRows);
+    const mesh = rows[row];
     if (mesh) mesh.material.emissive.set(CONFIG.colors.laneHover);
   }
 
@@ -1058,7 +1088,7 @@ export function createScene(canvas) {
     const t0 = Math.max(0, minPaces / total);
     const t1 = Math.min(1, maxPaces / total);
     const pts = Path.worldPoints(lane, sublane);
-    const steps = lane === "bottom" ? Math.max(2, Math.ceil((t1 - t0) * 20)) : 1;
+    const steps = isArcLane(lane) ? Math.max(2, Math.ceil((t1 - t0) * 20)) : 1;
     let prev = null;
     for (let k = 0; k <= steps; k += 1) {
       const t = t0 + ((t1 - t0) * k) / steps;
@@ -1092,7 +1122,7 @@ export function createScene(canvas) {
     for (let i = 0; i < fogRegions.length; i += 1) {
       const r = fogRegions[i];
       if (!r.fogged) continue;
-      const color = r.lane === "top" ? 0x1a2e28 : 0x2a2218;
+      const color = isArcLane(r.lane) ? 0x2a2218 : 0x1a2e28;
       addPaceInterval(fogGroup, r.lane, r.sublane, r.minPaces, r.maxPaces, color, 10, 12, 0.85);
     }
 

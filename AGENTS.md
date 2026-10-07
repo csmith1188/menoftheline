@@ -40,8 +40,9 @@ server/
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
   units.js             UNIT_STATS, variants, labels, BUY_UNITS, mobilityClass, cost helpers
-  path.js              Path / lanes / progress / fort cover helpers
-  maps.js              Named map presets (terrain feature layouts)
+  path.js              Path / lanes / progress / fort cover helpers (board via Path.useBoard)
+  map/                 GameMap classes: definition, registry, classic/empty coded maps, income
+  maps.js              Compatibility shim (MAP_PRESETS, resolveMapFeatures → map/)
   matchOptions.js      Custom lobby knobs (speed, fog, map, forts, base GPS)
   terrain.js           Terrain rules: move, LOS/fog, cover, range, snapshot helpers
   unitInfo.js          Player-facing unit copy + derived info panels
@@ -50,6 +51,7 @@ public/js/             Browser match client (ES modules, imports ../shared/)
   main3d.js / scene3d.js   3D match client
   board.js             Hit-testing, HUD geometry, buy UI helpers
   render.js            Canvas draw + applySnapshot
+  mapView.js           Install Path board from snapshot.map; lane kind helpers
   mapPreview.js        Lobby create map preview canvas
   input.js             Pointer → command payloads
   rules.js             In-match how-to diagrams (reads live CONFIG/UNIT_STATS)
@@ -70,8 +72,9 @@ data/                  Runtime DB, news.json (do not commit secrets)
 |-----------------|------------|--------------|
 | Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
 | Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
-| Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `shared/terrain.js` (cover and fort slow), `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
-| Terrain / fog / map presets | `shared/terrain.js`, `shared/maps.js` | `shared/config.js` tunables, `server/sim.js` + per-seat `server/room.js` snapshots, `public/js/render.js` / `scene3d.js`, `wikidocs/map.md`, `test/terrain.test.js` |
+| Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `shared/map/` (lane catalog), `shared/terrain.js`, `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
+| Add / change a map (lanes, towns, terrain, rules) | `shared/map/maps/` + `GameMap` | `shared/map/registry.js`, Path board context, `server/sim.js`, clients via `snapshot.map`, `test/map.test.js`, `wikidocs/map.md` |
+| Terrain / fog / map presets | `shared/terrain.js`, `shared/map/` (`maps.js` shim) | `shared/config.js` tunables, `server/sim.js` + per-seat `server/room.js` snapshots, `public/js/render.js` / `scene3d.js`, `wikidocs/map.md`, `test/terrain.test.js` |
 | Combat, orders, fatigue, pushback, keeps, towns | `server/sim.js` (`GameSim`, `Unit`, `applyCommand`) | `test/*.test.js`, matching `wikidocs/*.md` |
 | Player commands (buy, order, bank, upgrade, …) | `GameSim.applyCommand` in `server/sim.js` | `server/room.js` (queue), `public/js/input.js` (emit), bot `server/bot/commands.js` / `economy.js` |
 | Match lifecycle / tick / sockets | `server/room.js` | `server/matchmaking.js`, `public/js/main.js` (listen `state`/`lobby`) |
@@ -91,7 +94,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 - Client → server: `command` (payload to `sim.applyCommand`), also `leave`, `concede`, `tooltips`, `bgmVolume`, `botSettings`, `debugPlay`.
 - Server → client: `state` (public snapshot), `lobby`, `go-home`, `replaced`.
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`.
-- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `POST /api/v1/play` (guest modes). Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie.
+- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie.
 
 ### Shared code rule
 

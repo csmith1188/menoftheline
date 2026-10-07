@@ -812,7 +812,7 @@ export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, map
  */
 export function fogLaneRegions(viewerSideId, troopsBySide, mapId) {
   const regions = [];
-  const lanes = ["top", "bottom"];
+  const lanes = Path.laneIds();
   for (let li = 0; li < lanes.length; li += 1) {
     const lane = lanes[li];
     const count = Path.sublaneCount(lane);

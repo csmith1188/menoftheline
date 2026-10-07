@@ -211,10 +211,71 @@ function safeNext(value) {
   return text;
 }
 
+/** Public base URL for OAuth callbacks (Host / forwarded headers, else THIS_URL). */
+function publicBase(req) {
+  const host = String(req.get("x-forwarded-host") || req.get("host") || "")
+    .split(",")[0]
+    .trim();
+  if (!host || /[/\s\\]/.test(host)) return THIS_URL;
+  const proto = String(req.get("x-forwarded-proto") || req.protocol || "http")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (proto !== "http" && proto !== "https") return THIS_URL;
+  return `${proto}://${host}`;
+}
+
+/** Native app deep-link allowlist for Formbar login return. */
+function safeAppReturn(value) {
+  const text = String(value || "").trim();
+  if (text === "pocketmotl://auth" || text === "pocketmotl://auth/") {
+    return "pocketmotl://auth";
+  }
+  return null;
+}
+
 function formbarUserIdFromToken(tokenData) {
   const raw = tokenData.id ?? tokenData.userId ?? tokenData.userID ?? tokenData.sub;
   const id = Number(raw);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function accountPublic(account) {
+  if (!account) return null;
+  return {
+    formbarId: account.formbar_id,
+    name: account.name,
+    mmr: account.mmr,
+    tickets: account.tickets,
+    held: account.held,
+    wins: account.wins,
+    losses: account.losses,
+  };
+}
+
+function playerPublic(player) {
+  if (!player) return null;
+  return {
+    id: player.id,
+    name: player.name,
+    formbarId: player.formbarId || null,
+  };
+}
+
+/** Attach a Formbar OAuth JWT to a session. Returns the account or null if invalid. */
+async function applyFormbarToken(sess, tokenString) {
+  const tokenData = jwt.decode(String(tokenString || ""));
+  const userId = tokenData && typeof tokenData === "object"
+    ? formbarUserIdFromToken(tokenData)
+    : null;
+  if (!tokenData || userId == null) return null;
+  const name = String(
+    tokenData.displayName || tokenData.name || `Player ${userId}`,
+  ).trim().slice(0, 80) || `Player ${userId}`;
+  await upsertAccount(userId, name);
+  sess.formbarId = userId;
+  sess.formbarName = name;
+  return getAccount(userId);
 }
 
 async function playerFromSession(sess, options = {}) {
@@ -248,6 +309,59 @@ async function playerFromSession(sess, options = {}) {
 }
 
 const matchmaker = new Matchmaker(io);
+
+/**
+ * Set session.intent the same way startPlay does. Returns a JSON-ready result
+ * `{ ok, mode }` / `{ ok, rejoin }` or `{ error, status }`.
+ */
+async function preparePlayIntent(sess, intent) {
+  const mode = intent && intent.mode;
+  const paid = PAID_PLAY_MODES.has(mode);
+  if (!GUEST_PLAY_MODES.has(mode) && !paid) {
+    return { error: "bad_mode", status: 400 };
+  }
+  if (paid && !sess.formbarId) {
+    return { error: "login_required", status: 403 };
+  }
+  const player = await playerFromSession(sess, { createGuest: !paid });
+  if (!player) {
+    return { error: "unauthorized", status: 401 };
+  }
+  if (matchmaker.isBusy(player.id)) {
+    return { ok: true, rejoin: true };
+  }
+  if (paid) {
+    const account = await getAccount(sess.formbarId);
+    if (!account || account.tickets <= account.held) {
+      return { error: "no_ticket", status: 403 };
+    }
+  }
+  if (mode === "join") {
+    const roomId = intent.roomId || null;
+    if (!roomId) {
+      return { error: "bad_room", status: 400 };
+    }
+    const room = matchmaker.openLobby(roomId);
+    if (!room) {
+      return { error: "lobby_closed", status: 404 };
+    }
+    if (room.seat.a.userId === player.id) {
+      return { ok: true, rejoin: true };
+    }
+  }
+  const matchOptions = mode === "listed"
+    ? normalizeMatchOptions(intent.matchOptions || {})
+    : null;
+  sess.view3d = null;
+  sess.intent = {
+    mode,
+    roomId: intent.roomId || null,
+    view: null,
+    matchOptions,
+  };
+  await saveSession(sess);
+  return { ok: true, mode };
+}
 
 function takeNotice(req) {
   const notice = req.session.notice || null;
@@ -308,20 +422,11 @@ async function adminData(req) {
 app.get("/login", async (req, res, next) => {
   try {
     if (req.query.token) {
-      const tokenData = jwt.decode(String(req.query.token));
-      const userId = tokenData && typeof tokenData === "object"
-        ? formbarUserIdFromToken(tokenData)
-        : null;
-      if (!tokenData || userId == null) {
+      const account = await applyFormbarToken(req.session, req.query.token);
+      if (!account) {
         res.status(400).send("Invalid Formbar token.");
         return;
       }
-      const name = String(
-        tokenData.displayName || tokenData.name || `Player ${userId}`,
-      ).trim().slice(0, 80) || `Player ${userId}`;
-      await upsertAccount(userId, name);
-      req.session.formbarId = userId;
-      req.session.formbarName = name;
       req.session.save(() => res.redirect("/"));
       return;
     }
@@ -978,8 +1083,80 @@ app.post("/api/v1/session", async (req, res, next) => {
     }
     res.json({
       token: req.sessionID,
-      player: { id: player.id, name: player.name },
+      player: playerPublic(player),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Start Formbar OAuth for the native app (Custom Tabs).
+ * Browser cookie session stores the deep-link return; callback redirects with ?token=sessionId.
+ */
+app.get("/api/v1/login", (req, res, next) => {
+  try {
+    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    req.session.apiReturn = ret;
+    req.session.save((err) => {
+      if (err) {
+        next(err);
+        return;
+      }
+      const redirectURL = encodeURIComponent(`${publicBase(req)}/api/v1/login/callback`);
+      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Formbar redirect target for native login. */
+app.get("/api/v1/login/callback", async (req, res, next) => {
+  try {
+    const account = await applyFormbarToken(req.session, req.query && req.query.token);
+    if (!account) {
+      res.status(400).send("Invalid Formbar token.");
+      return;
+    }
+    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    delete req.session.apiReturn;
+    await saveSession(req.session);
+    res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Attach a Formbar JWT to the Bearer session (tests / alternate clients).
+ * Body: `{ "token": "<formbar jwt>" }`.
+ */
+app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
+  try {
+    const account = await applyFormbarToken(req.session, req.body && req.body.token);
+    if (!account) {
+      res.status(400).json({ error: "invalid_token" });
+      return;
+    }
+    await saveSession(req.session);
+    const player = await playerFromSession(req.session, { createGuest: false });
+    res.json({
+      token: req.sessionID,
+      player: playerPublic(player),
+      account: accountPublic(account),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/logout", requireApiSession, async (req, res, next) => {
+  try {
+    await new Promise((resolve, reject) => {
+      req.session.destroy((err) => (err ? reject(err) : resolve()));
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -992,9 +1169,82 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    const busy = matchmaker.isBusy(player.id);
+    const account = player.formbarId ? await getAccount(player.formbarId) : null;
+    const pack = ticketPack();
     res.json({
-      player: { id: player.id, name: player.name },
-      busy: matchmaker.isBusy(player.id),
+      player: playerPublic(player),
+      busy,
+      account: accountPublic(account),
+      canTicket: Boolean(account && account.tickets > account.held && !busy),
+      pack: { size: pack.size, cost: pack.cost },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/lobbies", requireApiSession, async (req, res, next) => {
+  try {
+    res.json({ lobbies: matchmaker.listLobbies() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/match-options", requireApiSession, async (req, res, next) => {
+  try {
+    const defaults = defaultMatchOptions();
+    res.json({
+      defaults,
+      speeds: MATCH_SPEEDS,
+      maps: mapPresetIds().map((id) => ({
+        id,
+        label: (MAP_PRESETS[id] && MAP_PRESETS[id].label) || id,
+      })),
+      baseGpsMin: BASE_GPS_MIN,
+      baseGpsMax: BASE_GPS_MAX,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
+  try {
+    if (!req.session.formbarId) {
+      res.status(403).json({ error: "login_required" });
+      return;
+    }
+    const pack = ticketPack();
+    const account = await getAccount(req.session.formbarId);
+    if (!account) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const transfer = await payPool(formbarSocket, {
+      userId: account.formbar_id,
+      poolId: POOL_ID,
+      amount: pack.cost,
+      pin: req.body && req.body.pin,
+      reason: `${pack.size} game tickets`,
+    });
+    if (!transfer.success) {
+      res.status(400).json({
+        error: "payment_failed",
+        message: transfer.message || "Payment failed.",
+      });
+      return;
+    }
+    await addTickets(account.formbar_id, pack.size, pack.cost);
+    const updated = await getAccount(account.formbar_id);
+    const player = await playerFromSession(req.session, { createGuest: false });
+    const busy = player ? matchmaker.isBusy(player.id) : false;
+    res.json({
+      ok: true,
+      account: accountPublic(updated),
+      canTicket: Boolean(updated && updated.tickets > updated.held && !busy),
+      pack: { size: pack.size, cost: pack.cost },
     });
   } catch (err) {
     next(err);
@@ -1003,28 +1253,31 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
 
 app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
   try {
-    const mode = req.body && req.body.mode;
-    if (PAID_PLAY_MODES.has(mode)) {
-      res.status(403).json({ error: "login_required" });
+    const body = req.body || {};
+    const mode = body.mode;
+    const matchOptions = body.matchOptions && typeof body.matchOptions === "object"
+      ? body.matchOptions
+      : {
+        speed: body.speed,
+        fogEnabled: body.fogEnabled,
+        fog: body.fog,
+        mapId: body.mapId,
+        map: body.map,
+        fortsEnabled: body.fortsEnabled,
+        forts: body.forts,
+        baseGps: body.baseGps,
+        baseIncome: body.baseIncome,
+      };
+    const result = await preparePlayIntent(req.session, {
+      mode,
+      roomId: body.roomId || null,
+      matchOptions,
+    });
+    if (result.error) {
+      res.status(result.status || 400).json({ error: result.error });
       return;
     }
-    if (!GUEST_PLAY_MODES.has(mode)) {
-      res.status(400).json({ error: "bad_mode" });
-      return;
-    }
-    const player = await playerFromSession(req.session, { createGuest: true });
-    if (!player) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    if (matchmaker.isBusy(player.id)) {
-      res.json({ ok: true, rejoin: true });
-      return;
-    }
-    req.session.view3d = null;
-    req.session.intent = { mode, roomId: null, view: null };
-    await saveSession(req.session);
-    res.json({ ok: true, mode });
+    res.json(result);
   } catch (err) {
     next(err);
   }

@@ -63,7 +63,7 @@ export class GameRoom {
     this.closing = false;
     this.view3d = false;
     this.botDifficulty = "simple";
-    this.botStrategy = { top: "auto", bottom: "auto" };
+    this.botStrategy = this.defaultBotStrategy();
     this.speedScale = 1;
     this.speedAccum = 0;
     this.matchOptions = null;
@@ -85,6 +85,14 @@ export class GameRoom {
     }
   }
 
+  /** Per-lane bot strategy defaults from the active map. */
+  defaultBotStrategy() {
+    const ids = (this.sim && this.sim.map && this.sim.map.laneIds()) || ["top", "bottom"];
+    const out = {};
+    for (let i = 0; i < ids.length; i += 1) out[ids[i]] = "auto";
+    return out;
+  }
+
   /** Custom lobby settings (listed rooms). */
   applyMatchOptions(raw) {
     const opts = normalizeMatchOptions(raw);
@@ -92,6 +100,7 @@ export class GameRoom {
     this.speedScale = opts.speed;
     this.speedAccum = 0;
     this.sim.applyMatchOptions(opts);
+    this.botStrategy = { ...this.defaultBotStrategy(), ...this.botStrategy };
   }
 
   /** Public summary for Open Games cards. */
@@ -222,7 +231,7 @@ export class GameRoom {
     if (payload.strategy && typeof payload.strategy === "object") {
       const lane = payload.strategy.lane;
       const mode = payload.strategy.mode;
-      if ((lane === "top" || lane === "bottom") && STRATEGY_MODES.includes(mode)) {
+      if (this.sim.map.hasLane(lane) && STRATEGY_MODES.includes(mode)) {
         this.botStrategy[lane] = mode;
         this.forEachBot((bot) => bot.setLaneStrategy(lane, mode));
       }

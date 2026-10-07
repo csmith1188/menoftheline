@@ -24,6 +24,7 @@ import {
   terrainCoverFactor,
   unitOnClosedRiver,
 } from "../shared/terrain.js";
+import { getMap, computeResourceIncomes } from "../shared/map/index.js";
 
 /** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
@@ -4474,10 +4475,12 @@ function createUnit(id, side, lane, sublane, type) {
  * A bottom-lane point that grants income to whichever side last walked through it.
  */
 class Checkpoint {
-  constructor(index, x, y) {
+  constructor(index, x, y, laneId = "bottom", townCount = CONFIG.checkpointCount) {
     this.index = index;
     this.x = x;
     this.y = y;
+    this.laneId = laneId;
+    this.townCount = townCount;
     this.owner = null;
     this.producing = false;
   }
@@ -4487,7 +4490,7 @@ class Checkpoint {
    * Same kinds share remaining cost; a second town doubles land/sec into that research.
    */
   upgradeKind() {
-    const last = CONFIG.checkpointCount - 1;
+    const last = this.townCount - 1;
     const dist = Math.min(this.index, last - this.index);
     if (dist === 0) {
       return "armor";
@@ -4503,12 +4506,12 @@ class Checkpoint {
     return CONFIG.checkpointRadius * CONFIG.uiScale;
   }
 
-  /** Last bottom-lane troop to pass this town, on any row, claims it. */
+  /** Last troop on this town's lane to pass it, on any row, claims it. */
   tryCapture(troop) {
-    if (troop.lane !== "bottom" || troop.hp <= 0) {
+    if (troop.lane !== this.laneId || troop.hp <= 0) {
       return false;
     }
-    const center = Path.bottomCenter();
+    const center = Path.arcCenter(this.laneId);
     const radius = Math.hypot(troop.x - center.x, troop.y - center.y);
     const slack = Path.arcDegrees(CONFIG.captureRadius, radius);
     const gap = Math.abs(troop.station() - Path.bottomStationDeg(this.x, this.y));
@@ -4547,6 +4550,16 @@ class Side {
     this.shotCooldown = 0;
     /** Per-lane fire priority (grand strategies disabled; always bastion). */
     this.targeting = { top: "bastion", bottom: "bastion" };
+  }
+
+  /** Ensure targeting keys exist for every lane on the active map. */
+  initTargeting(laneIds) {
+    const next = {};
+    const ids = Array.isArray(laneIds) && laneIds.length ? laneIds : ["top", "bottom"];
+    for (const id of ids) {
+      next[id] = (this.targeting && this.targeting[id]) || "bastion";
+    }
+    this.targeting = next;
   }
 
   /**
@@ -4671,19 +4684,15 @@ class Side {
   }
 
   /**
-   * Recalculate gold/sec from the base, this side's share of the
-   * top-lane center pool, and unlocked banks. Towns do not pay gold.
+   * Recalculate gold/sec from the base, lane gold contribution, and banks.
+   * Towns do not pay gold. `laneGold` is the variable lane payout (not base).
    */
-  refreshIncome(share) {
-    const portion = share === undefined ? 0.5 : share;
+  refreshIncome(laneGold) {
+    const portion = laneGold === undefined ? CONFIG.centerIncome * 0.5 : laneGold;
     const base = (this.sim && this.sim.baseIncome != null)
       ? this.sim.baseIncome
       : CONFIG.baseIncome;
-    this.income = Math.round(
-      base
-      + CONFIG.centerIncome * portion
-      + this.bankIncome(),
-    );
+    this.income = Math.round(base + portion + this.bankIncome());
   }
 
   /** Gold/sec from banks: bankIncomePer times unlocked count. */
@@ -4720,15 +4729,15 @@ class Side {
     return true;
   }
 
-  /** Land/sec is only the bottom-lane share of the 0–10 pool. */
-  refreshLand(share) {
-    const portion = share === undefined ? 0.5 : share;
-    this.landIncome = Math.round(CONFIG.centerLand * portion);
+  /** Land/sec from lane land contribution. */
+  refreshLand(laneLand) {
+    const portion = laneLand === undefined ? CONFIG.centerLand * 0.5 : laneLand;
+    this.landIncome = Math.round(portion);
   }
 
   /**
    * Spend gold (and land for alternates) to spawn a unit.
-   * lane is "top" or "bottom". Returns the unit, or null if unaffordable.
+   * Returns the unit, or null if unaffordable.
    */
   tryBuy(lane, nextId, type) {
     if (!this.canAffordUnit(type)) {
@@ -4875,8 +4884,14 @@ export class GameSim {
   }
 
   reset() {
-    this.player = new Side("player", { ...CONFIG.playerCapital }, this);
-    this.enemy = new Side("enemy", { ...CONFIG.enemyCapital }, this);
+    /** Named map (lanes, forts, towns, terrain, rules). */
+    this.mapId = CONFIG.defaultMapId;
+    this.bindMap(this.mapId);
+    const board = this.map.board();
+    this.player = new Side("player", { ...board.playerCapital }, this);
+    this.enemy = new Side("enemy", { ...board.enemyCapital }, this);
+    this.player.initTargeting(this.map.laneIds());
+    this.enemy.initTargeting(this.map.laneIds());
     this.checkpoints = [];
     this.projectiles = [];
     this.splats = [];
@@ -4886,29 +4901,62 @@ export class GameSim {
     this.winReason = null;
     this.elapsed = 0;
     this.tick = 0;
-    /** Named map preset (terrain layout). */
-    this.mapId = CONFIG.defaultMapId;
     /** When false, side forts are omitted from the map. */
     this.fortsEnabled = true;
     /** When false, snapshots do not hide fogged enemies. */
     this.fogEnabled = true;
     /** Base gold/sec before lane share and banks (overridable per lobby). */
     this.baseIncome = CONFIG.baseIncome;
+    /** Eased lane shares. Income and the drawn line both use these. */
+    this.shownCenters = {};
+    for (const id of this.map.laneIds()) this.shownCenters[id] = 0.5;
+    /** @deprecated aliases for classic maps / Android clients */
+    this.shownTop = this.shownCenters.top != null ? this.shownCenters.top : 0.5;
+    this.shownBottom = this.shownCenters.bottom != null ? this.shownCenters.bottom : 0.5;
+
+    this.placeTownsFromMap();
     /** Per-match pontoon / Engineer LOS overlay (installed into terrain helpers while this sim runs). */
     this.installMapOpts();
     this.terrainFx = computeTerrainFx(
       { player: this.player.troops, enemy: this.enemy.troops },
       this.mapId,
     );
-    /** Eased lane shares. Income and the drawn line both use these. */
-    this.shownTop = 0.5;
-    this.shownBottom = 0.5;
+    this.map.applyRules(this);
+    this.refreshIncomes();
+  }
 
-    const center = Path.bottomCenter();
-    const innerEdge = Path.bottomRadius(CONFIG.bottomSublaneCount - 1) - CONFIG.bottomSublaneWidth / 2;
+  /** Resolve GameMap, install Path board context. */
+  bindMap(mapId) {
+    this.mapId = mapId || CONFIG.defaultMapId;
+    this.map = getMap(this.mapId) || getMap(CONFIG.defaultMapId);
+    if (!this.map) {
+      throw new Error(`Unknown map: ${this.mapId}`);
+    }
+    Path.useBoard(this.map.boardContext());
+  }
+
+  /** Place checkpoints from the active map town specs. */
+  placeTownsFromMap() {
+    this.checkpoints = [];
+    const specs = this.map.towns();
+    for (let s = 0; s < specs.length; s += 1) {
+      const spec = specs[s];
+      if (spec.placement === "innerArc") {
+        this.placeInnerArcTowns(spec);
+      }
+    }
+  }
+
+  /** Classic inner-arc town ring (matches prior Checkpoint placement). */
+  placeInnerArcTowns(spec) {
+    const lane = this.map.lane(spec.laneId);
+    if (!lane || lane.geometry.kind !== "arc") return;
+    const center = Path.arcCenter(spec.laneId);
+    const innerEdge = Path.arcRadius(spec.laneId, lane.geometry.sublaneCount - 1)
+      - lane.geometry.sublaneWidth / 2;
     const townR = CONFIG.checkpointRadius * CONFIG.uiScale;
     const radius = innerEdge - townR + CONFIG.checkpointLaneOverlap;
-    const count = CONFIG.checkpointCount;
+    const count = spec.count;
     for (let i = 0; i < count; i += 1) {
       const t = (i + 1) / (count + 1);
       const theta = Math.PI * (1 - t);
@@ -4916,9 +4964,10 @@ export class GameSim {
         i,
         center.x + radius * Math.cos(theta),
         center.y + radius * Math.sin(theta),
+        spec.laneId,
+        count,
       ));
     }
-    this.refreshIncomes();
   }
 
   side(id) {
@@ -4940,6 +4989,7 @@ export class GameSim {
 
   /** Install forts-on/off for terrain helpers before resolve/read. */
   installMapOpts() {
+    if (this.map) Path.useBoard(this.map.boardContext());
     setMapOpts({ forts: this.fortsEnabled !== false });
   }
 
@@ -4948,14 +4998,19 @@ export class GameSim {
    * `opts` should already be normalized via shared/matchOptions.js.
    */
   applyMatchOptions(opts = {}) {
-    if (opts.mapId != null) this.mapId = opts.mapId;
-    if (opts.fortsEnabled != null) this.fortsEnabled = Boolean(opts.fortsEnabled);
-    if (opts.fogEnabled != null) this.fogEnabled = Boolean(opts.fogEnabled);
-    if (opts.baseGps != null && Number.isFinite(Number(opts.baseGps))) {
-      this.baseIncome = Number(opts.baseGps);
-    } else if (opts.baseIncome != null && Number.isFinite(Number(opts.baseIncome))) {
-      this.baseIncome = Number(opts.baseIncome);
+    const mapId = opts.mapId != null ? opts.mapId : this.mapId;
+    this.bindMap(mapId);
+    const merged = this.map.mergedConfig(opts);
+    this.fortsEnabled = merged.fortsEnabled;
+    this.fogEnabled = merged.fogEnabled;
+    this.baseIncome = merged.baseGps;
+    if (this.player) this.player.initTargeting(this.map.laneIds());
+    if (this.enemy) this.enemy.initTargeting(this.map.laneIds());
+    if (!this.shownCenters) this.shownCenters = {};
+    for (const id of this.map.laneIds()) {
+      if (this.shownCenters[id] == null) this.shownCenters[id] = 0.5;
     }
+    this.map.applyRules(this);
     this.syncTerrainFx();
     this.refreshIncomes();
   }
@@ -4987,7 +5042,7 @@ export class GameSim {
     if (!side) return false;
     const foe = side === this.player ? this.enemy : this.player;
     if (cmd.type === "buy") {
-      if (cmd.lane !== "top" && cmd.lane !== "bottom") return false;
+      if (!this.map.hasLane(cmd.lane)) return false;
       if (!side.canSpawnUnit(cmd.unit)) return false;
       return Boolean(this.grantTroop(side, cmd.lane, cmd.unit));
     }
@@ -5195,13 +5250,17 @@ export class GameSim {
       }));
     }
 
+    const laneCenters = { ...this.shownCenters };
     return {
       tick: this.tick,
       elapsed: this.elapsed,
       winner: this.winner,
       winReason: this.winReason,
-      topCenter: this.shownTop,
-      bottomCenter: this.shownBottom,
+      map: this.map.snapshotMeta(),
+      laneCenters,
+      /** Classic aliases for Android / older clients. */
+      topCenter: laneCenters.top != null ? laneCenters.top : 0.5,
+      bottomCenter: laneCenters.bottom != null ? laneCenters.bottom : 0.5,
       mapId: this.mapId,
       fogEnabled: fogOn,
       fortsEnabled: this.fortsEnabled !== false,
@@ -5212,6 +5271,7 @@ export class GameSim {
         index: town.index,
         x: town.x,
         y: town.y,
+        laneId: town.laneId,
         owner: town.owner,
         producing: Boolean(town.producing),
       })),
@@ -5263,10 +5323,7 @@ export class GameSim {
       speedMultiplier: side.speedMultiplier,
       upgrades: { ...side.upgrades },
       upgradeProgress: { ...side.upgradeProgress },
-      targeting: {
-        top: side.targeting.top,
-        bottom: side.targeting.bottom,
-      },
+      targeting: { ...side.targeting },
       troops,
     };
   }
@@ -5279,12 +5336,17 @@ export class GameSim {
   easeLaneCenters(dt) {
     const tau = CONFIG.laneCenterEase;
     const k = !(tau > 0) ? 1 : 1 - Math.exp(-dt / tau);
-    const top = this.laneCenterT("top");
-    const bottom = this.laneCenterT("bottom");
-    this.shownTop += (top - this.shownTop) * k;
-    this.shownBottom += (bottom - this.shownBottom) * k;
-    if (Math.abs(top - this.shownTop) < 1e-4) this.shownTop = top;
-    if (Math.abs(bottom - this.shownBottom) < 1e-4) this.shownBottom = bottom;
+    if (!this.shownCenters) this.shownCenters = {};
+    for (const laneId of this.map.laneIds()) {
+      const target = this.laneCenterT(laneId);
+      let shown = this.shownCenters[laneId];
+      if (shown == null) shown = 0.5;
+      shown += (target - shown) * k;
+      if (Math.abs(target - shown) < 1e-4) shown = target;
+      this.shownCenters[laneId] = shown;
+    }
+    if (this.shownCenters.top != null) this.shownTop = this.shownCenters.top;
+    if (this.shownCenters.bottom != null) this.shownBottom = this.shownCenters.bottom;
   }
 
   /**
@@ -5292,12 +5354,12 @@ export class GameSim {
    * award both for this step.
    */
   refreshIncomes() {
-    const top = this.shownTop;
-    const bottom = this.shownBottom;
-    this.player.refreshIncome(top);
-    this.enemy.refreshIncome(1 - top);
-    this.player.refreshLand(bottom);
-    this.enemy.refreshLand(1 - bottom);
+    const lanes = this.map ? this.map.def.lanes : [];
+    const incomes = computeResourceIncomes(lanes, this.shownCenters || {});
+    this.player.refreshIncome(incomes.player.gold);
+    this.enemy.refreshIncome(incomes.enemy.gold);
+    this.player.refreshLand(incomes.player.land);
+    this.enemy.refreshLand(incomes.enemy.land);
   }
 
   /**
@@ -5465,7 +5527,8 @@ export class GameSim {
       const troop = side.troops[i];
       if (troop.hp <= 0) continue;
       this.flushRestoreVisuals(troop);
-      if (troop.lane === "bottom") {
+      const townLane = this.map.townLaneId();
+      if (townLane && troop.lane === townLane) {
         for (let c = 0; c < this.checkpoints.length; c += 1) {
           if (this.checkpoints[c].tryCapture(troop)) {
             this.refreshIncomes();

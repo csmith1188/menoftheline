@@ -284,7 +284,7 @@ function blank(unit, intent, reason) {
  */
 export function decideIntents(bot, snapshot, profile) {
   const out = [];
-  const lanes = ["top", "bottom"];
+  const lanes = snapshot.laneIds || Object.keys(snapshot.lanes || {});
   const fog = {
     mapId: snapshot.mapId,
     sideId: snapshot.sideId,
@@ -292,6 +292,7 @@ export function decideIntents(bot, snapshot, profile) {
   };
   for (let L = 0; L < lanes.length; L += 1) {
     const info = snapshot.lanes[lanes[L]];
+    if (!info) continue;
     const troopDecisions = [];
     for (let i = 0; i < info.friendlies.length; i += 1) {
       const unit = info.friendlies[i];

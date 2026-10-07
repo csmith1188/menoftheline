@@ -8,8 +8,17 @@ import {
 } from "../../shared/terrain.js";
 import { UNIT_STATS, unitStats } from "../../shared/units.js";
 
+/** Classic fallback when a sim has no GameMap bound yet. */
 const LANES = ["top", "bottom"];
 const BASE_TYPES = ["troop", "skirmisher", "dragoon", "cannon", "officer"];
+
+/** Active lane ids from the sim map (1+). */
+export function laneIdsOf(sim) {
+  if (sim && sim.map && typeof sim.map.laneIds === "function") {
+    return sim.map.laneIds();
+  }
+  return LANES.slice();
+}
 
 /** Gold price of the body on the field, including alternates. */
 export function goldCost(unit) {
@@ -150,9 +159,10 @@ export function assessBattlefield(sim, sideId, profile) {
   const hpFrac = self.capitalHP / CONFIG.capitalHP;
   const troopsBySide = { player: sim.player.troops, enemy: sim.enemy.troops };
   const mapId = sim.mapId || CONFIG.defaultMapId;
+  const laneIds = laneIdsOf(sim);
   const lanes = {};
-  for (let i = 0; i < LANES.length; i += 1) {
-    const lane = LANES[i];
+  for (let i = 0; i < laneIds.length; i += 1) {
+    const lane = laneIds[i];
     const friendlies = living(self, lane);
     const enemies = living(foe, lane).filter((unit) =>
       isEnemyVisible(sideId, unit, troopsBySide, mapId));
@@ -188,7 +198,9 @@ export function assessBattlefield(sim, sideId, profile) {
     hpFrac,
     keepDesperate: hpFrac < CONFIG.botDesperateKeepHp,
     lanes,
+    laneIds,
     mapId,
+    townLaneId: (sim.map && sim.map.townLaneId()) || "bottom",
     troopsBySide,
   };
 }

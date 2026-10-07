@@ -9,6 +9,7 @@ import {
   showStrategyHints,
   showUnitHints,
 } from "./tooltips.js";
+import { swipeBuyLanes } from "./mapView.js";
 
 /** Hold this long on one unit to select only that unit (not its line). */
 const SELECT_HOLD_MS = 400;
@@ -721,10 +722,11 @@ const pointerMethods = {
     if (Math.abs(dy) < min || Math.abs(dy) <= Math.abs(dx)) {
       return null;
     }
+    const { up, down } = swipeBuyLanes();
     if (this.trainingMode) {
-      return dy > 0 ? "bottom" : null;
+      return dy > 0 ? down : null;
     }
-    return dy < 0 ? "top" : "bottom";
+    return dy < 0 ? up : down;
   },
 
   /**

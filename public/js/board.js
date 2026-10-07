@@ -6,6 +6,7 @@ import {
   pointToSegment,
 } from "../shared/path.js";
 import { TERRAIN_EMOJI, terrainCoverParts } from "../shared/terrain.js";
+import { SHOT_SNAP_PX, SNAP_PX, lerpAlpha, lerpPoint, lerpTroop } from "./interp.js";
 
 /** Display face for titles. Body copy and bullets use IM Fell English. */
 export const FONT_HEADER = "Cinzel";
@@ -1537,14 +1538,93 @@ function writeTroop(troop, data, side, mx) {
   troop.broken = Boolean(data.broken);
   troop.priorOrder = data.priorOrder === undefined ? null : data.priorOrder;
   troop.radius = data.radius;
-  troop.x = mx(data.x);
-  troop.y = data.y;
+  noteMotion(troop, mx(data.x), data.y, data.lane, data.sublane);
   troop.order = data.order;
   troop.squared = Boolean(data.squared);
   troop.flash = data.flash;
   troop.progress = data.progress;
   troop.side = side;
   return troop;
+}
+
+function noteMotion(troop, x, y, lane, sublane) {
+  const next = { x, y, lane, sublane };
+  const prev = troop.motionNext;
+  const dx = prev ? x - prev.x : 0;
+  const dy = prev ? y - prev.y : 0;
+  const far = prev && (dx * dx + dy * dy > SNAP_PX * SNAP_PX);
+  const rowChanged = prev && (prev.lane !== lane || prev.sublane !== sublane);
+  if (!prev || far || rowChanged) {
+    troop.motionPrev = null;
+    troop.x = x;
+    troop.y = y;
+  } else {
+    troop.motionPrev = prev;
+  }
+  troop.motionNext = next;
+}
+
+function notePointMotion(entity, x, y, snapPx = SNAP_PX) {
+  const next = { x, y };
+  const prev = entity.motionNext;
+  const dx = prev ? x - prev.x : 0;
+  const dy = prev ? y - prev.y : 0;
+  const far = prev && (dx * dx + dy * dy > snapPx * snapPx);
+  if (!prev || far) {
+    entity.motionPrev = null;
+    entity.x = x;
+    entity.y = y;
+  } else {
+    entity.motionPrev = prev;
+  }
+  entity.motionNext = next;
+}
+
+/** Glide troops and shells between the last two authoritative samples. */
+export function presentTroopMotion(board, now = performance.now()) {
+  if (!board) return;
+  const alpha = lerpAlpha(now, board.motionAt || now, board.motionGapMs || 0);
+  const sides = [board.player, board.enemy];
+  for (let s = 0; s < sides.length; s += 1) {
+    const side = sides[s];
+    if (!side || !side.troops) continue;
+    for (let i = 0; i < side.troops.length; i += 1) {
+      const troop = side.troops[i];
+      if (!troop.motionNext) continue;
+      const point = lerpTroop(troop.motionPrev, troop.motionNext, alpha, SNAP_PX);
+      troop.x = point.x;
+      troop.y = point.y;
+    }
+  }
+  const shots = board.projectiles || [];
+  for (let i = 0; i < shots.length; i += 1) {
+    const shot = shots[i];
+    if (!shot || !shot.motionNext) continue;
+    const point = lerpPoint(shot.motionPrev, shot.motionNext, alpha, SHOT_SNAP_PX);
+    shot.x = point.x;
+    shot.y = point.y;
+  }
+}
+
+function syncProjectiles(board, shots, mx) {
+  const prev = board.projectiles || [];
+  const byId = new Map();
+  for (let i = 0; i < prev.length; i += 1) {
+    const shot = prev[i];
+    if (shot && shot.id != null) byId.set(shot.id, shot);
+  }
+  const next = new Array(shots.length);
+  for (let i = 0; i < shots.length; i += 1) {
+    const data = shots[i];
+    const id = data.id != null ? data.id : i;
+    const existing = byId.get(id) || {};
+    notePointMotion(existing, mx(data.x), data.y, SHOT_SNAP_PX);
+    existing.id = id;
+    existing.size = data.size;
+    existing.color = data.color;
+    next[i] = existing;
+  }
+  board.projectiles = next;
 }
 
 function makeTroop(data, side, mx) {
@@ -1686,6 +1766,16 @@ export function applySnapshot(board, snap, seat, controlSide) {
     return owner === mine ? "player" : "enemy";
   };
   board.elapsed = snap.elapsed;
+  const prevElapsed = board.motionElapsed;
+  const elapsed = Number(snap.elapsed);
+  board.motionElapsed = Number.isFinite(elapsed) ? elapsed : prevElapsed;
+  if (prevElapsed == null || !Number.isFinite(elapsed)) {
+    board.motionGapMs = 0;
+  } else {
+    const gap = (elapsed - prevElapsed) * 1000;
+    board.motionGapMs = gap > 0 && gap < 1000 ? gap : 0;
+  }
+  board.motionAt = performance.now();
   board.winner = snap.winner ? viewOwner(snap.winner) : null;
   board.winReason = snap.winReason || null;
   board.status = snap.status;
@@ -1710,15 +1800,7 @@ export function applySnapshot(board, snap, seat, controlSide) {
     mx,
   );
   syncCheckpoints(board, snap.checkpoints, mx, viewOwner);
-  const shots = snap.projectiles;
-  if (!board.projectiles || board.projectiles.length !== shots.length) {
-    board.projectiles = new Array(shots.length);
-  }
-  for (let i = 0; i < shots.length; i += 1) {
-    const prev = board.projectiles[i] || (board.projectiles[i] = {});
-    prev.x = mx(shots[i].x);
-    prev.y = shots[i].y;
-  }
+  syncProjectiles(board, snap.projectiles || [], mx);
   const splatSnap = snap.splats;
   if (!board.splats || board.splats.length !== splatSnap.length) {
     board.splats = new Array(splatSnap.length);

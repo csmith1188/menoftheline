@@ -471,6 +471,7 @@ describe("fog snapshot", () => {
     const fogged = sim.snapshot({ forSideId: "player" });
     assert.equal(fogged.sides.enemy.troops.length, 0);
     assert.ok(fogged.projectiles.length >= 1);
+    assert.ok(fogged.projectiles.every((shot) => Number.isFinite(shot.id)));
   });
 
   it("reveals an enemy standing on a hill footprint when LOS reaches it", () => {
@@ -656,5 +657,33 @@ describe("broken terrain bypass", () => {
       paces < river.centerPaces - half,
       "cannon should withdraw past the river via the bridge",
     );
+  });
+});
+
+describe("shared snapshots", () => {
+  it("serves the same fog-off payload to both seats", () => {
+    const sim = makeSim({ mapId: "empty", fogEnabled: false });
+    spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 0 });
+    spawn(sim, "enemy", "troop", "top", { progress: 0.3, sublane: 1 });
+    const player = sim.snapshot({ forSideId: "player" });
+    const enemy = sim.snapshot({ forSideId: "enemy" });
+    assert.deepEqual(player, enemy);
+    assert.equal(player.sides.enemy.troops.length, 1);
+    const views = sim.snapshotViews(["player", "enemy"]);
+    assert.equal(views.get("player"), views.get("enemy"));
+  });
+
+  it("marks a river pontoon after an engineer opens it", () => {
+    const sim = makeSim({ mapId: "default" });
+    const before = sim.snapshot().terrain.features.find((f) => f.id === "river-bottom-outer");
+    assert.equal(before.pontoon, false);
+    const river = featuresOnMap("default").find((f) => f.id === "river-bottom-outer");
+    spawn(sim, "player", "engineer", "bottom", {
+      progress: progressFromPlayerPaces("player", "bottom", river.centerPaces - 10),
+      sublane: 1,
+    });
+    sim.syncTerrainFx();
+    const after = sim.snapshot().terrain.features.find((f) => f.id === "river-bottom-outer");
+    assert.equal(after.pontoon, true);
   });
 });

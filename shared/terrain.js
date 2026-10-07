@@ -36,6 +36,8 @@ let _cachedMapKey = null;
 let _cachedFeatures = null;
 /** Open LOS segments by map key → "lane:sublane" → segments (static geometry). */
 let _openSegCache = new Map();
+/** Unfogged open-segment regions by map key (static geometry, fogged: false). */
+let _openRegionCache = new Map();
 
 function emptyTerrainFx() {
   return {
@@ -136,8 +138,8 @@ function sideCancelsLos(viewerSideId, feature) {
   return Boolean(set && feature && set.has(feature.id));
 }
 
-function featureOpenForSide(viewerSideId, feature, troopsBySide) {
-  return sideOccupiesFeature(viewerSideId, feature, troopsBySide)
+function featureOpenForSide(viewerSideId, feature, troopsBySide, laneFriends) {
+  return sideOccupiesFeature(viewerSideId, feature, troopsBySide, laneFriends)
     || sideCancelsLos(viewerSideId, feature);
 }
 
@@ -158,6 +160,7 @@ export function clearTerrainCache() {
   _cachedMapKey = null;
   _cachedFeatures = null;
   _openSegCache = new Map();
+  _openRegionCache = new Map();
   _terrainFx = emptyTerrainFx();
   _mapOpts = { forts: true };
 }
@@ -194,6 +197,22 @@ function living(list) {
     if (u && u.hp > 0) out.push(u);
   }
   return out;
+}
+
+/** Living units split by lane, built once per snapshot or sim step. */
+export function livingByLane(list) {
+  const top = [];
+  const bottom = [];
+  const all = [];
+  const arr = list || [];
+  for (let i = 0; i < arr.length; i += 1) {
+    const u = arr[i];
+    if (!u || u.hp <= 0) continue;
+    all.push(u);
+    if (u.lane === "top") top.push(u);
+    else if (u.lane === "bottom") bottom.push(u);
+  }
+  return { top, bottom, all };
 }
 
 function sideIdOf(unit) {
@@ -403,10 +422,12 @@ export function featureBlocksLos(feature, viewerSideId) {
 }
 
 /** Viewer has a living unit on this feature. */
-export function sideOccupiesFeature(viewerSideId, feature, troopsBySide) {
-  const list = living(troopsBySide && troopsBySide[viewerSideId]);
+export function sideOccupiesFeature(viewerSideId, feature, troopsBySide, laneFriends) {
+  const list = laneFriends || living(troopsBySide && troopsBySide[viewerSideId]);
   for (let i = 0; i < list.length; i += 1) {
-    if (onTerrain(list[i], feature)) return true;
+    const unit = list[i];
+    if (!laneFriends && unit.lane !== feature.lane) continue;
+    if (onTerrain(unit, feature)) return true;
   }
   return false;
 }
@@ -455,10 +476,10 @@ export function unitsInMeleeContact(a, b) {
 }
 
 /** True when any living friendly is in melee with this enemy. */
-export function inMeleeWithViewer(viewerSideId, enemy, troopsBySide) {
-  const friends = living(troopsBySide && troopsBySide[viewerSideId]);
-  for (let i = 0; i < friends.length; i += 1) {
-    if (unitsInMeleeContact(friends[i], enemy)) return true;
+export function inMeleeWithViewer(viewerSideId, enemy, troopsBySide, friends) {
+  const list = friends || living(troopsBySide && troopsBySide[viewerSideId]);
+  for (let i = 0; i < list.length; i += 1) {
+    if (unitsInMeleeContact(list[i], enemy)) return true;
   }
   return false;
 }
@@ -510,12 +531,13 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
     return false;
   }
 
+  const friendsOnLane = livingByLane(troopsBySide && troopsBySide[viewerSideId])[targetLane] || [];
   for (let i = 0; i < features.length; i += 1) {
     const f = features[i];
     if (f.lane !== targetLane) continue;
     if (targetSublane != null && f.sublanes.indexOf(targetSublane) < 0) continue;
     if (!featureBlocksLos(f, viewerSideId)) continue;
-    if (featureOpenForSide(viewerSideId, f, troopsBySide)) continue;
+    if (featureOpenForSide(viewerSideId, f, troopsBySide, friendsOnLane)) continue;
     // Shooters can always engage a unit whose centerline is on this footprint.
     if (target.hp !== undefined && onTerrain(target, f)) continue;
     if (intervalBlocksBetween(fromPaces, targetPaces, f)) return false;
@@ -702,10 +724,10 @@ function fogRegionAt(fogRegions, lane, sublane, paces) {
  * cross-lane friend checks use the same keep→target segment as the keep probe.
  * Pass `fogRegions` from snapshotTerrain to reuse open-segment visibility.
  */
-export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId, fogRegions = null) {
+export function isEnemyVisible(viewerSideId, enemy, troopsBySide, mapId, fogRegions = null, friends = null) {
   if (!enemy || enemy.hp <= 0) return false;
 
-  if (inMeleeWithViewer(viewerSideId, enemy, troopsBySide)) return true;
+  if (inMeleeWithViewer(viewerSideId, enemy, troopsBySide, friends)) return true;
   if (guerrillaConcealedFrom(viewerSideId, enemy, troopsBySide, mapId)) return false;
 
   const paces = playerPacesOf(enemy);
@@ -775,7 +797,7 @@ export function foggedFeatureIds(viewerSideId, troopsBySide, mapId) {
  * True when the viewer can see a sample point on a lane row (player-keep paces).
  * Keep / same-row shot LOS, or any same-lane friendly cresting that open segment.
  */
-export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, mapId) {
+export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, mapId, laneFriends) {
   const total = Path.lanePaces(lane);
   if (!(total > 0) || paces == null) return true;
   const probe = {
@@ -786,7 +808,8 @@ export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, map
     hp: 1,
   };
   // Cross-lane observers use the same keep→target segment as keepUnit below.
-  const friends = living(troopsBySide && troopsBySide[viewerSideId]);
+  // `laneFriends` is the viewer's living units already filtered to this lane.
+  const friends = laneFriends || living(troopsBySide && troopsBySide[viewerSideId]);
   for (let i = 0; i < friends.length; i += 1) {
     const friend = friends[i];
     if (!friend || friend.lane !== lane) continue;
@@ -810,11 +833,13 @@ export function canSeePace(viewerSideId, lane, sublane, paces, troopsBySide, map
  * `fogged` is true when the viewer has no LOS into that segment.
  * Terrain footprints themselves are omitted (never darkened further).
  */
-export function fogLaneRegions(viewerSideId, troopsBySide, mapId) {
+export function fogLaneRegions(viewerSideId, troopsBySide, mapId, friendsByLane) {
+  const grouped = friendsByLane || livingByLane(troopsBySide && troopsBySide[viewerSideId]);
   const regions = [];
   const lanes = ["top", "bottom"];
   for (let li = 0; li < lanes.length; li += 1) {
     const lane = lanes[li];
+    const laneFriends = grouped[lane] || [];
     const count = Path.sublaneCount(lane);
     for (let sub = 0; sub < count; sub += 1) {
       const segments = openSegmentsOnRow(lane, sub, mapId);
@@ -826,12 +851,55 @@ export function fogLaneRegions(viewerSideId, troopsBySide, mapId) {
           sublane: s.sublane,
           minPaces: s.minPaces,
           maxPaces: s.maxPaces,
-          fogged: !canSeePace(viewerSideId, lane, sub, mid, troopsBySide, mapId),
+          fogged: !canSeePace(viewerSideId, lane, sub, mid, troopsBySide, mapId, laneFriends),
         });
       }
     }
   }
   return regions;
+}
+
+/** Open lane segments with fogged forced off. Cached per map + forts. */
+function openFogRegions(mapId) {
+  const key = mapCacheKey(mapId, getMapOpts().forts);
+  const hit = _openRegionCache.get(key);
+  if (hit) return hit;
+  const regions = [];
+  const lanes = ["top", "bottom"];
+  for (let li = 0; li < lanes.length; li += 1) {
+    const lane = lanes[li];
+    const count = Path.sublaneCount(lane);
+    for (let sub = 0; sub < count; sub += 1) {
+      const segments = openSegmentsOnRow(lane, sub, mapId);
+      for (let i = 0; i < segments.length; i += 1) {
+        const s = segments[i];
+        regions.push({
+          lane: s.lane,
+          sublane: s.sublane,
+          minPaces: s.minPaces,
+          maxPaces: s.maxPaces,
+          fogged: false,
+        });
+      }
+    }
+  }
+  _openRegionCache.set(key, regions);
+  return regions;
+}
+
+/** Feature list copied for clients. `pontoon` flips when an engineer opens a river. */
+export function serializeMapFeatures(mapId, pontoonIds) {
+  const ids = pontoonIds || new Set();
+  return featuresOnMap(mapId).map((f) => ({
+    id: f.id,
+    kind: f.kind,
+    lane: f.lane,
+    sublanes: f.sublanes.slice(),
+    centerPaces: f.centerPaces,
+    halfWidthPaces: f.halfWidthPaces != null ? f.halfWidthPaces : terrainFootprintPaces(),
+    sideId: f.sideId || null,
+    pontoon: f.kind === "river" && ids.has(f.id),
+  }));
 }
 
 /**
@@ -914,19 +982,20 @@ export function unitOnClosedRiver(unit, mapId) {
 export function snapshotTerrain(viewerSideId, troopsBySide, mapId, opts = {}) {
   const id = mapId || CONFIG.defaultMapId;
   if (!opts.skipFxRefresh) refreshTerrainFx(troopsBySide, id);
-  const features = featuresOnMap(id).map((f) => ({
-    id: f.id,
-    kind: f.kind,
-    lane: f.lane,
-    sublanes: f.sublanes.slice(),
-    centerPaces: f.centerPaces,
-    halfWidthPaces: f.halfWidthPaces != null ? f.halfWidthPaces : terrainFootprintPaces(),
-    sideId: f.sideId || null,
-  }));
+  const features = opts.features || serializeMapFeatures(id, _terrainFx.pontoonIds);
+  if (opts.skipLos) {
+    return {
+      mapId: id,
+      features,
+      foggedFeatureIds: [],
+      fogRegions: openFogRegions(id),
+    };
+  }
+  const friendsByLane = opts.friendsByLane || livingByLane(troopsBySide && troopsBySide[viewerSideId]);
   return {
     mapId: id,
     features,
     foggedFeatureIds: foggedFeatureIds(viewerSideId, troopsBySide, id),
-    fogRegions: fogLaneRegions(viewerSideId, troopsBySide, id),
+    fogRegions: fogLaneRegions(viewerSideId, troopsBySide, id, friendsByLane),
   };
 }

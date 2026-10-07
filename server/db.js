@@ -2,9 +2,13 @@ import fs from "fs";
 import path from "path";
 import sqlite3 from "sqlite3";
 import { fileURLToPath } from "url";
+import { metricsEnabled, noteSqliteBusy, noteSqliteWrite } from "./metrics.js";
+import { ownerBase, pickLeastLoaded, workerCount } from "./owners.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const dataPath = path.join(root, "data");
+export const dataPath = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(root, "data");
 export const dbFile = path.join(dataPath, "Men Of The Line.sqlite");
 
 const ADJECTIVES = ["Ash", "Bold", "Bright", "Calm", "Coral", "Dusk", "Fair", "Gold", "Keen", "Lone", "Mist", "Noble", "Quick", "Red", "Silver", "Storm", "Swift", "Wild"];
@@ -19,25 +23,54 @@ function open() {
   return database;
 }
 
-function run(sql, params = []) {
+let dbTail = Promise.resolve();
+
+/** One app connection: keep statements and transactions from interleaving. */
+function withDb(fn) {
+  const job = dbTail.then(fn, fn);
+  dbTail = job.then(() => {}, () => {});
+  return job;
+}
+
+function noteWrite(sql, err) {
+  if (!metricsEnabled()) return;
+  const head = String(sql).trim().slice(0, 6).toUpperCase();
+  if (head === "INSERT" || head === "UPDATE" || head === "DELETE") noteSqliteWrite();
+  if (err && (err.code === "SQLITE_BUSY" || err.errno === 5)) noteSqliteBusy();
+}
+
+function execRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function onRun(err) {
+      noteWrite(sql, err);
       if (err) reject(err);
       else resolve(this);
     });
   });
 }
 
-function get(sql, params = []) {
+function execGet(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
   });
 }
 
-function all(sql, params = []) {
+function execAll(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
   });
+}
+
+function run(sql, params = []) {
+  return withDb(() => execRun(sql, params));
+}
+
+function get(sql, params = []) {
+  return withDb(() => execGet(sql, params));
+}
+
+function all(sql, params = []) {
+  return withDb(() => execAll(sql, params));
 }
 
 export function startingMmr() {
@@ -99,6 +132,8 @@ export async function initDb() {
     created_at INTEGER NOT NULL,
     ended_at INTEGER NOT NULL
   )`);
+  await run("CREATE INDEX IF NOT EXISTS games_formbar_a ON games (formbar_a)");
+  await run("CREATE INDEX IF NOT EXISTS games_formbar_b ON games (formbar_b)");
   await run(`CREATE TABLE IF NOT EXISTS ticket_purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     formbar_id INTEGER NOT NULL,
@@ -106,6 +141,15 @@ export async function initDb() {
     tickets INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   )`);
+  await run("CREATE INDEX IF NOT EXISTS ticket_purchases_formbar ON ticket_purchases (formbar_id)");
+  await run(`CREATE TABLE IF NOT EXISTS match_assignments (
+    user_id TEXT PRIMARY KEY,
+    worker INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    pair_id TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS match_assignments_mode ON match_assignments (mode, pair_id)");
   await run(`CREATE TABLE IF NOT EXISTS suggestions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     formbar_id INTEGER NOT NULL,
@@ -309,6 +353,141 @@ export async function addTickets(formbarId, tickets, digipogs) {
     "INSERT INTO ticket_purchases (formbar_id, digipogs, tickets, created_at) VALUES (?, ?, ?, ?)",
     [id, digipogs, tickets, now],
   );
+}
+
+function workerFromCounts(rows) {
+  const count = workerCount();
+  const loads = [];
+  for (let i = 0; i < count; i += 1) loads.push(0);
+  for (let i = 0; i < rows.length; i += 1) {
+    const worker = Number(rows[i].worker);
+    if (worker >= 0 && worker < loads.length) loads[worker] = Number(rows[i].n) || 0;
+  }
+  return pickLeastLoaded(loads);
+}
+
+/**
+ * Pin a player to one sim process. Bot rooms spread across the least
+ * loaded owners. Queue modes share one owner so the pair meets there.
+ * A single process skips the table.
+ */
+export async function assignOwner(userId, mode) {
+  if (workerCount() < 2) return { worker: 0, owner: "" };
+  if (!userId) return { worker: 0, owner: "" };
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const existing = await execGet(
+        "SELECT worker FROM match_assignments WHERE user_id = ?",
+        [userId],
+      );
+      if (existing) {
+        await execRun("COMMIT");
+        return { worker: existing.worker, owner: ownerBase(existing.worker) };
+      }
+      const queued = mode === "casual" || mode === "trainCasual" || mode === "ranked";
+      let worker = 0;
+      let pairId = null;
+      if (queued) {
+        const open = await execGet(
+          `SELECT pair_id, worker FROM match_assignments
+           WHERE mode = ? AND pair_id IS NOT NULL
+           GROUP BY pair_id
+           HAVING COUNT(*) = 1
+           ORDER BY MIN(created_at)
+           LIMIT 1`,
+          [mode],
+        );
+        if (open) {
+          worker = open.worker;
+          pairId = open.pair_id;
+        } else {
+          const rows = await execAll("SELECT worker, COUNT(*) AS n FROM match_assignments GROUP BY worker");
+          worker = workerFromCounts(rows);
+          pairId = crypto.randomUUID();
+        }
+      } else {
+        const rows = await execAll("SELECT worker, COUNT(*) AS n FROM match_assignments GROUP BY worker");
+        worker = workerFromCounts(rows);
+      }
+      await execRun(
+        "INSERT INTO match_assignments (user_id, worker, mode, pair_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        [userId, worker, mode, pairId, Date.now()],
+      );
+      await execRun("COMMIT");
+      return { worker, owner: ownerBase(worker) };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        console.error(rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function ownerForUser(userId) {
+  if (workerCount() < 2 || !userId || !db) return null;
+  const row = await get("SELECT worker FROM match_assignments WHERE user_id = ?", [userId]);
+  return row ? row.worker : null;
+}
+
+export async function clearOwner(userId) {
+  if (workerCount() < 2 || !userId || !db) return;
+  await run("DELETE FROM match_assignments WHERE user_id = ?", [userId]);
+}
+
+/** Ranked MMR updates and the game row, or just the game row, in one transaction. */
+export async function recordMatchResult({ ranked, game }) {
+  if (!db) return;
+  return withDb(async () => {
+    await execRun("BEGIN");
+    try {
+      if (ranked && ranked.length) {
+        for (let i = 0; i < ranked.length; i += 1) {
+          const row = ranked[i];
+          const column = row.won ? "wins" : "losses";
+          await execRun(
+            `UPDATE accounts SET mmr = ?, ${column} = ${column} + 1, updated_at = ? WHERE formbar_id = ?`,
+            [row.mmr, Date.now(), row.formbarId],
+          );
+        }
+      }
+      await execRun(
+        `INSERT INTO games (
+          id, mode, player_a, player_b, name_a, name_b, formbar_a, formbar_b,
+          winner_side, mmr_a_before, mmr_b_before, mmr_a_after, mmr_b_after,
+          created_at, ended_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          game.id,
+          game.mode,
+          game.playerA,
+          game.playerB,
+          game.nameA,
+          game.nameB,
+          game.formbarA,
+          game.formbarB,
+          game.winnerSide,
+          game.mmrABefore,
+          game.mmrBBefore,
+          game.mmrAAfter,
+          game.mmrBAfter,
+          game.createdAt,
+          game.endedAt,
+        ],
+      );
+      await execRun("COMMIT");
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        console.error(rollbackErr);
+      }
+      throw err;
+    }
+  });
 }
 
 export async function setRankedResult(formbarId, mmr, won) {

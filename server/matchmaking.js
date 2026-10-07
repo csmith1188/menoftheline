@@ -1,6 +1,8 @@
-import { ensureHold, holdTicket, refundTicket, releaseHold } from "./db.js";
+import { clearOwner, ensureHold, holdTicket, ownerForUser, refundTicket, releaseHold } from "./db.js";
+import { workerCount, workerIndex } from "./owners.js";
 import { pickRankedPair } from "./rating.js";
-import { GameRoom } from "./room.js";
+import { GameRoom, TICK_MS } from "./room.js";
+import { MatchTicker } from "./ticker.js";
 
 function numberEnv(name, fallback) {
   const n = Number(process.env[name]);
@@ -25,6 +27,11 @@ export class Matchmaker {
     this.training = [];
     this.ranked = [];
     this.claimed = new Set();
+    /** userId → GameRoom. Ordered `rooms` stays the iteration source. */
+    this.userRoom = new Map();
+    /** userId → queue entry. Ordered queues stay the pairing source. */
+    this.userQueue = new Map();
+    this.ticker = new MatchTicker(TICK_MS);
     this.maxSpread = numberEnv("MMR_MAX_SPREAD", 200);
     this.waitMs = numberEnv("MATCH_WAIT_MS", 60000);
     this.pairing = false;
@@ -34,19 +41,43 @@ export class Matchmaker {
     if (this.timer.unref) this.timer.unref();
   }
 
+  rememberUserRoom(userId, room) {
+    if (!userId || !room) return;
+    this.userQueue.delete(userId);
+    this.userRoom.set(userId, room);
+  }
+
+  forgetUserRoom(userId, room) {
+    if (!userId) return;
+    if (!room || this.userRoom.get(userId) === room) this.userRoom.delete(userId);
+  }
+
+  rememberQueue(entry) {
+    if (!entry || !entry.userId) return;
+    this.userQueue.set(entry.userId, entry);
+  }
+
+  forgetQueue(entry) {
+    if (!entry || !entry.userId) return;
+    if (this.userQueue.get(entry.userId) === entry) this.userQueue.delete(entry.userId);
+  }
+
+  enqueue(list, entry) {
+    list.push(entry);
+    this.rememberQueue(entry);
+  }
+
   roomForUser(userId) {
-    for (const room of this.rooms.values()) {
-      if (room.status === "dead") continue;
-      if (room.seatForUser(userId)) return room;
+    const room = this.userRoom.get(userId);
+    if (!room || room.status === "dead" || !room.seatForUser(userId)) {
+      if (room) this.userRoom.delete(userId);
+      return null;
     }
-    return null;
+    return room;
   }
 
   findQueued(userId) {
-    return this.casual.find((entry) => entry.userId === userId)
-      || this.training.find((entry) => entry.userId === userId)
-      || this.ranked.find((entry) => entry.userId === userId)
-      || null;
+    return this.userQueue.get(userId) || null;
   }
 
   isBusy(userId) {
@@ -56,6 +87,13 @@ export class Matchmaker {
 
   remove(room) {
     this.rooms.delete(room.id);
+    if (this.ticker) this.ticker.remove(room);
+    const a = room.seat && room.seat.a && room.seat.a.userId;
+    const b = room.seat && room.seat.b && room.seat.b.userId;
+    if (a && this.userRoom.get(a) === room) this.userRoom.delete(a);
+    if (b && this.userRoom.get(b) === room) this.userRoom.delete(b);
+    if (a) clearOwner(a).catch((err) => console.error(err));
+    if (b) clearOwner(b).catch((err) => console.error(err));
   }
 
   clearPlaySession(socket) {
@@ -141,6 +179,13 @@ export class Matchmaker {
   }
 
   async startIntent(socket, intent) {
+    if (workerCount() > 1) {
+      const assigned = await ownerForUser(socket.data.user.id);
+      if (assigned != null && assigned !== workerIndex()) {
+        this.failHome(socket, "That match is on another server.");
+        return;
+      }
+    }
     if (this.isBusy(socket.data.user.id)) {
       const room = this.roomForUser(socket.data.user.id);
       if (room) room.attach(socket);
@@ -208,7 +253,7 @@ export class Matchmaker {
       joinedAt: Date.now(),
       mode: "casual",
     };
-    this.casual.push(entry);
+    this.enqueue(this.casual, entry);
     this.markSearchSession(socket, "casual");
     this.emitSearchLobby(entry);
     await this.pairCasual();
@@ -225,7 +270,7 @@ export class Matchmaker {
       joinedAt: Date.now(),
       mode: "training",
     };
-    this.training.push(entry);
+    this.enqueue(this.training, entry);
     this.markSearchSession(socket, "training");
     this.emitSearchLobby(entry);
     await this.pairTraining();
@@ -277,7 +322,7 @@ export class Matchmaker {
       joinedAt: Date.now(),
       mode: "ranked",
     };
-    this.ranked.push(entry);
+    this.enqueue(this.ranked, entry);
     this.markSearchSession(socket, "ranked");
     this.emitSearchLobby(entry);
     await this.pairRanked();
@@ -365,6 +410,8 @@ export class Matchmaker {
       const b = this.casual[1];
       if (a.userId === b.userId) return;
       this.casual.splice(0, 2);
+      this.forgetQueue(a);
+      this.forgetQueue(b);
       await this.beginPaired(a, b, "casual");
     }
   }
@@ -375,6 +422,8 @@ export class Matchmaker {
       const b = this.training[1];
       if (a.userId === b.userId) return;
       this.training.splice(0, 2);
+      this.forgetQueue(a);
+      this.forgetQueue(b);
       await this.beginPaired(a, b, "training");
     }
   }
@@ -388,6 +437,8 @@ export class Matchmaker {
         const pair = pickRankedPair(this.ranked, now, this.maxSpread, this.waitMs);
         if (!pair) break;
         this.ranked = this.ranked.filter((entry) => entry !== pair.a && entry !== pair.b);
+        this.forgetQueue(pair.a);
+        this.forgetQueue(pair.b);
         await this.beginPaired(pair.a, pair.b, "ranked");
       }
     } finally {
@@ -399,6 +450,7 @@ export class Matchmaker {
     this.casual = this.casual.filter((item) => item !== entry);
     this.training = this.training.filter((item) => item !== entry);
     this.ranked = this.ranked.filter((item) => item !== entry);
+    this.forgetQueue(entry);
     if (entry.mode === "ranked") await releaseHold(entry.formbarId);
     if (entry.socket) this.clearPlaySession(entry.socket);
   }
@@ -582,20 +634,20 @@ export class Matchmaker {
           this.failHome(entry.socket, "You need a free ticket.");
           return;
         }
-        this.ranked.push(entry);
+        this.enqueue(this.ranked, entry);
         this.markSearchSession(entry.socket, mode);
         this.emitSearchLobby(entry);
         await this.pairRanked();
         return;
       }
       if (mode === "training") {
-        this.training.push(entry);
+        this.enqueue(this.training, entry);
         this.markSearchSession(entry.socket, mode);
         this.emitSearchLobby(entry);
         await this.pairTraining();
         return;
       }
-      this.casual.push(entry);
+      this.enqueue(this.casual, entry);
       this.markSearchSession(entry.socket, mode);
       this.emitSearchLobby(entry);
       await this.pairCasual();

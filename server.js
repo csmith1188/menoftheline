@@ -9,6 +9,7 @@ import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import {
   addTickets,
+  assignOwner,
   archiveSuggestion,
   claimSuggestionReward,
   canEditWiki,
@@ -45,6 +46,9 @@ import {
   WIKI_BODY_MAX,
   WIKI_TITLE_MAX,
 } from "./server/db.js";
+import { ensureMetrics, report as metricsReport, startMetrics } from "./server/metrics.js";
+import { workerCount } from "./server/owners.js";
+import { scheduleSettingWrite } from "./server/settingsWrite.js";
 import { connectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
@@ -80,6 +84,8 @@ const io = new Server(httpServer, {
   transports: ["websocket", "polling"],
   pingInterval: 20000,
   pingTimeout: 20000,
+  // Game commands are tiny. A 1 MB default buffer is a memory lever, not a need.
+  maxHttpBufferSize: 64 * 1024,
   // Skip websocket payload compression — decompressing every tick hammers phones.
   perMessageDeflate: false,
   httpCompression: true,
@@ -91,6 +97,9 @@ const sessionStore = new SQLiteStore({
   dir: dataPath,
   concurrentDb: true,
 });
+if (sessionStore.db && sessionStore.db.configure) {
+  sessionStore.db.configure("busyTimeout", 5000);
+}
 const sessionMiddleware = session({
   store: sessionStore,
   secret: process.env.SESSION_SECRET || "lane-pusher-local",
@@ -176,14 +185,16 @@ function saveSession(sess) {
 
 app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
+app.locals.assetVersion = process.env.ASSET_VERSION || "1";
 app.use(express.urlencoded({ extended: false }));
 app.use(sessionMiddleware);
 app.use((req, res, next) => {
   res.locals.isAdmin = isAdmin(req.session);
   next();
 });
-app.use("/shared", express.static(path.join(root, "shared")));
-app.use("/vendor/three", express.static(path.join(root, "node_modules", "three")));
+const staticHour = { maxAge: "1h", etag: true };
+app.use("/shared", express.static(path.join(root, "shared"), staticHour));
+app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticHour));
 app.get("/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json");
   res.sendFile(path.join(root, "public", "manifest.webmanifest"));
@@ -193,7 +204,7 @@ app.use("/bgm", express.static(path.join(root, "public", "bgm"), {
   maxAge: "7d",
   fallthrough: false,
 }));
-app.use(express.static(path.join(root, "public")));
+app.use(express.static(path.join(root, "public"), staticHour));
 
 function adminId() {
   const id = Number(process.env.ADMIN_USER_ID);
@@ -248,6 +259,27 @@ async function playerFromSession(sess, options = {}) {
 }
 
 const matchmaker = new Matchmaker(io);
+
+if (process.env.METRICS === "1") {
+  startMetrics({
+    log: process.env.METRICS_LOG !== "0",
+    gauges() {
+      let socketBacklog = 0;
+      const sockets = io.sockets && io.sockets.sockets;
+      if (sockets) {
+        for (const sock of sockets.values()) {
+          const buf = sock.conn && sock.conn.writeBuffer;
+          if (buf) socketBacklog += buf.length;
+        }
+      }
+      return {
+        rooms: matchmaker.rooms.size,
+        sockets: io.engine ? io.engine.clientsCount : 0,
+        socketBacklog,
+      };
+    },
+  });
+}
 
 function takeNotice(req) {
   const notice = req.session.notice || null;
@@ -966,6 +998,27 @@ app.get("/play", async (req, res, next) => {
 
 app.use("/api/v1", express.json({ limit: "32kb" }));
 
+app.get("/api/v1/metrics", (req, res) => {
+  if (process.env.METRICS !== "1") {
+    res.status(404).end();
+    return;
+  }
+  ensureMetrics();
+  let socketBacklog = 0;
+  const sockets = io.sockets && io.sockets.sockets;
+  if (sockets) {
+    for (const sock of sockets.values()) {
+      const buf = sock.conn && sock.conn.writeBuffer;
+      if (buf) socketBacklog += buf.length;
+    }
+  }
+  res.json(metricsReport({
+    rooms: matchmaker.rooms.size,
+    sockets: io.engine ? io.engine.clientsCount : 0,
+    socketBacklog,
+  }));
+});
+
 app.post("/api/v1/session", async (req, res, next) => {
   try {
     const name = req.body && req.body.name;
@@ -1024,7 +1077,13 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
     req.session.view3d = null;
     req.session.intent = { mode, roomId: null, view: null };
     await saveSession(req.session);
-    res.json({ ok: true, mode });
+    const assigned = workerCount() > 1 ? await assignOwner(player.id, mode) : null;
+    res.json({
+      ok: true,
+      mode,
+      worker: assigned ? assigned.worker : 0,
+      owner: assigned && assigned.owner ? assigned.owner : null,
+    });
   } catch (err) {
     next(err);
   }
@@ -1085,13 +1144,17 @@ io.on("connection", (socket) => {
   socket.on("tooltips", (on) => {
     const enabled = Boolean(on);
     if (socket.data.user) socket.data.user.tooltips = enabled;
-    setPlayerTooltips(socket.data.user, enabled).catch((err) => console.error(err));
+    scheduleSettingWrite(socket, "tooltips", enabled, (value) => {
+      return setPlayerTooltips(socket.data.user, value);
+    });
   });
   socket.on("bgmVolume", (percent) => {
     if (!Number.isFinite(Number(percent))) return;
     const value = clampBgmVolumePercent(percent);
     if (socket.data.user) socket.data.user.bgmVolume = value;
-    setPlayerBgmVolume(socket.data.user, value).catch((err) => console.error(err));
+    scheduleSettingWrite(socket, "bgmVolume", value, (next) => {
+      return setPlayerBgmVolume(socket.data.user, next);
+    });
   });
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));

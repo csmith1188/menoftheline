@@ -13,10 +13,12 @@ import {
   featuresUnder,
   hasShotLos,
   isEnemyVisible,
+  livingByLane,
   moveSpeedFactor,
   playerPacesFromProgress,
   progressFromPlayerPaces,
   setMapOpts,
+  serializeMapFeatures,
   setTerrainFx,
   shootRangeFactor,
   snapshotTerrain,
@@ -155,6 +157,7 @@ function preferNearestRowAmongAligned(shooter, primary, eligible, keepSide) {
  */
 class Projectile {
   constructor(x, y, target, damage, allies, kind, sourceType, sim, shot) {
+    this.id = sim ? sim.nextProjectileId++ : 0;
     this.x = x;
     this.y = y;
     this.target = target;
@@ -1303,8 +1306,12 @@ class Unit {
     let best = null;
     let bestFlank = false;
     let bestDist = Infinity;
-    for (let i = 0; i < enemies.length; i += 1) {
-      const enemy = enemies[i];
+    const sim = this.side && this.side.sim;
+    const indexed = sim && enemies === sim.foeTroops && sim.foeByLane
+      ? (sim.foeByLane[this.lane] || [])
+      : enemies;
+    for (let i = 0; i < indexed.length; i += 1) {
+      const enemy = indexed[i];
       if (enemy.hp <= 0 || enemy.lane !== this.lane) continue;
       const dist = distance(this, enemy);
       if (dist > reach + enemy.bodyRadius()) continue;
@@ -4869,6 +4876,67 @@ class Side {
  * Authoritative match. Callers apply commands and bot actions between
  * beginStep (time and income) and finishStep (movement and combat).
  */
+function setSame(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.size !== b.size) return false;
+  for (const id of a) {
+    if (!b.has(id)) return false;
+  }
+  return true;
+}
+
+function terrainFxSame(a, b) {
+  if (!a || !b) return false;
+  if (!setSame(a.pontoonIds, b.pontoonIds)) return false;
+  const aLos = a.losCancel || {};
+  const bLos = b.losCancel || {};
+  return setSame(aLos.player, bLos.player) && setSame(aLos.enemy, bLos.enemy);
+}
+
+function troopRecord(troop) {
+  return {
+    id: troop.id,
+    lane: troop.lane,
+    sublane: troop.sublane,
+    type: troop.type,
+    variant: troop.variant,
+    alternate: Boolean(troop.alternate),
+    hp: troop.hp,
+    maxHp: troop.maxHp,
+    fatigue: troop.fatigue,
+    maxFatigue: troop.maxFatigue,
+    broken: troop.broken,
+    priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
+    radius: troop.radius,
+    x: troop.x,
+    y: troop.y,
+    order: troop.order,
+    squared: Boolean(troop.squared),
+    flash: troop.flash,
+    progress: troop.progress,
+  };
+}
+
+function sidePublicFields(side) {
+  return {
+    id: side.id,
+    gold: side.gold,
+    income: side.income,
+    land: side.land,
+    landIncome: side.landIncome,
+    landInvestRate: side.landInvestRate,
+    capitalHP: side.capitalHP,
+    banks: side.banks,
+    speedMultiplier: side.speedMultiplier,
+    upgrades: { ...side.upgrades },
+    upgradeProgress: { ...side.upgradeProgress },
+    targeting: {
+      top: side.targeting.top,
+      bottom: side.targeting.bottom,
+    },
+  };
+}
+
 export class GameSim {
   constructor() {
     this.reset();
@@ -4882,6 +4950,7 @@ export class GameSim {
     this.splats = [];
     this.sounds = [];
     this.nextTroopId = 1;
+    this.nextProjectileId = 1;
     this.winner = null;
     this.winReason = null;
     this.elapsed = 0;
@@ -4963,11 +5032,38 @@ export class GameSim {
   /** Rebuild and install this match's terrain overlay (avoids clobbering other rooms). */
   syncTerrainFx() {
     this.installMapOpts();
-    this.terrainFx = computeTerrainFx(
+    const next = computeTerrainFx(
       { player: this.player.troops, enemy: this.enemy.troops },
       this.mapId,
     );
+    if (!terrainFxSame(this.terrainFx, next)) {
+      this.terrainFx = next;
+      this.terrainFxGen = (this.terrainFxGen || 0) + 1;
+    }
     setTerrainFx(this.terrainFx);
+  }
+
+  /**
+   * Client feature list. Rebuilt when the map, forts, or pontoon overlay changes.
+   */
+  terrainFeatureList() {
+    this.installTerrainFx();
+    const forts = this.fortsEnabled !== false;
+    const gen = this.terrainFxGen || 0;
+    if (
+      this._featureCache
+      && this._featureCacheGen === gen
+      && this._featureCacheMap === this.mapId
+      && this._featureCacheForts === forts
+    ) {
+      return this._featureCache;
+    }
+    const pontoonIds = this.terrainFx && this.terrainFx.pontoonIds;
+    this._featureCache = serializeMapFeatures(this.mapId, pontoonIds);
+    this._featureCacheGen = gen;
+    this._featureCacheMap = this.mapId;
+    this._featureCacheForts = forts;
+    return this._featureCache;
   }
 
   /** Install this match's overlay before reading terrain helpers. */
@@ -5089,31 +5185,140 @@ export class GameSim {
   }
 
   /**
-   * Public match state. When `forSideId` is set, enemy troops / shots /
-   * sounds are filtered by terrain fog of war.
+   * Public match state. When `forSideId` is set and fog is on, enemy troops,
+   * shots, and sounds are filtered by terrain fog of war.
+   * Troop field objects and map features are built once per call.
    */
   snapshot(opts = {}) {
-    const forSideId = opts.forSideId || null;
+    const shared = this.buildSharedSnapshot();
+    return this.viewFromShared(shared, opts.forSideId || null);
+  }
+
+  /**
+   * One shared build, then a view per seat. Fog-off seats share one object.
+   * @param {string[]} sideIds
+   */
+  snapshotViews(sideIds) {
+    const shared = this.buildSharedSnapshot();
+    const views = new Map();
     const fogOn = this.fogEnabled !== false;
-    // When fog is off, skip per-side hiding (still seat-scoped for other fields).
+    if (!fogOn) {
+      const view = this.viewFromShared(shared, null);
+      for (let i = 0; i < sideIds.length; i += 1) views.set(sideIds[i], view);
+      return views;
+    }
+    for (let i = 0; i < sideIds.length; i += 1) {
+      views.set(sideIds[i], this.viewFromShared(shared, sideIds[i]));
+    }
+    return views;
+  }
+
+  /** Bodies, economy, and map features shared by every seat this update. */
+  buildSharedSnapshot() {
+    this.installTerrainFx();
+    const features = this.terrainFeatureList();
+    const livingPlayer = [];
+    const livingEnemy = [];
+    for (let i = 0; i < this.player.troops.length; i += 1) {
+      const troop = this.player.troops[i];
+      if (troop.hp > 0) livingPlayer.push(troopRecord(troop));
+    }
+    for (let i = 0; i < this.enemy.troops.length; i += 1) {
+      const troop = this.enemy.troops[i];
+      if (troop.hp > 0) livingEnemy.push(troopRecord(troop));
+    }
+    const projectiles = [];
+    for (let i = 0; i < this.projectiles.length; i += 1) {
+      const shot = this.projectiles[i];
+      const target = shot.target;
+      projectiles.push({
+        id: shot.id,
+        x: shot.x,
+        y: shot.y,
+        size: shot.size,
+        color: shot.color,
+        targetId: target && target.id,
+        targetIsUnit: Boolean(target && target.hp !== undefined),
+        targetSide: target && target.side ? target.side.id : null,
+      });
+    }
+    const splats = [];
+    for (let i = 0; i < this.splats.length; i += 1) {
+      const splat = this.splats[i];
+      splats.push({
+        x: splat.x,
+        y: splat.y,
+        amount: splat.amount,
+        kind: splat.kind,
+        age: splat.age,
+      });
+    }
+    const sounds = [];
+    for (let i = 0; i < this.sounds.length; i += 1) {
+      const sound = this.sounds[i];
+      if (sound) sounds.push({ ...sound });
+    }
+    const checkpoints = [];
+    for (let i = 0; i < this.checkpoints.length; i += 1) {
+      const town = this.checkpoints[i];
+      checkpoints.push({
+        index: town.index,
+        x: town.x,
+        y: town.y,
+        owner: town.owner,
+        producing: Boolean(town.producing),
+      });
+    }
+    return {
+      tick: this.tick,
+      elapsed: this.elapsed,
+      winner: this.winner,
+      winReason: this.winReason,
+      topCenter: this.shownTop,
+      bottomCenter: this.shownBottom,
+      mapId: this.mapId,
+      fogEnabled: this.fogEnabled !== false,
+      fortsEnabled: this.fortsEnabled !== false,
+      baseIncome: this.baseIncome,
+      features,
+      living: { player: livingPlayer, enemy: livingEnemy },
+      playerFields: sidePublicFields(this.player),
+      enemyFields: sidePublicFields(this.enemy),
+      projectiles,
+      splats,
+      sounds,
+      checkpoints,
+    };
+  }
+
+  viewFromShared(shared, forSideId) {
+    const fogOn = shared.fogEnabled;
     const hideFogged = Boolean(forSideId) && fogOn;
     const troopsBySide = {
       player: this.player.troops,
       enemy: this.enemy.troops,
     };
-    // Install this match's FX; skip global refresh inside snapshotTerrain so
-    // concurrent rooms do not overwrite each other mid-broadcast.
-    this.installTerrainFx();
-    const terrain = snapshotTerrain(
-      forSideId || "player",
-      troopsBySide,
-      this.mapId,
-      { skipFxRefresh: true },
-    );
-
-    const visibleEnemyIds = new Set();
-    const visibleEnemyById = new Map();
-    if (hideFogged) {
+    let terrain;
+    let visibleEnemyIds = null;
+    let visibleEnemyById = null;
+    let friends = null;
+    if (!hideFogged) {
+      terrain = snapshotTerrain(forSideId || "player", troopsBySide, this.mapId, {
+        skipFxRefresh: true,
+        skipLos: true,
+        features: shared.features,
+      });
+    } else {
+      const viewerTroops = forSideId === "player" ? this.player.troops : this.enemy.troops;
+      const grouped = livingByLane(viewerTroops);
+      friends = grouped.all;
+      terrain = snapshotTerrain(forSideId, troopsBySide, this.mapId, {
+        skipFxRefresh: true,
+        features: shared.features,
+        friendsByLane: grouped,
+      });
+      visibleEnemyIds = new Set();
+      visibleEnemyById = new Map();
       const foe = forSideId === "player" ? this.enemy : this.player;
       for (let i = 0; i < foe.troops.length; i += 1) {
         const troop = foe.troops[i];
@@ -5124,6 +5329,7 @@ export class GameSim {
           troopsBySide,
           this.mapId,
           terrain.fogRegions,
+          friends,
         )) {
           visibleEnemyIds.add(troop.id);
           visibleEnemyById.set(troop.id, troop);
@@ -5131,145 +5337,133 @@ export class GameSim {
       }
     }
 
-    const sounds = this.sounds.filter((sound) => {
-      if (!hideFogged || !sound) return true;
-      if (sound.sideId === forSideId) return true;
-      if (sound.type === "keep") return true;
-      // Enemy combat audio only if a visible foe sits on that row (or any foe).
+    const sounds = [];
+    for (let i = 0; i < shared.sounds.length; i += 1) {
+      const sound = shared.sounds[i];
+      if (!hideFogged || !sound) {
+        sounds.push(sound);
+        continue;
+      }
+      if (sound.sideId === forSideId || sound.type === "keep") {
+        sounds.push(sound);
+        continue;
+      }
       if (sound.type === "shoot" || sound.type === "melee" || sound.type === "hit") {
-        if (visibleEnemyIds.size === 0) return false;
-        if (sound.lane == null) return true;
+        if (!visibleEnemyIds || visibleEnemyIds.size === 0) continue;
+        if (sound.lane == null) {
+          sounds.push(sound);
+          continue;
+        }
+        let show = false;
         for (const troop of visibleEnemyById.values()) {
           if (troop.lane === sound.lane
             && (sound.sublane == null || troop.sublane === sound.sublane)) {
-            return true;
+            show = true;
+            break;
           }
         }
-        return false;
+        if (show) sounds.push(sound);
+        continue;
       }
-      return true;
-    }).map((sound) => ({ ...sound }));
+      sounds.push(sound);
+    }
 
-    const projectiles = this.projectiles.filter((shot) => {
-      if (!hideFogged) return true;
-      const target = shot.target;
-      // Hide shells aimed at fogged enemies so flight paths do not reveal them.
-      // Keep shells from fogged attackers — fire still shows even when the unit does not.
-      if (target && target.hp !== undefined && target.side && target.side.id !== forSideId) {
-        if (!visibleEnemyIds.has(target.id)) return false;
+    const projectiles = [];
+    for (let i = 0; i < shared.projectiles.length; i += 1) {
+      const shot = shared.projectiles[i];
+      if (hideFogged && shot.targetIsUnit && shot.targetSide && shot.targetSide !== forSideId) {
+        if (!visibleEnemyIds || !visibleEnemyIds.has(shot.targetId)) continue;
       }
-      return true;
-    }).map((shot) => ({
-      x: shot.x,
-      y: shot.y,
-      size: shot.size,
-      color: shot.color,
-    }));
+      projectiles.push({
+        id: shot.id,
+        x: shot.x,
+        y: shot.y,
+        size: shot.size,
+        color: shot.color,
+      });
+    }
 
-    const splats = this.splats.filter((splat) => {
-      if (!hideFogged) return true;
-      // Hide splats near invisible enemies (approximate by nearest foe).
+    const hidden = [];
+    if (hideFogged) {
       const foe = forSideId === "player" ? this.enemy : this.player;
       for (let i = 0; i < foe.troops.length; i += 1) {
         const troop = foe.troops[i];
-        if (troop.hp <= 0 || visibleEnemyIds.has(troop.id)) continue;
-        const dx = splat.x - troop.x;
-        const dy = splat.y - troop.y;
-        if (dx * dx + dy * dy < 40 * 40) return false;
+        if (troop.hp <= 0 || (visibleEnemyIds && visibleEnemyIds.has(troop.id))) continue;
+        hidden.push(troop);
       }
-      return true;
-    }).map((splat) => ({
-      x: splat.x,
-      y: splat.y,
-      amount: splat.amount,
-      kind: splat.kind,
-      age: splat.age,
-    }));
-
-    // Omniscient / fog-off: clear fog darkening.
-    if (!hideFogged) {
-      terrain.foggedFeatureIds = [];
-      terrain.fogRegions = (terrain.fogRegions || []).map((r) => ({
-        ...r,
-        fogged: false,
-      }));
+    }
+    const splats = [];
+    for (let i = 0; i < shared.splats.length; i += 1) {
+      const splat = shared.splats[i];
+      if (hideFogged) {
+        let nearHidden = false;
+        for (let h = 0; h < hidden.length; h += 1) {
+          const troop = hidden[h];
+          const dx = splat.x - troop.x;
+          const dy = splat.y - troop.y;
+          if (dx * dx + dy * dy < 40 * 40) {
+            nearHidden = true;
+            break;
+          }
+        }
+        if (nearHidden) continue;
+      }
+      splats.push(splat);
     }
 
     return {
-      tick: this.tick,
-      elapsed: this.elapsed,
-      winner: this.winner,
-      winReason: this.winReason,
-      topCenter: this.shownTop,
-      bottomCenter: this.shownBottom,
-      mapId: this.mapId,
-      fogEnabled: fogOn,
-      fortsEnabled: this.fortsEnabled !== false,
-      baseIncome: this.baseIncome,
+      tick: shared.tick,
+      elapsed: shared.elapsed,
+      winner: shared.winner,
+      winReason: shared.winReason,
+      topCenter: shared.topCenter,
+      bottomCenter: shared.bottomCenter,
+      mapId: shared.mapId,
+      fogEnabled: shared.fogEnabled,
+      fortsEnabled: shared.fortsEnabled,
+      baseIncome: shared.baseIncome,
       terrain,
       sounds,
-      checkpoints: this.checkpoints.map((town) => ({
-        index: town.index,
-        x: town.x,
-        y: town.y,
-        owner: town.owner,
-        producing: Boolean(town.producing),
-      })),
+      checkpoints: shared.checkpoints,
       projectiles,
       splats,
       sides: {
-        player: this.snapshotSide(this.player, forSideId, visibleEnemyIds),
-        enemy: this.snapshotSide(this.enemy, forSideId, visibleEnemyIds),
+        player: this.sideView(shared, "player", forSideId, visibleEnemyIds),
+        enemy: this.sideView(shared, "enemy", forSideId, visibleEnemyIds),
       },
     };
   }
 
-  snapshotSide(side, forSideId, visibleEnemyIds) {
-    const fogOn = this.fogEnabled !== false;
-    const troops = side.troops.filter((troop) => {
-      if (troop.hp <= 0) return false;
-      if (!forSideId || !fogOn || side.id === forSideId) return true;
-      return visibleEnemyIds && visibleEnemyIds.has(troop.id);
-    }).map((troop) => ({
-      id: troop.id,
-      lane: troop.lane,
-      sublane: troop.sublane,
-      type: troop.type,
-      variant: troop.variant,
-      alternate: Boolean(troop.alternate),
-      hp: troop.hp,
-      maxHp: troop.maxHp,
-      fatigue: troop.fatigue,
-      maxFatigue: troop.maxFatigue,
-      broken: troop.broken,
-      priorOrder: troop.priorOrder === undefined ? null : troop.priorOrder,
-      radius: troop.radius,
-      x: troop.x,
-      y: troop.y,
-      order: troop.order,
-      squared: Boolean(troop.squared),
-      flash: troop.flash,
-      progress: troop.progress,
-    }));
+  sideView(shared, sideId, forSideId, visibleEnemyIds) {
+    const fields = sideId === "player" ? shared.playerFields : shared.enemyFields;
+    const records = shared.living[sideId];
+    const fogOn = shared.fogEnabled;
+    const troops = [];
+    for (let i = 0; i < records.length; i += 1) {
+      const troop = records[i];
+      if (!forSideId || !fogOn || sideId === forSideId) {
+        troops.push(troop);
+        continue;
+      }
+      if (visibleEnemyIds && visibleEnemyIds.has(troop.id)) troops.push(troop);
+    }
     return {
-      id: side.id,
-      gold: side.gold,
-      income: side.income,
-      land: side.land,
-      landIncome: side.landIncome,
-      landInvestRate: side.landInvestRate,
-      capitalHP: side.capitalHP,
-      banks: side.banks,
-      speedMultiplier: side.speedMultiplier,
-      upgrades: { ...side.upgrades },
-      upgradeProgress: { ...side.upgradeProgress },
-      targeting: {
-        top: side.targeting.top,
-        bottom: side.targeting.bottom,
-      },
+      id: fields.id,
+      gold: fields.gold,
+      income: fields.income,
+      land: fields.land,
+      landIncome: fields.landIncome,
+      landInvestRate: fields.landInvestRate,
+      capitalHP: fields.capitalHP,
+      banks: fields.banks,
+      speedMultiplier: fields.speedMultiplier,
+      upgrades: fields.upgrades,
+      upgradeProgress: fields.upgradeProgress,
+      targeting: fields.targeting,
       troops,
     };
   }
+
 
 
   /**
@@ -5391,16 +5585,22 @@ export class GameSim {
   applySupport(side, dt) {
     const troops = side.troops;
     const keepBase = CONFIG.keepRestoreBase || 4;
+    const officers = [];
+    for (let j = 0; j < troops.length; j += 1) {
+      const source = troops[j];
+      if (source.hp <= 0 || source.type !== "officer") continue;
+      if (source.variant === "engineer") continue;
+      if (!(source.restoreRate > 0)) continue;
+      officers.push(source);
+    }
     for (let i = 0; i < troops.length; i += 1) {
       const unit = troops[i];
       if (unit.hp <= 0) continue;
       let bestOfficer = 0;
       let bestGuard = 0;
-      for (let j = 0; j < troops.length; j += 1) {
-        const source = troops[j];
-        if (source === unit || source.hp <= 0 || source.type !== "officer") continue;
-        if (source.variant === "engineer") continue;
-        if (!(source.restoreRate > 0)) continue;
+      for (let j = 0; j < officers.length; j += 1) {
+        const source = officers[j];
+        if (source === unit) continue;
         if (source.lane !== unit.lane) continue;
         const per = Path.stationPerPace(unit.lane);
         if (!(per > 0)) continue;
@@ -5435,6 +5635,8 @@ export class GameSim {
 
   /** Move, fight, capture, and drop dead troops for one side. */
   updateSide(side, opponents, enemySide, dt) {
+    this.foeTroops = opponents;
+    this.foeByLane = livingByLane(opponents);
     for (let i = 0; i < side.troops.length; i += 1) {
       const troop = side.troops[i];
       troop.reformHold = troop.hp > 0 && troop.reformShouldStop(side.troops);
@@ -5474,6 +5676,8 @@ export class GameSim {
       }
     }
     side.troops = side.troops.filter((troop) => troop.hp > 0);
+    this.foeTroops = null;
+    this.foeByLane = null;
   }
 
   /**

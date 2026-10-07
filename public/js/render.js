@@ -7,6 +7,7 @@ import { buyBgImage } from "./buyArt.js";
 import {
   applySnapshot,
   boardStateMethods,
+  presentTroopMotion,
   canvasFont,
   createBoardState,
   inspectReadout,
@@ -773,6 +774,7 @@ const boardMethods = {
     this._frameInspectReady = false;
     this._frameInspect = null;
     this.presentLaneCenters();
+    presentTroopMotion(this);
     if (this.refreshHoldSelect) this.refreshHoldSelect();
     const ctx = this.ctx;
     const dpr = this.devicePixelRatio();

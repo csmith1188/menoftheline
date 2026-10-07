@@ -15,6 +15,8 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run dev` | Nodemon on `server.js` |
 | `npm run debug` | Same server with `DEBUG_RANGES=1` overlays |
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
+| `npm run sim-bench` | One crowded match: step and snapshot times |
+| `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 
 Env template: `.env.template`. Local data/DB under `data/`. Auth/tickets integrate with Formbar (`server/formbar.js`).
 
@@ -23,9 +25,14 @@ Env template: `.env.template`. Local data/DB under `data/`. Auth/tickets integra
 ```
 server.js              HTTP + sessions + OAuth + Socket.IO + wiki/admin routes
 server/
-  room.js              GameRoom: seats, ticks, command queue → sim, emit "state"
+  room.js              GameRoom: seats, command queue → sim, emit "state"
+  ticker.js            One 50ms loop for every playing room; snapshots at STATE_MS
+  metrics.js           METRICS=1 counters (tick, snapshot, event loop, sqlite)
+  commandLimit.js      Per-socket command token bucket
+  settingsWrite.js     Debounced tooltip / BGM preference writes
   sim.js               GameSim + Unit classes + combat/economy rules (large)
-  matchmaking.js       Queues, ranked/listed/bot/training rooms
+  matchmaking.js       Queues, ranked/listed/bot/training rooms, userId indexes
+  owners.js            Optional WORKER_COUNT owner assignment (not sim sync)
   bot.js               Re-exports BotController
   bot/                 AI: controller, assess, tactics, formations, economy, commands
   training.js          Training-mode rule tweaks
@@ -60,6 +67,8 @@ views/                 EJS shells (landing, play, wiki, admin, scores, lobby-cre
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports server.js
+scripts/load/          socket-load.js (100-player harness), sim-bench.js
+deploy/nginx.conf.example  One Node process behind Nginx; static files cached
 goals.md               Backlog / roadmap (not docs)
 data/                  Runtime DB, news.json (do not commit secrets)
 ```

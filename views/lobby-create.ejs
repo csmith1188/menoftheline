@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <%- include("pwa-head") %>
   <title>Custom match · Men Of The Line</title>
-  <link rel="stylesheet" href="/css/landing.css">
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
 </head>
 <body>
   <div class="page">
@@ -90,7 +90,7 @@
   </div>
   <%- include("suggestion-modal", { nextPath: "/games/create" }) %>
   <script type="module">
-    import { bindMapPreview } from "/js/mapPreview.js";
+    import { bindMapPreview } from "/js/mapPreview.js?v=<%= assetVersion %>";
     bindMapPreview(
       document.getElementById("lobby-create-form"),
       document.getElementById("map-preview"),

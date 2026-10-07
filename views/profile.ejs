@@ -38,10 +38,16 @@
           <ul class="list">
             <li class="hint">Email: <%= account.email || "not linked" %><% if (account.email && !account.email_verified_at && authEmailEnabled) { %> (unverified)<% } %></li>
             <li class="hint">Formbar: <%= account.formbar_id ? ("#" + account.formbar_id) : "not linked" %></li>
+            <li class="hint">Discord: <%= account.discord_id ? ("#" + account.discord_id) : "not linked" %></li>
           </ul>
           <% if (canLinkFormbar) { %>
             <form method="post" action="/profile/link/formbar">
               <button type="submit" class="action">Link Formbar account</button>
+            </form>
+          <% } %>
+          <% if (canLinkDiscord) { %>
+            <form method="post" action="/profile/link/discord">
+              <button type="submit" class="action">Link Discord account</button>
             </form>
           <% } %>
           <% if (canAddLocal) { %>

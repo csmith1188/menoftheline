@@ -245,20 +245,73 @@ test("AUTH_EMAIL=0 signs up verified; flags gate routes", async (t) => {
 });
 
 test("LOCAL_ACCOUNTS=0 and FORMBAR_LOGIN=0 gate providers", async (t) => {
-  const noLocal = startServer({ LOCAL_ACCOUNTS: "0", FORMBAR_LOGIN: "1" });
+  const noLocal = startServer({ LOCAL_ACCOUNTS: "0", FORMBAR_LOGIN: "1", DISCORD_LOGIN: "0" });
   t.after(() => stopServer(noLocal));
   await noLocal.ready;
   const signup = await fetch(`${noLocal.base}/signup`);
   assert.equal(signup.status, 404);
   const login = await fetch(`${noLocal.base}/login`);
   assert.equal(login.status, 200);
-  assert.match(await login.text(), /Formbar/);
+  const loginHtml = await login.text();
+  assert.match(loginHtml, /Formbar/);
+  assert.doesNotMatch(loginHtml, /Discord/);
 
-  const noFormbar = startServer({ LOCAL_ACCOUNTS: "1", FORMBAR_LOGIN: "0", AUTH_EMAIL: "0" });
+  const noFormbar = startServer({
+    LOCAL_ACCOUNTS: "1",
+    FORMBAR_LOGIN: "0",
+    DISCORD_LOGIN: "0",
+    AUTH_EMAIL: "0",
+  });
   t.after(() => stopServer(noFormbar));
   await noFormbar.ready;
   const formbar = await fetch(`${noFormbar.base}/login?formbar=1`);
   assert.equal(formbar.status, 404);
+  const discordOff = await fetch(`${noFormbar.base}/login?discord=1`);
+  assert.equal(discordOff.status, 404);
+
+  const discordOnly = startServer({
+    LOCAL_ACCOUNTS: "0",
+    FORMBAR_LOGIN: "0",
+    DISCORD_LOGIN: "1",
+    DISCORD_OAUTH_MOCK: "1",
+    AUTH_EMAIL: "0",
+  });
+  t.after(() => stopServer(discordOnly));
+  await discordOnly.ready;
+  const discordLogin = await fetch(`${discordOnly.base}/login`);
+  assert.equal(discordLogin.status, 200);
+  assert.match(await discordLogin.text(), /Discord/);
+});
+
+test("Discord OAuth mock login sets account session and profile link", async (t) => {
+  const server = startServer({
+    AUTH_EMAIL: "0",
+    DISCORD_LOGIN: "1",
+    DISCORD_OAUTH_MOCK: "1",
+    DISCORD_MOCK_USER: JSON.stringify({
+      id: "778899001122",
+      username: "cord.user",
+      global_name: "Cord Ace",
+    }),
+  });
+  t.after(() => stopServer(server));
+  await server.ready;
+
+  const jar = cookieJar();
+  const start = await fetchSession(server.base, "/login?discord=1", jar);
+  assert.equal(start.status, 302);
+  const loc = start.headers.get("location");
+  assert.ok(loc && /\/login\/discord\/callback/.test(loc));
+  const cbPath = loc.startsWith("http") ? new URL(loc).pathname + new URL(loc).search : loc;
+  const done = await fetchSession(server.base, cbPath, jar);
+  assert.equal(done.status, 302);
+  const home = await fetchSession(server.base, "/", jar);
+  const homeHtml = await home.text();
+  assert.match(homeHtml, /Cord Ace/);
+  const profileMatch = homeHtml.match(/\/profile\/(\d+)/);
+  assert.ok(profileMatch);
+  const profile = await fetchSession(server.base, `/profile/${profileMatch[1]}`, jar);
+  assert.match(await profile.text(), /778899001122/);
 });
 
 test("Formbar login sets account session; Digipog buy needs formbar; paid play uses accountId", async (t) => {

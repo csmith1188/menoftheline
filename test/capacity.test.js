@@ -142,6 +142,30 @@ test("user id maps track rooms and queues and not both", async () => {
   clearInterval(mm.timer);
 });
 
+test("waiting counts are unranked and ranked queue lengths", async () => {
+  const mm = new Matchmaker({});
+  assert.deepEqual(mm.waitingCounts(), { unranked: 0, ranked: 0 });
+  const casual = fakeSocket("wait-casual");
+  await mm.startCasual(casual);
+  assert.deepEqual(mm.waitingCounts(), { unranked: 1, ranked: 0 });
+  const ranked = fakeSocket("wait-ranked");
+  ranked.data.user.accountId = null;
+  mm.enqueue(mm.ranked, {
+    userId: "wait-ranked",
+    name: "Ranked",
+    mode: "ranked",
+    socket: ranked,
+  });
+  const training = fakeSocket("wait-train");
+  await mm.startTrainCasual(training);
+  assert.deepEqual(mm.waitingCounts(), { unranked: 1, ranked: 1 });
+  await mm.removeQueued(mm.findQueued("wait-casual"));
+  await mm.removeQueued(mm.findQueued("wait-ranked"));
+  await mm.removeQueued(mm.findQueued("wait-train"));
+  mm.ticker.stop();
+  clearInterval(mm.timer);
+});
+
 test("fog-off public state is the same payload for both seats", () => {
   const mm = new Matchmaker({});
   const room = new GameRoom(mm, {}, "casual");

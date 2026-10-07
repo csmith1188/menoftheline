@@ -32,6 +32,7 @@ import {
   getWikiPageBySlug,
   getWikiRevision,
   initDb,
+  linkDiscordToAccount,
   linkFormbarToAccount,
   listOpenWikiRevisions,
   listSuggestions,
@@ -61,6 +62,7 @@ import {
   tooltipsEnabled,
   undoWikiRevision,
   upsertAccount,
+  upsertDiscordAccount,
   wikiRewardAmount,
   wikiSlug,
   WIKI_BODY_MAX,
@@ -69,11 +71,13 @@ import {
 import {
   anyLoginEnabled,
   authEmailEnabled,
+  discordLoginEnabled,
   formbarLoginEnabled,
   hashPassword,
   hashToken,
   isValidEmail,
   localAccountsEnabled,
+  matchChatEnabled,
   newAuthToken,
   normalizeEmail,
   passwordError,
@@ -90,6 +94,13 @@ import { ensureMetrics, report as metricsReport, startMetrics } from "./server/m
 import { workerCount } from "./server/owners.js";
 import { scheduleSettingWrite } from "./server/settingsWrite.js";
 import { connectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
+import {
+  discordAuthorizeUrl,
+  discordConfigured,
+  discordDisplayName,
+  fetchDiscordUserFromCode,
+  newDiscordOAuthState,
+} from "./server/discord.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
 import { renderWikiBody } from "./server/wiki-render.js";
@@ -240,8 +251,10 @@ app.use((req, res, next) => {
   res.locals.isAdmin = isAdmin(req.session);
   res.locals.localAccountsEnabled = localAccountsEnabled();
   res.locals.formbarLoginEnabled = formbarLoginEnabled();
+  res.locals.discordLoginEnabled = discordLoginEnabled();
   res.locals.authEmailEnabled = authEmailEnabled();
   res.locals.anyLoginEnabled = anyLoginEnabled();
+  res.locals.matchChatEnabled = matchChatEnabled();
   next();
 });
 const staticHour = { maxAge: "1h", etag: true };
@@ -308,6 +321,7 @@ function accountPublic(account) {
   if (!account) return null;
   return {
     formbarId: account.formbar_id,
+    discordId: account.discord_id || null,
     name: account.name,
     mmr: account.mmr,
     tickets: account.tickets,
@@ -538,6 +552,7 @@ async function gamesData(req) {
     viewer,
     rejoin,
     canTicket: Boolean(viewer && viewer.tickets > viewer.held && !rejoin),
+    waiting: matchmaker.waitingCounts(),
     lobbies: matchmaker.listLobbies(),
     packSize: pack.size,
     packCost: pack.cost,
@@ -610,6 +625,120 @@ async function completeFormbarLogin(req, res, token) {
   req.session.save(() => res.redirect("/"));
 }
 
+function discordCallbackUrl(req) {
+  return `${publicBase(req)}/login/discord/callback`;
+}
+
+function discordApiCallbackUrl(req) {
+  return `${publicBase(req)}/api/v1/login/discord/callback`;
+}
+
+function nameFromDiscordUser(user) {
+  const raw = discordDisplayName(user);
+  const nameCheck = validateDisplayName(raw);
+  if (nameCheck.ok) return nameCheck.name;
+  const tail = String(user && user.id || "").slice(-6) || "user";
+  return `Player ${tail}`;
+}
+
+async function beginDiscordOAuth(req, res, { callbackUrl, nextPath = "/" } = {}) {
+  if (!discordLoginEnabled()) {
+    res.status(404).send("Discord login is disabled.");
+    return;
+  }
+  if (!discordConfigured() && process.env.DISCORD_OAUTH_MOCK !== "1") {
+    res.status(503).send("Discord login is not configured.");
+    return;
+  }
+  const state = newDiscordOAuthState();
+  req.session.discordOAuthState = state;
+  req.session.discordOAuthNext = nextPath;
+  const redirectUri = callbackUrl || discordCallbackUrl(req);
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).send("Could not start Discord login.");
+      return;
+    }
+    if (process.env.DISCORD_OAUTH_MOCK === "1") {
+      const mockUser = process.env.DISCORD_MOCK_USER
+        || JSON.stringify({ id: "999001", username: "MockDiscord", global_name: "Mock Discord" });
+      const code = Buffer.from(mockUser).toString("base64url");
+      const dest = new URL(redirectUri, publicBase(req));
+      dest.searchParams.set("code", code);
+      dest.searchParams.set("state", state);
+      res.redirect(dest.toString());
+      return;
+    }
+    res.redirect(discordAuthorizeUrl(redirectUri, state));
+  });
+}
+
+async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "/" } = {}) {
+  if (!discordLoginEnabled()) {
+    res.status(404).send("Discord login is disabled.");
+    return;
+  }
+  const state = String(req.query.state || "");
+  const expected = String(req.session.discordOAuthState || "");
+  delete req.session.discordOAuthState;
+  const nextPath = req.session.discordOAuthNext || successRedirect;
+  delete req.session.discordOAuthNext;
+  if (!state || !expected || state !== expected) {
+    req.session.notice = "Discord login expired. Try again.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  if (req.query.error) {
+    req.session.notice = "Discord login was cancelled.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  const code = String(req.query.code || "");
+  if (!code) {
+    res.status(400).send("Missing Discord authorization code.");
+    return;
+  }
+  let user;
+  try {
+    user = await fetchDiscordUserFromCode(code, redirectUri || discordCallbackUrl(req));
+  } catch {
+    req.session.notice = "Discord login failed. Try again.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
+  const name = nameFromDiscordUser(user);
+
+  const linkId = Number(req.session.linkAccountId);
+  if (Number.isInteger(linkId) && linkId > 0) {
+    req.session.linkAccountId = null;
+    const result = await linkDiscordToAccount(linkId, user.id);
+    if (!result.ok) {
+      req.session.notice = result.error === "already_linked"
+        ? "This account already has Discord linked."
+        : result.error === "conflict"
+          ? "That Discord account cannot be linked."
+          : "Could not link Discord account.";
+      req.session.save(() => res.redirect(`/profile/${linkId}`));
+      return;
+    }
+    await upsertDiscordAccount(user.id, name);
+    const linked = await getAccount(result.account.id);
+    setAccountSession(req.session, linked || result.account);
+    req.session.notice = "Discord account linked.";
+    req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
+    return;
+  }
+
+  const account = await upsertDiscordAccount(user.id, name);
+  if (!account) {
+    res.status(500).send("Could not create account.");
+    return;
+  }
+  setAccountSession(req.session, account);
+  const dest = typeof nextPath === "string" && nextPath.startsWith("/") ? nextPath : "/";
+  req.session.save(() => res.redirect(dest === "/login" ? "/" : dest));
+}
+
 app.get("/login", async (req, res, next) => {
   try {
     if (req.query.token) {
@@ -623,6 +752,10 @@ app.get("/login", async (req, res, next) => {
       }
       const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      return;
+    }
+    if (req.query.discord === "1") {
+      await beginDiscordOAuth(req, res, { callbackUrl: discordCallbackUrl(req) });
       return;
     }
     if (!anyLoginEnabled()) {
@@ -648,6 +781,17 @@ app.get("/login", async (req, res, next) => {
       email: "",
       disabled: false,
     }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/login/discord/callback", async (req, res, next) => {
+  try {
+    await completeDiscordLogin(req, res, {
+      redirectUri: discordCallbackUrl(req),
+      successRedirect: "/",
+    });
   } catch (err) {
     next(err);
   }
@@ -1037,6 +1181,11 @@ app.get("/profile/:id", async (req, res, next) => {
         && !account.formbar_id
         && formbarLoginEnabled(),
       ),
+      canLinkDiscord: Boolean(
+        account && viewer && account.id === viewer.id
+        && !account.discord_id
+        && discordLoginEnabled(),
+      ),
       canAddLocal: Boolean(
         account && viewer && account.id === viewer.id
         && !account.email
@@ -1075,6 +1224,32 @@ app.post("/profile/link/formbar", async (req, res, next) => {
     const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
     req.session.save(() => {
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/link/discord", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
+      res.redirect("/login");
+      return;
+    }
+    if (!discordLoginEnabled()) {
+      res.status(404).send("Discord login is disabled.");
+      return;
+    }
+    if (viewer.discord_id) {
+      req.session.notice = "Discord is already linked.";
+      req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+      return;
+    }
+    req.session.linkAccountId = viewer.id;
+    await beginDiscordOAuth(req, res, {
+      callbackUrl: discordCallbackUrl(req),
+      nextPath: `/profile/${viewer.id}`,
     });
   } catch (err) {
     next(err);
@@ -1722,6 +1897,7 @@ app.get("/play", async (req, res, next) => {
       || (room && room.view3d);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: process.env.DEBUG_RANGES === "1",
+      matchChatEnabled: matchChatEnabled(),
       tooltipsDefault: player.tooltips !== false,
       bgmVolumeDefault: Number.isFinite(player.bgmVolume) ? player.bgmVolume : 50,
     });
@@ -1778,6 +1954,10 @@ app.post("/api/v1/session", async (req, res, next) => {
  */
 app.get("/api/v1/login", (req, res, next) => {
   try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).json({ error: "formbar_disabled" });
+      return;
+    }
     const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
     req.session.apiReturn = ret;
     req.session.save((err) => {
@@ -1796,6 +1976,10 @@ app.get("/api/v1/login", (req, res, next) => {
 /** Formbar redirect target for native login. */
 app.get("/api/v1/login/callback", async (req, res, next) => {
   try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).send("Formbar login is disabled.");
+      return;
+    }
     const account = await applyFormbarToken(req.session, req.query && req.query.token);
     if (!account) {
       res.status(400).send("Invalid Formbar token.");
@@ -1816,6 +2000,10 @@ app.get("/api/v1/login/callback", async (req, res, next) => {
  */
 app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
   try {
+    if (!formbarLoginEnabled()) {
+      res.status(404).json({ error: "formbar_disabled" });
+      return;
+    }
     const account = await applyFormbarToken(req.session, req.body && req.body.token);
     if (!account) {
       res.status(400).json({ error: "invalid_token" });
@@ -1828,6 +2016,65 @@ app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
       player: playerPublic(player),
       account: accountPublic(account),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Start Discord OAuth for the native app (Custom Tabs).
+ * Callback deep-links with ?token=sessionId like Formbar.
+ */
+app.get("/api/v1/login/discord", async (req, res, next) => {
+  try {
+    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    req.session.apiReturn = ret;
+    await beginDiscordOAuth(req, res, { callbackUrl: discordApiCallbackUrl(req) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/login/discord/callback", async (req, res, next) => {
+  try {
+    if (!discordLoginEnabled()) {
+      res.status(404).send("Discord login is disabled.");
+      return;
+    }
+    const state = String(req.query.state || "");
+    const expected = String(req.session.discordOAuthState || "");
+    delete req.session.discordOAuthState;
+    delete req.session.discordOAuthNext;
+    if (!state || !expected || state !== expected) {
+      res.status(400).send("Discord login expired.");
+      return;
+    }
+    if (req.query.error) {
+      res.status(400).send("Discord login was cancelled.");
+      return;
+    }
+    const code = String(req.query.code || "");
+    if (!code) {
+      res.status(400).send("Missing Discord authorization code.");
+      return;
+    }
+    let user;
+    try {
+      user = await fetchDiscordUserFromCode(code, discordApiCallbackUrl(req));
+    } catch {
+      res.status(400).send("Discord login failed.");
+      return;
+    }
+    const account = await upsertDiscordAccount(user.id, nameFromDiscordUser(user));
+    if (!account) {
+      res.status(500).send("Could not create account.");
+      return;
+    }
+    setAccountSession(req.session, account);
+    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    delete req.session.apiReturn;
+    await saveSession(req.session);
+    res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
   } catch (err) {
     next(err);
   }
@@ -2011,6 +2258,10 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   matchmaker.connect(socket);
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
+  socket.on("chat", (payload) => matchmaker.chat(socket, payload));
+  socket.on("pause", () => matchmaker.pause(socket));
+  socket.on("pauseSeen", () => matchmaker.pauseSeen(socket));
+  socket.on("settingsOpen", (open) => matchmaker.settingsOpen(socket, open));
   socket.on("botSettings", (payload) => matchmaker.botSettings(socket, payload));
   socket.on("debugPlay", (payload) => matchmaker.debugPlay(socket, payload));
   socket.on("tooltips", (on) => {

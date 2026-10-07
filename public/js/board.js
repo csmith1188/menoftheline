@@ -1768,10 +1768,32 @@ export function applyCountdownTiming(board, payload) {
   board.countdownEnds = payload.countdownEnds || null;
   if (payload.status === "countdown" && Number.isFinite(payload.countdownLeft)) {
     board.countdownLocalEnd = performance.now() + Math.max(0, payload.countdownLeft);
-    return;
-  }
-  if (payload.status !== "countdown") {
+  } else if (payload.status !== "countdown") {
     board.countdownLocalEnd = null;
+  }
+  applyUnpauseTiming(board, payload);
+}
+
+/** Bind mutual-unpause / reconnect-wait countdown the same way as match-start. */
+export function applyUnpauseTiming(board, payload) {
+  board.unpauseEnds = payload.unpauseEnds || null;
+  board.paused = Boolean(payload.paused);
+  board.menuPaused = Boolean(payload.menuPaused);
+  board.canPause = Boolean(payload.canPause);
+  board.pauseWant = Boolean(payload.pauseWant);
+  board.unpauseWant = Boolean(payload.unpauseWant);
+  board.pauseAlert = Boolean(payload.pauseAlert);
+  board.reconnectWaiting = Boolean(payload.reconnectWaiting);
+  board.reconnectWaitEnds = payload.reconnectWaitEnds || null;
+  if (Number.isFinite(payload.unpauseLeft) && payload.unpauseEnds) {
+    board.unpauseLocalEnd = performance.now() + Math.max(0, payload.unpauseLeft);
+  } else if (!payload.unpauseEnds) {
+    board.unpauseLocalEnd = null;
+  }
+  if (Number.isFinite(payload.reconnectWaitLeft) && payload.reconnectWaitEnds) {
+    board.reconnectLocalEnd = performance.now() + Math.max(0, payload.reconnectWaitLeft);
+  } else if (!payload.reconnectWaitEnds) {
+    board.reconnectLocalEnd = null;
   }
 }
 
@@ -1783,6 +1805,30 @@ export function countdownSecondsLeft(board) {
   }
   if (Number.isFinite(board.countdownEnds)) {
     return Math.max(0, Math.ceil((board.countdownEnds - Date.now()) / 1000));
+  }
+  return 0;
+}
+
+/** Whole seconds left until a mutual pause resumes. */
+export function unpauseSecondsLeft(board) {
+  if (!board.unpauseEnds && !Number.isFinite(board.unpauseLocalEnd)) return 0;
+  if (Number.isFinite(board.unpauseLocalEnd)) {
+    return Math.max(0, Math.ceil((board.unpauseLocalEnd - performance.now()) / 1000));
+  }
+  if (Number.isFinite(board.unpauseEnds)) {
+    return Math.max(0, Math.ceil((board.unpauseEnds - Date.now()) / 1000));
+  }
+  return 0;
+}
+
+/** Whole seconds left waiting for a disconnected opponent. */
+export function reconnectSecondsLeft(board) {
+  if (!board.reconnectWaitEnds && !Number.isFinite(board.reconnectLocalEnd)) return 0;
+  if (Number.isFinite(board.reconnectLocalEnd)) {
+    return Math.max(0, Math.ceil((board.reconnectLocalEnd - performance.now()) / 1000));
+  }
+  if (Number.isFinite(board.reconnectWaitEnds)) {
+    return Math.max(0, Math.ceil((board.reconnectWaitEnds - Date.now()) / 1000));
   }
   return 0;
 }
@@ -1966,6 +2012,17 @@ export function createBoardState(canvas) {
     status: "waiting",
     countdownEnds: null,
     countdownLocalEnd: null,
+    paused: false,
+    menuPaused: false,
+    canPause: false,
+    pauseWant: false,
+    unpauseWant: false,
+    pauseAlert: false,
+    unpauseEnds: null,
+    unpauseLocalEnd: null,
+    reconnectWaiting: false,
+    reconnectWaitEnds: null,
+    reconnectLocalEnd: null,
     cssScale: 1,
     southpaw: readSouthpaw(),
     terrainLabels: readTerrainLabels(),

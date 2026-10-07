@@ -214,7 +214,7 @@ export async function initDb() {
   await seedWikiHome();
 }
 
-const ACCOUNT_SELECT = `id, formbar_id, email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume, created_at, updated_at`;
+const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume, created_at, updated_at`;
 
 async function ensureAccountsTable() {
   const existing = await get(
@@ -224,6 +224,7 @@ async function ensureAccountsTable() {
     await run(`CREATE TABLE accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       formbar_id INTEGER UNIQUE,
+      discord_id TEXT UNIQUE,
       email TEXT UNIQUE,
       password_hash TEXT,
       email_verified_at INTEGER,
@@ -246,6 +247,7 @@ async function ensureAccountsTable() {
     await run(`CREATE TABLE accounts_new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       formbar_id INTEGER UNIQUE,
+      discord_id TEXT UNIQUE,
       email TEXT UNIQUE,
       password_hash TEXT,
       email_verified_at INTEGER,
@@ -264,10 +266,10 @@ async function ensureAccountsTable() {
     const hasBgm = accountCols.some((col) => col.name === "bgm_volume");
     await run(
       `INSERT INTO accounts_new (
-        formbar_id, email, password_hash, email_verified_at, name, mmr, tickets, held,
+        formbar_id, discord_id, email, password_hash, email_verified_at, name, mmr, tickets, held,
         wins, losses, tooltips, bgm_volume, created_at, updated_at
       )
-      SELECT formbar_id, NULL, NULL, NULL, name, mmr, tickets, held, wins, losses,
+      SELECT formbar_id, NULL, NULL, NULL, NULL, name, mmr, tickets, held, wins, losses,
         ${hasTooltips ? "tooltips" : "1"},
         ${hasBgm ? "bgm_volume" : "50"},
         created_at, updated_at
@@ -277,6 +279,7 @@ async function ensureAccountsTable() {
     await run("ALTER TABLE accounts_new RENAME TO accounts");
     await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_email ON accounts (email)");
     await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_formbar ON accounts (formbar_id)");
+    await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord ON accounts (discord_id)");
     return;
   }
   if (!accountCols.some((col) => col.name === "email")) {
@@ -294,8 +297,12 @@ async function ensureAccountsTable() {
   if (!accountCols.some((col) => col.name === "bgm_volume")) {
     await run("ALTER TABLE accounts ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 50");
   }
+  if (!accountCols.some((col) => col.name === "discord_id")) {
+    await run("ALTER TABLE accounts ADD COLUMN discord_id TEXT");
+  }
   await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_email ON accounts (email)");
   await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_formbar ON accounts (formbar_id)");
+  await run("CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord ON accounts (discord_id)");
 }
 
 function pickName() {
@@ -388,6 +395,16 @@ export async function getAccountByEmail(email) {
   return row || null;
 }
 
+export async function getAccountByDiscord(discordId) {
+  const key = String(discordId || "").trim();
+  if (!key || key.length > 32) return null;
+  const row = await get(
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE discord_id = ?`,
+    [key],
+  );
+  return row || null;
+}
+
 /** Resolve profile URL id: internal account id, else legacy Formbar id. */
 export async function findAccountForProfile(rawId) {
   const id = Number(rawId);
@@ -415,6 +432,28 @@ export async function upsertAccount(formbarId, name) {
       formbar_id, name, mmr, tickets, held, wins, losses, created_at, updated_at
     ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?)`,
     [fid, name, startingMmr(), now, now],
+  );
+  return getAccount(result.lastID);
+}
+
+export async function upsertDiscordAccount(discordId, name) {
+  const did = String(discordId || "").trim();
+  if (!did || did.length > 32) return null;
+  const existing = await getAccountByDiscord(did);
+  const now = Date.now();
+  if (existing) {
+    await run(
+      "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
+      [name, now, existing.id],
+    );
+    existing.name = name;
+    return existing;
+  }
+  const result = await run(
+    `INSERT INTO accounts (
+      discord_id, name, mmr, tickets, held, wins, losses, created_at, updated_at
+    ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+    [did, name, startingMmr(), now, now],
   );
   return getAccount(result.lastID);
 }
@@ -497,6 +536,35 @@ export async function linkFormbarToAccount(accountId, formbarId) {
   return { ok: true, account: await getAccount(id) };
 }
 
+export async function linkDiscordToAccount(accountId, discordId) {
+  const id = Number(accountId);
+  const did = String(discordId || "").trim();
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+  if (!did || did.length > 32) return { ok: false, error: "bad_discord" };
+  const target = await getAccount(id);
+  if (!target) return { ok: false, error: "missing" };
+  if (target.discord_id && String(target.discord_id) === did) {
+    return { ok: true, account: target };
+  }
+  if (target.discord_id) return { ok: false, error: "already_linked" };
+  const other = await getAccountByDiscord(did);
+  if (other && other.id !== id) {
+    return mergeAccounts(id, other.id, { discordId: did });
+  }
+  try {
+    await run(
+      "UPDATE accounts SET discord_id = ?, updated_at = ? WHERE id = ?",
+      [did, Date.now(), id],
+    );
+  } catch (err) {
+    if (err && err.code === "SQLITE_CONSTRAINT") {
+      return { ok: false, error: "conflict" };
+    }
+    throw err;
+  }
+  return { ok: true, account: await getAccount(id) };
+}
+
 /**
  * Merge donor into survivor (logged-in account). Sums tickets/wins/losses;
  * MMR is the max; keeps survivor name.
@@ -510,6 +578,9 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
   const formbarId = options.formbarId != null
     ? Number(options.formbarId)
     : (survivor.formbar_id || donor.formbar_id || null);
+  const discordId = options.discordId != null
+    ? String(options.discordId).trim()
+    : (survivor.discord_id || donor.discord_id || null);
   const email = options.email != null
     ? options.email
     : (survivor.email || donor.email || null);
@@ -521,6 +592,12 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
 
   if (formbarId) {
     const clash = await getAccountByFormbar(formbarId);
+    if (clash && clash.id !== survivor.id && clash.id !== donor.id) {
+      return { ok: false, error: "conflict" };
+    }
+  }
+  if (discordId) {
+    const clash = await getAccountByDiscord(discordId);
     if (clash && clash.id !== survivor.id && clash.id !== donor.id) {
       return { ok: false, error: "conflict" };
     }
@@ -543,16 +620,17 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
     await execRun("BEGIN IMMEDIATE");
     try {
       await execRun(
-        "UPDATE accounts SET formbar_id = NULL, email = NULL, updated_at = ? WHERE id = ?",
+        "UPDATE accounts SET formbar_id = NULL, discord_id = NULL, email = NULL, updated_at = ? WHERE id = ?",
         [now, donor.id],
       );
       await execRun(
         `UPDATE accounts SET
-          formbar_id = ?, email = ?, password_hash = ?, email_verified_at = ?,
+          formbar_id = ?, discord_id = ?, email = ?, password_hash = ?, email_verified_at = ?,
           tickets = ?, held = ?, wins = ?, losses = ?, mmr = ?, updated_at = ?
          WHERE id = ?`,
         [
           formbarId,
+          discordId,
           email,
           passwordHash,
           verifiedAt,

@@ -142,6 +142,30 @@ export function validateDisplayName(raw) {
   return { ok: true, name };
 }
 
+/**
+ * Build "Name", then "Name 2", "Name 3", … truncated to 32 chars.
+ * @returns {string | null} null if the candidate fails validation
+ */
+export function buildDiscriminatedDisplayName(base, index = 1) {
+  const n = Number(index);
+  if (!Number.isInteger(n) || n < 1) return null;
+  const rootCheck = validateDisplayName(base);
+  const root = rootCheck.ok
+    ? rootCheck.name
+    : sanitizeDisplayName(base) || "Player";
+  if (n === 1) {
+    const check = validateDisplayName(root);
+    return check.ok ? check.name : null;
+  }
+  const suffix = ` ${n}`;
+  const maxRoot = Math.max(1, 32 - suffix.length);
+  let trimmed = root.slice(0, maxRoot).trimEnd();
+  if (trimmed.length < 1) trimmed = "P";
+  const candidate = `${trimmed}${suffix}`;
+  const check = validateDisplayName(candidate);
+  return check.ok ? check.name : null;
+}
+
 export function isValidPassword(raw) {
   const text = String(raw || "");
   if (text.length < 8 || text.length > 200) return false;

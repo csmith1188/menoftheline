@@ -97,7 +97,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Match pause / unpause | `server/room.js` (`pause`, `settingsOpen`, `simFrozen`) | Human mutual pause + `UNPAUSE_MS` countdown; bot menu freeze via `settingsOpen`; clients `main.js` / `main3d.js`, settings Pause button, chat pause-alert CSS |
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `server.js` routes |
-| Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `server.js` routes, `views/login.ejs` / signup / forgot / reset / profile |
+| Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `server.js` routes, `views/login.ejs` / signup / forgot / reset / profile. Profile link merges when the identity is already taken (union providers; refuse same-provider conflicts). New accounts take the provider/local display name; collisions get `Name 2`…; owners can rename on profile (3/hour). |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `server.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `server.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |

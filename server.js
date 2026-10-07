@@ -47,6 +47,8 @@ import {
   saveWikiPage,
   bgmVolumePercent,
   clampBgmVolumePercent,
+  isDisplayNameTaken,
+  setAccountDisplayName,
   setAccountPassword,
   setEmailVerified,
   setLocalCredentials,
@@ -346,6 +348,26 @@ function setAccountSession(sess, account) {
   sess.formbarName = account.name;
 }
 
+/** User-facing notice for profile link / merge failures. */
+function linkMergeNotice(error, provider) {
+  if (error === "already_linked") {
+    return `This account already has ${provider} linked.`;
+  }
+  if (error === "conflict_formbar") {
+    return "That account already has a different Formbar login linked. Use a different account.";
+  }
+  if (error === "conflict_discord") {
+    return "That account already has a different Discord login linked. Use a different account.";
+  }
+  if (error === "conflict_email") {
+    return "That account already has a different email linked. Use a different account.";
+  }
+  if (error === "conflict") {
+    return `That ${provider} account cannot be linked.`;
+  }
+  return `Could not link ${provider} account.`;
+}
+
 function clientIp(req) {
   const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
   return fwd || req.ip || "unknown";
@@ -604,18 +626,16 @@ async function completeFormbarLogin(req, res, token) {
     req.session.linkAccountId = null;
     const result = await linkFormbarToAccount(linkId, userId);
     if (!result.ok) {
-      req.session.notice = result.error === "already_linked"
-        ? "This account already has Formbar linked."
-        : result.error === "conflict"
-          ? "That Formbar account cannot be linked."
-          : "Could not link Formbar account.";
+      req.session.notice = linkMergeNotice(result.error, "Formbar");
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
     }
     await upsertAccount(userId, name);
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
-    req.session.notice = "Formbar account linked.";
+    req.session.notice = result.merged
+      ? "Accounts merged. Formbar is linked."
+      : "Formbar account linked.";
     req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
     return;
   }
@@ -713,18 +733,16 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     req.session.linkAccountId = null;
     const result = await linkDiscordToAccount(linkId, user.id);
     if (!result.ok) {
-      req.session.notice = result.error === "already_linked"
-        ? "This account already has Discord linked."
-        : result.error === "conflict"
-          ? "That Discord account cannot be linked."
-          : "Could not link Discord account.";
+      req.session.notice = linkMergeNotice(result.error, "Discord");
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
     }
     await upsertDiscordAccount(user.id, name);
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
-    req.session.notice = "Discord account linked.";
+    req.session.notice = result.merged
+      ? "Accounts merged. Discord is linked."
+      : "Discord account linked.";
     req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
     return;
   }
@@ -915,6 +933,9 @@ app.post("/signup", async (req, res, next) => {
       }
       throw err;
     }
+    const nameNote = account.name !== name
+      ? ` Display name set to "${account.name}" because "${name}" was taken.`
+      : "";
     if (needVerify) {
       try {
         await issueVerifyEmail(account);
@@ -923,11 +944,12 @@ app.post("/signup", async (req, res, next) => {
         renderFail("Could not send verification email. Try again later.");
         return;
       }
-      req.session.notice = "Check your email to verify your account.";
+      req.session.notice = `Check your email to verify your account.${nameNote}`;
       req.session.save(() => res.redirect("/login"));
       return;
     }
     setAccountSession(req.session, account);
+    if (nameNote) req.session.notice = nameNote.trim();
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1204,6 +1226,51 @@ app.get("/profile/:id", async (req, res, next) => {
   }
 });
 
+app.post("/profile/name", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer) {
+      res.redirect("/login");
+      return;
+    }
+    const back = `/profile/${viewer.id}`;
+    const nameCheck = validateDisplayName(req.body && req.body.name);
+    if (!nameCheck.ok) {
+      req.session.notice = nameCheck.error;
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (viewer.name === nameCheck.name) {
+      req.session.notice = "Display name unchanged.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (await isDisplayNameTaken(nameCheck.name, viewer.id)) {
+      req.session.notice = "That display name is already taken.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    if (!rateLimit(`displayname:${viewer.id}`, { max: 3, windowMs: 60 * 60 * 1000 })) {
+      req.session.notice = "Display name changed too often. Try again in an hour.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    const result = await setAccountDisplayName(viewer.id, nameCheck.name);
+    if (!result.ok) {
+      req.session.notice = result.error === "taken"
+        ? "That display name is already taken."
+        : result.message || "Could not update display name.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
+    setAccountSession(req.session, result.account);
+    req.session.notice = "Display name updated.";
+    req.session.save(() => res.redirect(`/profile/${result.account.id}`));
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post("/profile/link/formbar", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
@@ -1302,7 +1369,7 @@ app.post("/profile/link/local", async (req, res, next) => {
         verifiedAt: other.email_verified_at || (authEmailEnabled() ? null : Date.now()),
       });
       if (!merged.ok) {
-        req.session.notice = "Could not link that email account.";
+        req.session.notice = linkMergeNotice(merged.error, "email");
         req.session.save(() => res.redirect(back));
         return;
       }

@@ -14,6 +14,7 @@ const {
   RECONNECT_WAIT_MS,
 } = await import("../server/room.js");
 const { Matchmaker } = await import("../server/matchmaking.js");
+const { CONFIG } = await import("../shared/config.js");
 
 function fakeSocket(id, name = id, accountId = null) {
   const events = [];
@@ -271,8 +272,8 @@ test("reconnect wait timeout concedes for the disconnected player", async () => 
 });
 
 test("reconnect spam force-concedes the spammer", () => {
-  const { mm, room, a, b } = loggedInPair();
-  const max = 3;
+  const { mm, room, b } = loggedInPair();
+  const max = CONFIG.reconnectSpamMax;
   for (let i = 0; i < max; i += 1) {
     const next = fakeSocket(`a-${i}`, "Alice", 1);
     room.seatHuman("a", next);

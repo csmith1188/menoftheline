@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Games · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Games</h2>
+      <p class="admin-muted">Queues — casual <%= queues.casual %>, ranked <%= queues.ranked %>, training <%= queues.training %> · rooms <%= queues.rooms %></p>
+      <h3>Live</h3>
+      <% if (!live.length) { %><p class="hint">No active games.</p><% } else { %>
+        <table class="admin-table">
+          <thead><tr><th>ID</th><th>Mode</th><th>Status</th><th>Duration</th><th>Players</th></tr></thead>
+          <tbody>
+            <% live.forEach(function (g) { %>
+              <tr>
+                <td class="admin-mono"><a href="/admin/games/<%= g.id %>"><%= String(g.id).slice(0, 8) %></a></td>
+                <td><%= g.mode %></td>
+                <td><%= g.status %></td>
+                <td><%= g.durationMs != null ? Math.round(g.durationMs/1000) + "s" : "—" %></td>
+                <td>
+                  <% (g.players || []).forEach(function (p, i) { %>
+                    <% if (i) { %> · <% } %>
+                    <% if (p.accountId) { %><a href="/admin/users/<%= p.accountId %>"><%= p.name %></a><% } else { %><%= p.name || "—" %><% } %>
+                    <% if (p.connected === false) { %> (dc)<% } %>
+                  <% }) %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+      <h3>Recent finished</h3>
+      <table class="admin-table">
+        <thead><tr><th>When</th><th>Mode</th><th>Players</th><th>Winner</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <% recent.forEach(function (g) { %>
+            <tr>
+              <td><a href="/admin/games/<%= g.id %>"><%= new Date(g.ended_at).toLocaleString() %></a></td>
+              <td><%= g.mode %></td>
+              <td>
+                <% if (g.account_a) { %><a href="/admin/users/<%= g.account_a %>"><%= g.name_a %></a><% } else { %><%= g.name_a %><% } %>
+                vs
+                <% if (g.account_b) { %><a href="/admin/users/<%= g.account_b %>"><%= g.name_b %></a><% } else { %><%= g.name_b %><% } %>
+              </td>
+              <td><%= g.winner_side || "—" %></td>
+              <td><%= g.outcome || g.win_reason || "—" %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

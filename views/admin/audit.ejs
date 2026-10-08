@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Audit · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Audit trail</h2>
+      <p class="admin-muted"><%= audit.total %> rows · page <%= audit.page %></p>
+      <table class="admin-table">
+        <thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>Reason</th></tr></thead>
+        <tbody>
+          <% audit.rows.forEach(function (row) { %>
+            <tr>
+              <td><%= new Date(row.created_at).toLocaleString() %></td>
+              <td><% if (row.admin_account_id) { %><a href="/admin/users/<%= row.admin_account_id %>"><%= row.admin_account_id %></a><% } else { %>—<% } %></td>
+              <td><%= row.action %></td>
+              <td><%= row.target_type || "" %> <%= row.target_id || "" %></td>
+              <td><%= row.reason || "—" %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <div class="admin-actions">
+        <% if (audit.page > 1) { %><a class="action" href="/admin/audit?page=<%= audit.page - 1 %>">Prev</a><% } %>
+        <% if (audit.page * audit.pageSize < audit.total) { %><a class="action" href="/admin/audit?page=<%= audit.page + 1 %>">Next</a><% } %>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

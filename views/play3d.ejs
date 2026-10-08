@@ -27,7 +27,9 @@
         <pre id="cam-debug-values"></pre>
       </div>
       <div id="lobby" class="banner">
+        <img id="lobby-logo" class="lobby-logo" src="/img/logoA.png" alt="Men Of The Line" width="480" height="240">
         <p id="lobby-you" class="sub"></p>
+        <p id="lobby-opp" class="sub lobby-opp hidden"></p>
         <p id="lobby-text">Connecting...</p>
         <button type="button" id="lobby-leave" class="action">Leave</button>
       </div>
@@ -63,30 +65,28 @@
           </section>
           <section class="menu-block">
             <button type="button" id="howto" class="action" aria-controls="rules" aria-expanded="false">How to play</button>
-            <button type="button" id="southpaw" class="action southpaw" aria-pressed="false" title="Blue on the right">
+            <button type="button" id="southpaw" class="action pref-toggle" aria-pressed="false" title="Blue on the right">
               Southpaw
               <span class="mark" aria-hidden="true"></span>
             </button>
-            <button type="button" id="tooltips" class="action" aria-pressed="true" title="Show gesture hints while pressing">
+            <button type="button" id="tooltips" class="action pref-toggle" aria-pressed="true" title="Show gesture hints while pressing">
               Tooltips
+              <span class="mark" aria-hidden="true"></span>
             </button>
-            <button type="button" id="terrain-labels" class="action" aria-pressed="false" title="Show terrain emoji labels on the map">
-              Terrain labels
+            <button type="button" id="terrain-labels" class="action pref-toggle" aria-pressed="true" title="Show terrain emoji labels on the map">
+              Terrain
+              <span class="mark" aria-hidden="true"></span>
             </button>
-            <div class="sound">
-              <div class="sound-head">
-                <span>Sound</span>
-                <button type="button" id="sound-mute" class="sound-mute" aria-pressed="false" title="Mute sound">Mute</button>
-              </div>
-              <input type="range" id="sound-volume" min="0" max="100" step="1" value="100" aria-label="Sound volume">
-            </div>
-            <div class="sound">
-              <div class="sound-head">
-                <span>Music</span>
-                <button type="button" id="bgm-mute" class="sound-mute" aria-pressed="false" title="Mute music">Mute</button>
-              </div>
-              <input type="range" id="bgm-volume" min="0" max="100" step="1" value="50" aria-label="Music volume">
-            </div>
+            <button type="button" id="sound-mute" class="action pref-toggle" aria-pressed="true" title="Toggle sound">
+              Sound
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <input type="range" id="sound-volume" class="sound-range" min="0" max="100" step="1" value="100" aria-label="Sound volume">
+            <button type="button" id="bgm-mute" class="action pref-toggle" aria-pressed="true" title="Toggle music">
+              Music
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <input type="range" id="bgm-volume" class="sound-range" min="0" max="100" step="1" value="50" aria-label="Music volume">
           </section>
           <section id="training" class="menu-block training hidden">
             <p class="label">Training</p>
@@ -112,6 +112,14 @@
           </section>
           <section class="menu-block menu-actions">
             <button type="button" id="pause-btn" class="action hidden">Pause</button>
+            <button type="button" id="report-player" class="action hidden">Report player</button>
+            <div id="report-form" class="confirm hidden">
+              <p>Report this opponent? You can only report each player once.</p>
+              <textarea id="report-body" class="report-body" maxlength="1000" rows="3" placeholder="What happened?" aria-label="Report details"></textarea>
+              <p id="report-status" class="hint hidden" role="status"></p>
+              <button type="button" id="report-yes" class="action">Submit report</button>
+              <button type="button" id="report-no" class="action">Cancel</button>
+            </div>
             <button type="button" id="concede" class="action">Concede</button>
             <div id="confirm" class="confirm hidden">
               <p>Concede this match?</p>

@@ -10,15 +10,9 @@ import { Server } from "socket.io";
 import { asErr, child as childLogger, logger } from "./server/logger.js";
 import {
   assignOwner,
-  archiveSuggestion,
   beginTicketPurchase,
-  claimSuggestionReward,
-  claimWikiReward,
   canEditWiki,
-  completeSuggestionReward,
   completeTicketPurchase,
-  completeWikiReward,
-  confirmWikiRevision,
   consumeAuthToken,
   countOpenBugs,
   countOpenSuggestions,
@@ -34,23 +28,17 @@ import {
   getAccount,
   getAccountByEmail,
   getAccountByFormbar,
-  getSuggestion,
   getUser,
   getWikiPageBySlug,
-  getWikiRevision,
   initDb,
   linkDiscordToAccount,
   linkFormbarToAccount,
-  listOpenWikiRevisions,
-  listSuggestions,
   listWikiPages,
   listWikiSlugs,
   deleteWikiPageBySlug,
   MAX_OPEN_BUGS,
   MAX_OPEN_WIKI_REVISIONS,
   mergeAccounts,
-  releaseSuggestionReward,
-  releaseWikiReward,
   sanitizeUserText,
   saveWikiPage,
   bgmVolumePercent,
@@ -67,14 +55,15 @@ import {
   unlockTicketPurchase,
   SUGGESTION_BODY_MAX,
   SUGGESTION_REPRO_MAX,
-  systemStats,
+  isAccountBanned,
+  recordOpsSample,
   ticketPack,
   topAccounts,
+  touchAccountLogin,
+  touchAccountSeen,
   tooltipsEnabled,
-  undoWikiRevision,
   upsertAccount,
   upsertDiscordAccount,
-  wikiRewardAmount,
   wikiSlug,
   WIKI_BODY_MAX,
   WIKI_TITLE_MAX,
@@ -106,6 +95,7 @@ import { mailReady, sendResetEmail, sendVerifyEmail } from "./server/mail.js";
 import { ensureMetrics, report as metricsReport, startMetrics } from "./server/metrics.js";
 import { workerCount } from "./server/owners.js";
 import { scheduleSettingWrite } from "./server/settingsWrite.js";
+import { readPrefsCookies, writePrefsCookies } from "./server/prefsCookie.js";
 import { connectFormbar, disconnectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
 import { authenticateFormbarToken } from "./server/formbarAuth.js";
 import { ensureCsrf, requireCsrf } from "./server/csrf.js";
@@ -118,6 +108,10 @@ import {
   securityHeadersMiddleware,
   sessionCookieOptions,
 } from "./server/hardening.js";
+import {
+  PREFS_BGM_DEFAULT,
+  PREFS_TOOLTIPS_DEFAULT,
+} from "./shared/prefs.js";
 import { allowSocketEvent } from "./server/commandLimit.js";
 import {
   discordAuthorizeUrl,
@@ -129,7 +123,15 @@ import {
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
 import { renderWikiBody } from "./server/wiki-render.js";
-import { wikiLineDiff } from "./server/wiki-diff.js";
+import { createAdminRouter } from "./server/admin/routes.js";
+import {
+  getStaffContext,
+  sessionIsAdmin,
+} from "./server/admin/auth.js";
+import {
+  getMaintenanceMessage,
+  isMatchmakingPaused,
+} from "./server/admin/ops.js";
 import {
   BASE_GPS_MAX,
   BASE_GPS_MIN,
@@ -353,27 +355,41 @@ app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 app.use(sessionMiddleware);
 app.use(ensureCsrf);
 app.use(requireCsrf);
-app.use((req, res, next) => {
-  res.locals.isAdmin = isAdmin(req.session);
-  res.locals.localAccountsEnabled = localAccountsEnabled();
-  res.locals.formbarLoginEnabled = formbarLoginEnabled();
-  res.locals.discordLoginEnabled = discordLoginEnabled();
-  res.locals.authEmailEnabled = authEmailEnabled();
-  res.locals.anyLoginEnabled = anyLoginEnabled();
-  res.locals.matchChatEnabled = matchChatEnabled();
-  next();
+app.use(async (req, res, next) => {
+  try {
+    const staff = await getStaffContext(req.session);
+    res.locals.isAdmin = staff.role === "admin" || staff.role === "moderator";
+    res.locals.staffRole = staff.role;
+    res.locals.localAccountsEnabled = localAccountsEnabled();
+    res.locals.formbarLoginEnabled = formbarLoginEnabled();
+    res.locals.discordLoginEnabled = discordLoginEnabled();
+    res.locals.authEmailEnabled = authEmailEnabled();
+    res.locals.anyLoginEnabled = anyLoginEnabled();
+    res.locals.matchChatEnabled = matchChatEnabled();
+
+    if (staff.account) {
+      if (isAccountBanned(staff.account)) {
+        const sid = req.sessionID;
+        req.session.destroy(() => {
+          res.redirect("/login");
+        });
+        return;
+      }
+      const sessEpoch = Number(req.session.sessionEpoch || 0);
+      const acctEpoch = Number(staff.account.session_epoch || 0);
+      if (sessEpoch !== acctEpoch) {
+        req.session.destroy(() => {
+          res.redirect("/login");
+        });
+        return;
+      }
+      touchAccountSeen(staff.account.id).catch(() => {});
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
-
-function adminId() {
-  const id = Number(process.env.ADMIN_USER_ID);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-function isAdmin(sess) {
-  const id = adminId();
-  if (id == null || !sess) return false;
-  return Number(sess.formbarId) === id;
-}
 
 function safeNext(value) {
   const text = String(value || "");
@@ -431,6 +447,7 @@ function setAccountSession(sess, account) {
   sess.accountId = account.id;
   sess.formbarId = account.formbar_id || null;
   sess.formbarName = account.name;
+  sess.sessionEpoch = Number(account.session_epoch || 0);
 }
 
 function regenerateSession(req) {
@@ -446,10 +463,22 @@ function regenerateSession(req) {
   });
 }
 
-async function establishAccountSession(req, account, notice) {
+async function establishAccountSession(req, account, notice, provider = null, res = null) {
+  if (isAccountBanned(account)) {
+    const err = new Error("banned");
+    err.code = "banned";
+    throw err;
+  }
   await regenerateSession(req);
   setAccountSession(req.session, account);
   if (notice) req.session.notice = notice;
+  touchAccountLogin(account.id, provider).catch(() => {});
+  if (res) {
+    writePrefsCookies(res, {
+      tooltips: tooltipsEnabled(account),
+      bgmVolume: bgmVolumePercent(account),
+    }, THIS_URL);
+  }
 }
 
 /** User-facing notice for profile link / merge failures. */
@@ -501,21 +530,13 @@ function adminLimited(req) {
   return ok;
 }
 
-function requireAdminOrDeny(req, res) {
-  if (isAdmin(req.session)) return true;
-  logger.warn({
-    event: "authz_denied",
-    path: req.path,
-    ip: clientIp(req),
-    accountId: req.session && req.session.accountId,
-  }, "admin access denied");
-  res.redirect("/");
-  return false;
-}
-
 function routeId(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+async function isAdmin(sess) {
+  return sessionIsAdmin(sess);
 }
 
 const AMBIGUOUS_TRANSFER = "The transfer may have gone through. It will not be retried automatically because Formbar has no transaction id.";
@@ -595,15 +616,40 @@ async function playerFromSession(sess, options = {}) {
   if (!guest && options.createGuest) guest = await ensureGuest(sess);
   if (!guest) return null;
   sess.guestId = guest.id;
+  const prefs = options.prefs || {};
+  const tooltips = typeof prefs.tooltips === "boolean"
+    ? prefs.tooltips
+    : PREFS_TOOLTIPS_DEFAULT;
+  const bgmVolume = Number.isFinite(Number(prefs.bgmVolume))
+    ? clampBgmVolumePercent(prefs.bgmVolume)
+    : PREFS_BGM_DEFAULT;
   return {
     id: guest.id,
     name: guest.name,
     accountId: null,
     formbarId: null,
     mmr: null,
-    tooltips: tooltipsEnabled(guest),
-    bgmVolume: bgmVolumePercent(guest),
+    tooltips,
+    bgmVolume,
   };
+}
+
+/** Logged-in: DB prefs overwrite cookies. Guests: cookies are the source of truth. */
+function syncPrefsCookies(res, player, req) {
+  if (!player) return;
+  if (player.accountId) {
+    writePrefsCookies(res, {
+      tooltips: player.tooltips !== false,
+      bgmVolume: Number.isFinite(player.bgmVolume) ? player.bgmVolume : PREFS_BGM_DEFAULT,
+    }, THIS_URL);
+    return;
+  }
+  const fromReq = req ? readPrefsCookies(req) : null;
+  if (fromReq && fromReq.hasTooltips && fromReq.hasBgm) return;
+  writePrefsCookies(res, {
+    tooltips: player.tooltips !== false,
+    bgmVolume: Number.isFinite(player.bgmVolume) ? player.bgmVolume : PREFS_BGM_DEFAULT,
+  }, THIS_URL);
 }
 
 async function issueVerifyEmail(account) {
@@ -761,11 +807,17 @@ async function renderError(req, res, { status = 500, title, message } = {}) {
 }
 
 async function homeData(req) {
+  const maintenance = await getMaintenanceMessage();
+  const paused = await isMatchmakingPaused();
+  let notice = takeNotice(req);
+  if (!notice && (maintenance || paused)) {
+    notice = maintenance || "Matchmaking is temporarily paused.";
+  }
   return {
     nav: "home",
     viewer: await pageViewer(req),
     news: loadNews(),
-    notice: takeNotice(req),
+    notice,
   };
 }
 
@@ -774,6 +826,10 @@ async function gamesData(req) {
   const privileged = accountEmailVerified(viewer);
   const player = await playerFromSession(req.session, { createGuest: false });
   const rejoin = player ? matchmaker.isBusy(player.id) : false;
+  let notice = takeNotice(req);
+  if (!notice && (await isMatchmakingPaused())) {
+    notice = (await getMaintenanceMessage()) || "Matchmaking is temporarily paused.";
+  }
   return {
     nav: "games",
     viewer,
@@ -781,7 +837,7 @@ async function gamesData(req) {
     canTicket: Boolean(privileged && viewer.tickets > viewer.held && !rejoin),
     waiting: matchmaker.waitingCounts(),
     lobbies: matchmaker.listLobbies(),
-    notice: takeNotice(req),
+    notice,
   };
 }
 
@@ -790,17 +846,6 @@ async function scoresData(req) {
     nav: "scores",
     viewer: await pageViewer(req),
     leaders: await topAccounts(10),
-    notice: takeNotice(req),
-  };
-}
-
-async function adminData(req) {
-  const stats = await systemStats();
-  const games = matchmaker.listActive();
-  return {
-    nav: "admin",
-    viewer: await pageViewer(req),
-    admin: { games, stats: { ...stats, active: games.length } },
     notice: takeNotice(req),
   };
 }
@@ -860,7 +905,19 @@ async function completeFormbarLogin(req, res, token) {
   }
 
   const account = await upsertAccount(userId, name);
+  if (account && isAccountBanned(account)) {
+    req.session.notice = "This account is banned.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
   setAccountSession(req.session, account);
+  if (account) touchAccountLogin(account.id, "formbar").catch(() => {});
+  if (account) {
+    writePrefsCookies(res, {
+      tooltips: tooltipsEnabled(account),
+      bgmVolume: bgmVolumePercent(account),
+    }, THIS_URL);
+  }
   logger.info({
     event: "auth_login",
     provider: "formbar",
@@ -997,7 +1054,17 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     res.status(500).send("Could not create account.");
     return;
   }
+  if (isAccountBanned(account)) {
+    req.session.notice = "This account is banned.";
+    req.session.save(() => res.redirect("/login"));
+    return;
+  }
   setAccountSession(req.session, account);
+  touchAccountLogin(account.id, "discord").catch(() => {});
+  writePrefsCookies(res, {
+    tooltips: tooltipsEnabled(account),
+    bgmVolume: bgmVolumePercent(account),
+  }, THIS_URL);
   logger.info({
     event: "auth_login",
     provider: "discord",
@@ -1119,10 +1186,15 @@ app.post("/login", async (req, res, next) => {
     const notice = needsEmailVerification(account)
       ? "Verify your email to unlock account features. Until then you can play like a guest."
       : undefined;
-    await establishAccountSession(req, account, notice);
+    await establishAccountSession(req, account, notice, "local", res);
     logger.info({ event: "auth_login", provider: "local", userId: account.id }, "local login ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
+    if (err && err.code === "banned") {
+      req.session.notice = "This account is banned.";
+      req.session.save(() => res.redirect("/login"));
+      return;
+    }
     next(err);
   }
 });
@@ -1234,7 +1306,7 @@ app.post("/signup", async (req, res, next) => {
       req.session.save(() => res.redirect("/login"));
       return;
     }
-    await establishAccountSession(req, account, nameNote ? nameNote.trim() : undefined);
+    await establishAccountSession(req, account, nameNote ? nameNote.trim() : undefined, null, res);
     logger.info({ event: "auth_signup", accountId: account.id, needVerify: false }, "signup ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
@@ -1262,7 +1334,7 @@ app.get("/verify", async (req, res, next) => {
     }
     await setEmailVerified(account.id);
     const fresh = await getAccount(account.id);
-    await establishAccountSession(req, fresh || account, "Email verified. You are logged in.");
+    await establishAccountSession(req, fresh || account, "Email verified. You are logged in.", null, res);
     logger.info({ event: "auth_verify", accountId: account.id }, "email verified");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
@@ -1284,9 +1356,27 @@ app.post("/verify/resend", async (req, res, next) => {
       return;
     }
     const account = await getAccountByEmail(email);
-    if (needsEmailVerification(account) && mailReady()) {
+    if (!account) {
+      logger.info({ event: "verify_resend_skip", reason: "no_account" }, "verify resend skipped");
+    } else if (!needsEmailVerification(account)) {
+      logger.info({
+        event: "verify_resend_skip",
+        reason: "not_needed",
+        accountId: account.id,
+      }, "verify resend skipped");
+    } else if (!mailReady()) {
+      logger.warn({
+        event: "verify_resend_skip",
+        reason: "mail_not_ready",
+        accountId: account.id,
+      }, "verify resend skipped");
+    } else {
       try {
         await issueVerifyEmail(account);
+        logger.info({
+          event: "verify_resend_ok",
+          accountId: account.id,
+        }, "verify resend sent");
       } catch (err) {
         logger.error({
           event: "mail_send_failed",
@@ -1404,7 +1494,7 @@ app.post("/reset", async (req, res, next) => {
     }
     await setAccountPassword(account.id, await hashPassword(password));
     const fresh = await getAccount(account.id);
-    await establishAccountSession(req, fresh || account, "Password updated.");
+    await establishAccountSession(req, fresh || account, "Password updated.", null, res);
     logger.info({ event: "auth_reset", accountId: account.id }, "password reset ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
@@ -1500,15 +1590,61 @@ app.get("/scores", async (req, res, next) => {
   }
 });
 
-app.get("/admin", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    const data = await adminData(req);
-    req.session.save(() => res.render("admin", data));
-  } catch (err) {
-    next(err);
+function disconnectBannedAccount(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const prefix = `a:${id}`;
+  for (const [userId, socks] of socketsByUser.entries()) {
+    if (userId !== prefix && !String(userId).endsWith(`:${id}`)) continue;
+    for (const sock of socks.slice()) {
+      try {
+        sock.emit("go-home");
+        sock.disconnect(true);
+      } catch {
+        /* ignore */
+      }
+    }
   }
-});
+  // Also scan rooms for this account and force disconnect seats
+  for (const room of matchmaker.rooms.values()) {
+    for (const seat of [room.seat.a, room.seat.b]) {
+      if (Number(seat.accountId) !== id) continue;
+      if (seat.socket) {
+        try {
+          seat.socket.emit("go-home");
+          seat.socket.disconnect(true);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+}
+
+app.use("/admin", createAdminRouter({
+  matchmaker,
+  pageViewer,
+  formbarSocket,
+  rewardFromPool,
+  issueVerifyEmail,
+  ambiguousTransfer: AMBIGUOUS_TRANSFER,
+  disconnectBannedAccount,
+  ioStats: () => {
+    let socketBacklog = 0;
+    const sockets = io.sockets && io.sockets.sockets;
+    if (sockets) {
+      for (const sock of sockets.values()) {
+        const buf = sock.conn && sock.conn.writeBuffer;
+        if (buf) socketBacklog += buf.length;
+      }
+    }
+    return {
+      rooms: matchmaker.rooms.size,
+      sockets: io.engine ? io.engine.clientsCount : 0,
+      socketBacklog,
+    };
+  },
+}));
 
 app.get("/profile/:id", async (req, res, next) => {
   try {
@@ -1937,119 +2073,10 @@ app.post("/suggestions", async (req, res, next) => {
   }
 });
 
-app.get("/admin/suggestions", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    const viewer = await pageViewer(req);
-    const notice = takeNotice(req);
-    const suggestions = await listSuggestions({ archived: false });
-    req.session.save(() => {
-      res.render("admin-suggestions", {
-        nav: "admin",
-        viewer,
-        notice,
-        suggestions,
-        rewardAmount: wikiRewardAmount(),
-      });
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    if (!adminLimited(req)) {
-      req.session.notice = "Too many admin actions. Try again in a minute.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    const suggestionId = routeId(req.params.id);
-    if (!suggestionId) {
-      req.session.notice = "Suggestion not found.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    await archiveSuggestion(suggestionId);
-    logger.info({
-      event: "admin_action",
-      action: "suggestion_archive",
-      adminUserId: req.session.accountId,
-      targetId: suggestionId,
-    }, "suggestion archived");
-    req.session.notice = "Suggestion archived.";
-    req.session.save(() => res.redirect("/admin/suggestions"));
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    if (!adminLimited(req)) {
-      req.session.notice = "Too many admin actions. Try again in a minute.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    const suggestionId = routeId(req.params.id);
-    const suggestion = suggestionId ? await getSuggestion(suggestionId) : null;
-    if (!suggestion || suggestion.archived_at || suggestion.rewarded_at || suggestion.reward_status === "pending") {
-      req.session.notice = suggestion && suggestion.reward_status === "pending"
-        ? AMBIGUOUS_TRANSFER
-        : "Suggestion not found.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    if (suggestion.formbar_id <= 0) {
-      req.session.notice = "This suggestion cannot be rewarded.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    const claimed = await claimSuggestionReward(suggestion.id);
-    if (!claimed) {
-      req.session.notice = "Suggestion not found.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    const amount = wikiRewardAmount();
-    const transfer = await rewardFromPool(formbarSocket, {
-      userId: suggestion.formbar_id,
-      amount,
-      reason: "MOTL Suggestion Reward",
-    });
-    if (transfer.ambiguous) {
-      req.session.notice = AMBIGUOUS_TRANSFER;
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    if (!transfer.success) {
-      await releaseSuggestionReward(suggestion.id);
-      req.session.notice = transfer.message || "Reward transfer failed.";
-      req.session.save(() => res.redirect("/admin/suggestions"));
-      return;
-    }
-    await completeSuggestionReward(suggestion.id);
-    logger.info({
-      event: "admin_action",
-      action: "suggestion_reward",
-      adminUserId: req.session.accountId,
-      targetId: suggestion.id,
-      amount,
-      formbarId: suggestion.formbar_id,
-    }, "suggestion rewarded");
-    req.session.notice = `Archived and sent ${amount} digipogs to ${suggestion.name}.`;
-    req.session.save(() => res.redirect("/admin/suggestions"));
-  } catch (err) {
-    next(err);
-  }
-});
-
 async function viewerCanEditWiki(sess) {
   const account = await resolveSessionAccount(sess);
   if (!accountEmailVerified(account)) return false;
-  if (isAdmin(sess)) return true;
+  if (await isAdmin(sess)) return true;
   return canEditWiki(account.id);
 }
 
@@ -2088,157 +2115,6 @@ async function renderWikiView(req, res, slugParam) {
   });
 }
 
-app.get("/admin/wiki", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    const viewer = await pageViewer(req);
-    const notice = takeNotice(req);
-    const revisions = (await listOpenWikiRevisions()).map((item) => ({
-      ...item,
-      isCreate: item.previous_body == null,
-      diff: wikiLineDiff(item.previous_body, item.body),
-    }));
-    req.session.save(() => {
-      res.render("admin-wiki", {
-        nav: "admin",
-        viewer,
-        notice,
-        revisions,
-        rewardAmount: wikiRewardAmount(),
-      });
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.post("/admin/wiki/:id/confirm", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    if (!adminLimited(req)) {
-      res.redirect("/");
-      return;
-    }
-    const revisionId = routeId(req.params.id);
-    const ok = await confirmWikiRevision(revisionId);
-    if (ok) {
-      logger.info({
-        event: "admin_action",
-        action: "wiki_confirm",
-        adminUserId: req.session.accountId,
-        targetId: revisionId,
-      }, "wiki revision confirmed");
-    }
-    req.session.notice = ok ? "Revision confirmed." : "Revision not found.";
-    req.session.save(() => res.redirect("/admin/wiki"));
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.post("/admin/wiki/:id/undo", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    if (!adminLimited(req)) {
-      res.redirect("/");
-      return;
-    }
-    const revisionId = routeId(req.params.id);
-    const result = await undoWikiRevision(revisionId);
-    if (!result.ok) {
-      req.session.notice = result.error || "Could not undo.";
-    } else if (result.deleted) {
-      logger.info({
-        event: "admin_action",
-        action: "wiki_undo_delete",
-        adminUserId: req.session.accountId,
-        targetId: revisionId,
-      }, "wiki page deleted via undo");
-      req.session.notice = "Page deleted.";
-    } else {
-      logger.info({
-        event: "admin_action",
-        action: "wiki_undo",
-        adminUserId: req.session.accountId,
-        targetId: revisionId,
-      }, "wiki revision undone");
-      req.session.notice = "Revision undone.";
-    }
-    req.session.save(() => res.redirect("/admin/wiki"));
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.post("/admin/wiki/:id/reward", async (req, res, next) => {
-  try {
-    if (!requireAdminOrDeny(req, res)) return;
-    if (!adminLimited(req)) {
-      req.session.notice = "Too many admin actions. Try again in a minute.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    const revisionId = routeId(req.params.id);
-    const revision = revisionId ? await getWikiRevision(revisionId) : null;
-    if (!revision || revision.undone_at) {
-      req.session.notice = "Revision not found.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    if (revision.rewarded_at || revision.reward_status === "completed") {
-      req.session.notice = "Already rewarded.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    if (revision.reward_status === "pending") {
-      req.session.notice = AMBIGUOUS_TRANSFER;
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    if (revision.formbar_id <= 0) {
-      req.session.notice = "System revisions cannot be rewarded.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    const claimed = await claimWikiReward(revision.id);
-    if (!claimed) {
-      req.session.notice = "Already rewarded.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    const amount = wikiRewardAmount();
-    const transfer = await rewardFromPool(formbarSocket, {
-      userId: revision.formbar_id,
-      amount,
-      reason: `MOTL Wiki Reward: ${revision.title}`,
-    });
-    if (transfer.ambiguous) {
-      req.session.notice = AMBIGUOUS_TRANSFER;
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    if (!transfer.success) {
-      await releaseWikiReward(revision.id);
-      req.session.notice = transfer.message || "Reward transfer failed.";
-      req.session.save(() => res.redirect("/admin/wiki"));
-      return;
-    }
-    await completeWikiReward(revision.id);
-    logger.info({
-      event: "admin_action",
-      action: "wiki_reward",
-      adminUserId: req.session.accountId,
-      targetId: revision.id,
-      amount,
-      formbarId: revision.formbar_id,
-    }, "wiki revision rewarded");
-    req.session.notice = `Sent ${amount} digipogs to ${revision.name}.`;
-    req.session.save(() => res.redirect("/admin/wiki"));
-  } catch (err) {
-    next(err);
-  }
-});
-
 async function startPlay(req, res, next, intent) {
   try {
     const paid = intent.mode === "listed" || intent.mode === "ranked" || intent.mode === "join";
@@ -2248,7 +2124,18 @@ async function startPlay(req, res, next, intent) {
       req.session.save(() => res.redirect("/games"));
       return;
     }
+    if (await isMatchmakingPaused()) {
+      const msg = (await getMaintenanceMessage()) || "Matchmaking is temporarily paused.";
+      req.session.notice = msg;
+      req.session.save(() => res.redirect("/games"));
+      return;
+    }
     const account = await resolveSessionAccount(req.session);
+    if (account && isAccountBanned(account)) {
+      req.session.notice = "This account is banned.";
+      req.session.save(() => res.redirect("/"));
+      return;
+    }
     const privileged = accountEmailVerified(account);
     if (account && !rateLimit(`play-acct:${account.id}`, { max: playMax, windowMs: 60 * 1000 })) {
       req.session.notice = "Too many game requests. Try again in a minute.";
@@ -2447,7 +2334,7 @@ app.post("/rules/:slug/delete", async (req, res, next) => {
       return;
     }
     const slug = wikiSlug(req.params.slug);
-    if (!isAdmin(req.session)) {
+    if (!(await isAdmin(req.session))) {
       logger.warn({
         event: "authz_denied",
         path: req.path,
@@ -2492,7 +2379,11 @@ app.get("/rules/:slug", async (req, res, next) => {
 
 app.get("/play", async (req, res, next) => {
   try {
-    const player = await playerFromSession(req.session, { createGuest: false });
+    const prefs = readPrefsCookies(req);
+    const player = await playerFromSession(req.session, {
+      createGuest: false,
+      prefs,
+    });
     const busy = player && matchmaker.isBusy(player.id);
     if (!player || (!req.session.intent && !busy)) {
       res.redirect("/games");
@@ -2503,6 +2394,7 @@ app.get("/play", async (req, res, next) => {
     const use3d = Boolean(req.session.view3d)
       || (intent && intent.view === "3d")
       || (room && room.view3d);
+    syncPrefsCookies(res, player, req);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: debugRangesEnabled(),
       matchChatEnabled: matchChatEnabled(),
@@ -2528,13 +2420,13 @@ app.use("/api/v1", (req, res, next) => {
 });
 app.use("/api/v1", express.json({ limit: "32kb" }));
 
-app.get("/api/v1/metrics", (req, res) => {
+app.get("/api/v1/metrics", async (req, res) => {
   if (process.env.METRICS !== "1") {
     res.status(404).end();
     return;
   }
   const tokenOk = bearerMatches(req.headers.authorization, process.env.METRICS_TOKEN || "");
-  if (!tokenOk && !isAdmin(req.session)) {
+  if (!tokenOk && !(await isAdmin(req.session))) {
     res.status(404).end();
     return;
   }
@@ -2614,6 +2506,11 @@ app.get("/api/v1/login/callback", async (req, res, next) => {
       res.status(400).send("Invalid Formbar token.");
       return;
     }
+    if (isAccountBanned(account)) {
+      res.status(403).send("This account is banned.");
+      return;
+    }
+    touchAccountLogin(account.id, "formbar").catch(() => {});
     const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
     delete req.session.apiReturn;
     await saveSession(req.session);
@@ -2638,8 +2535,14 @@ app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
       res.status(400).json({ error: "invalid_token" });
       return;
     }
+    if (isAccountBanned(account)) {
+      res.status(403).json({ error: "banned" });
+      return;
+    }
+    touchAccountLogin(account.id, "formbar").catch(() => {});
     await saveSession(req.session);
     const player = await playerFromSession(req.session, { createGuest: false });
+    syncPrefsCookies(res, player, req);
     res.json({
       token: req.sessionID,
       player: playerPublic(player),
@@ -2699,7 +2602,12 @@ app.get("/api/v1/login/discord/callback", async (req, res, next) => {
       res.status(500).send("Could not create account.");
       return;
     }
+    if (isAccountBanned(account)) {
+      res.status(403).send("This account is banned.");
+      return;
+    }
     setAccountSession(req.session, account);
+    touchAccountLogin(account.id, "discord").catch(() => {});
     const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
     delete req.session.apiReturn;
     await saveSession(req.session);
@@ -2722,11 +2630,16 @@ app.post("/api/v1/logout", requireApiSession, async (req, res, next) => {
 
 app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
   try {
-    const player = await playerFromSession(req.session, { createGuest: false });
+    const prefs = readPrefsCookies(req);
+    const player = await playerFromSession(req.session, {
+      createGuest: false,
+      prefs,
+    });
     if (!player) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    syncPrefsCookies(res, player, req);
     const busy = matchmaker.isBusy(player.id);
     const account = await resolveSessionAccount(req.session);
     const privileged = accountEmailVerified(account);
@@ -3074,7 +2987,10 @@ io.use((socket, next) => {
     next(new Error("no session"));
     return;
   }
-  playerFromSession(sess, { createGuest: false }).then((user) => {
+  playerFromSession(sess, {
+    createGuest: false,
+    prefs: readPrefsCookies(socket.request),
+  }).then(async (user) => {
     if (!user) {
       logger.warn({
         event: "socket_auth_failed",
@@ -3083,6 +2999,26 @@ io.use((socket, next) => {
       }, "socket auth failed");
       next(new Error("no player"));
       return;
+    }
+    if (user.accountId) {
+      const account = await getAccount(user.accountId);
+      if (account && isAccountBanned(account)) {
+        logger.warn({
+          event: "socket_auth_failed",
+          reason: "banned",
+          socketId: socket.id,
+          accountId: account.id,
+        }, "banned socket rejected");
+        next(new Error("banned"));
+        return;
+      }
+      const sessEpoch = Number(sess.sessionEpoch || 0);
+      const acctEpoch = Number(account?.session_epoch || 0);
+      if (account && sessEpoch !== acctEpoch) {
+        next(new Error("session revoked"));
+        return;
+      }
+      touchAccountSeen(user.accountId).catch(() => {});
     }
     socket.data.user = user;
     sess.save((err) => next(err));
@@ -3104,6 +3040,16 @@ io.on("connection", (socket) => {
   });
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
   socket.on("chat", (payload) => matchmaker.chat(socket, payload));
+  socket.on("report", (payload) => {
+    Promise.resolve(matchmaker.report(socket, payload)).catch((err) => {
+      slog.warn({ event: "report_failed", err: asErr(err) }, "report handler failed");
+      try {
+        socket.emit("reportResult", { ok: false, error: "failed" });
+      } catch {
+        // ignore emit failures on a dead socket
+      }
+    });
+  });
   socket.on("pause", () => matchmaker.pause(socket));
   socket.on("pauseSeen", () => matchmaker.pauseSeen(socket));
   socket.on("settingsOpen", (open) => matchmaker.settingsOpen(socket, open));
@@ -3113,6 +3059,8 @@ io.on("connection", (socket) => {
     if (!allowSocketEvent(socket, "tooltips")) return;
     const enabled = Boolean(on);
     if (socket.data.user) socket.data.user.tooltips = enabled;
+    // Guests persist via cookies on the client; only accounts hit SQLite.
+    if (!socket.data.user || !socket.data.user.accountId) return;
     scheduleSettingWrite(socket, "tooltips", enabled, (value) => {
       return setPlayerTooltips(socket.data.user, value);
     });
@@ -3122,6 +3070,7 @@ io.on("connection", (socket) => {
     if (!Number.isFinite(Number(percent))) return;
     const value = clampBgmVolumePercent(percent);
     if (socket.data.user) socket.data.user.bgmVolume = value;
+    if (!socket.data.user || !socket.data.user.accountId) return;
     scheduleSettingWrite(socket, "bgmVolume", value, (next) => {
       return setPlayerBgmVolume(socket.data.user, next);
     });
@@ -3201,4 +3150,15 @@ if (isMain) {
       event: "debug_ranges_enabled",
     }, "debug ranges overlays enabled");
   }
+  setInterval(() => {
+    const waiting = matchmaker.waitingCounts();
+    recordOpsSample({
+      rooms: matchmaker.rooms.size,
+      sockets: io.engine ? io.engine.clientsCount : 0,
+      queueCasual: matchmaker.casual.length,
+      queueRanked: matchmaker.ranked.length,
+      queueTraining: matchmaker.training.length,
+    }).catch(() => {});
+    void waiting;
+  }, 60_000).unref?.();
 }

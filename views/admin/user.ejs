@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title><%= detail.account.name %> · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <% const a = detail.account; %>
+    <section>
+      <p><a href="/admin/users">← Users</a></p>
+      <h2><%= a.name %> <span class="admin-pill <%= a.role === 'admin' ? 'admin-role' : '' %>"><%= a.role %></span>
+        <% if (detail.banned) { %><span class="admin-pill banned">banned</span><% } %>
+      </h2>
+      <div class="admin-grid">
+        <div><strong>Internal ID</strong><div class="admin-mono"><%= a.id %></div></div>
+        <div><strong>Email</strong><div><%= a.email || "—" %></div></div>
+        <div><strong>Formbar</strong><div class="admin-mono"><%= a.formbar_id || "—" %></div></div>
+        <div><strong>Discord</strong><div class="admin-mono"><%= a.discord_id || "—" %></div></div>
+        <div><strong>MMR</strong><div><%= a.mmr %> (<%= a.wins %>–<%= a.losses %>)</div></div>
+        <div><strong>Tickets</strong><div><%= a.tickets %> (<%= a.held %> held)</div></div>
+        <div><strong>Created</strong><div><%= new Date(a.created_at).toLocaleString() %></div></div>
+        <div><strong>Last login</strong><div><%= a.last_login_at ? new Date(a.last_login_at).toLocaleString() : "—" %></div></div>
+        <div><strong>Last seen</strong><div><%= a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : "—" %></div></div>
+        <div><strong>Email verified</strong>
+          <div>
+            <% if (!a.email) { %>N/A (no local email)<% }
+               else if (a.email_verified_at) { %><%= new Date(a.email_verified_at).toLocaleString() %><% if (a.email_verified_by) { %> by #<%= a.email_verified_by %><% } %><% }
+               else { %>unverified<% } %>
+          </div>
+        </div>
+      </div>
+
+      <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
+        <div class="admin-panel">
+          <h3>Role</h3>
+          <form method="post" action="/admin/users/<%= a.id %>/role">
+            <%- include("../csrf-field") %>
+            <div class="admin-filters">
+              <label>Role
+                <select name="role">
+                  <% ["player","moderator","admin"].forEach(function (r) { %>
+                    <option value="<%= r %>" <%= a.role === r ? "selected" : "" %>><%= r %></option>
+                  <% }) %>
+                </select>
+              </label>
+              <label>Reason<input name="reason" required maxlength="500"></label>
+              <label><input type="checkbox" name="confirm" value="1"> Confirm</label>
+              <button type="submit">Set role</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="admin-panel admin-danger">
+          <h3>Ban</h3>
+          <% if (detail.banned) { %>
+            <p><%= a.ban_reason %><% if (a.ban_expires_at) { %> · expires <%= new Date(a.ban_expires_at).toLocaleString() %><% } else { %> · permanent<% } %></p>
+            <form method="post" action="/admin/users/<%= a.id %>/unban">
+              <%- include("../csrf-field") %>
+              <label>Reason <input name="reason" required></label>
+              <button type="submit">Unban</button>
+            </form>
+          <% } else { %>
+            <form method="post" action="/admin/users/<%= a.id %>/ban">
+              <%- include("../csrf-field") %>
+              <div class="admin-filters">
+                <label>Reason<input name="reason" required maxlength="500"></label>
+                <label>Duration
+                  <select name="durationUnit">
+                    <option value="permanent">Permanent</option>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </label>
+                <label>Value<input type="number" name="durationValue" min="1" step="1"></label>
+                <label><input type="checkbox" name="confirm" value="1"> Confirm</label>
+                <button type="submit">Ban</button>
+              </div>
+            </form>
+          <% } %>
+        </div>
+
+        <div class="admin-panel">
+          <h3>Tickets</h3>
+          <form method="post" action="/admin/users/<%= a.id %>/tickets">
+            <%- include("../csrf-field") %>
+            <div class="admin-filters">
+              <label>Delta<input type="number" name="delta" required step="1"></label>
+              <label>Reason<input name="reason" required></label>
+              <label><input type="checkbox" name="confirm" value="1"> Confirm</label>
+              <button type="submit">Adjust</button>
+            </div>
+          </form>
+        </div>
+
+        <% if (a.email) { %>
+          <div class="admin-panel">
+            <h3>Email verification</h3>
+            <% if (!a.email_verified_at) { %>
+              <form method="post" action="/admin/users/<%= a.id %>/verify" style="margin-bottom:0.5rem">
+                <%- include("../csrf-field") %>
+                <label>Reason <input name="reason" required></label>
+                <button type="submit">Mark verified</button>
+              </form>
+            <% } %>
+            <form method="post" action="/admin/users/<%= a.id %>/resend-verify">
+              <%- include("../csrf-field") %>
+              <button type="submit">Resend verification email</button>
+            </form>
+          </div>
+        <% } %>
+
+        <div class="admin-panel">
+          <h3>Profile</h3>
+          <form method="post" action="/admin/users/<%= a.id %>/name">
+            <%- include("../csrf-field") %>
+            <div class="admin-filters">
+              <label>Display name<input name="name" value="<%= a.name %>" required></label>
+              <label>Reason<input name="reason" required></label>
+              <button type="submit">Rename</button>
+            </div>
+          </form>
+          <form method="post" action="/admin/users/<%= a.id %>/notes">
+            <%- include("../csrf-field") %>
+            <label>Admin notes<textarea name="notes" rows="3" style="width:100%"><%= a.admin_notes || "" %></textarea></label>
+            <button type="submit">Save notes</button>
+          </form>
+          <form method="post" action="/admin/users/<%= a.id %>/logout" style="margin-top:0.75rem">
+            <%- include("../csrf-field") %>
+            <button type="submit">Force logout (revoke sessions)</button>
+          </form>
+        </div>
+      <% } %>
+
+      <div class="admin-panel">
+        <h3>Ticket ledger</h3>
+        <% if (!detail.ledger.length) { %><p class="hint">No ledger rows yet.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Kind</th><th>Δ</th><th>Balance</th><th>Held</th><th>Reason</th></tr></thead>
+            <tbody>
+              <% detail.ledger.forEach(function (row) { %>
+                <tr>
+                  <td><%= new Date(row.created_at).toLocaleString() %></td>
+                  <td><%= row.kind %></td>
+                  <td><%= row.delta %></td>
+                  <td><%= row.balance_after %></td>
+                  <td><%= row.held_after %></td>
+                  <td><%= row.reason || "—" %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Recent matches</h3>
+        <% if (!detail.games.length) { %><p class="hint">No matches recorded.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Mode</th><th>Players</th><th>Winner</th><th>Outcome</th></tr></thead>
+            <tbody>
+              <% detail.games.forEach(function (g) { %>
+                <tr>
+                  <td><a href="/admin/games/<%= g.id %>"><%= new Date(g.ended_at).toLocaleString() %></a></td>
+                  <td><%= g.mode %></td>
+                  <td><%= g.name_a %> vs <%= g.name_b %></td>
+                  <td><%= g.winner_side || "—" %></td>
+                  <td><%= g.outcome || g.win_reason || "—" %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Reports against this player<% if (detail.openReportsAgainst) { %> (<%= detail.openReportsAgainst %> open)<% } %></h3>
+        <p class="hint"><a href="/admin/reports?status=all&amp;reported=<%= a.id %>">Open in Reports</a>
+          · <a href="/admin/reports?status=open&amp;reported=<%= a.id %>">Open only</a></p>
+        <% if (!detail.reportsAgainst || !detail.reportsAgainst.length) { %><p class="hint">No reports.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Reporter</th><th>Status</th><th>Body</th></tr></thead>
+            <tbody>
+              <% detail.reportsAgainst.forEach(function (row) { %>
+                <tr>
+                  <td><%= new Date(row.created_at).toLocaleString() %></td>
+                  <td><% if (row.reporter_account_id) { %><a href="/admin/users/<%= row.reporter_account_id %>"><%= row.reporter_name %></a><% } else { %><%= row.reporter_name %><% } %></td>
+                  <td><%= row.status %></td>
+                  <td><%= row.body %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+          <% if (detail.openReportsAgainst > 0) { %>
+            <div class="wiki-admin-actions" style="margin-top:0.75rem">
+              <form method="post" action="/admin/reports/user/<%= a.id %>/resolve-all">
+                <%- include("../csrf-field") %>
+                <input type="hidden" name="status" value="resolved">
+                <input type="hidden" name="next" value="/admin/users/<%= a.id %>">
+                <button type="submit">Resolve all open</button>
+              </form>
+              <form method="post" action="/admin/reports/user/<%= a.id %>/resolve-all">
+                <%- include("../csrf-field") %>
+                <input type="hidden" name="status" value="dismissed">
+                <input type="hidden" name="next" value="/admin/users/<%= a.id %>">
+                <button type="submit">Dismiss all open</button>
+              </form>
+            </div>
+          <% } %>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Reports filed by this player</h3>
+        <% if (!detail.reportsFiled || !detail.reportsFiled.length) { %><p class="hint">None.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Reported</th><th>Status</th><th>Body</th></tr></thead>
+            <tbody>
+              <% detail.reportsFiled.forEach(function (row) { %>
+                <tr>
+                  <td><%= new Date(row.created_at).toLocaleString() %></td>
+                  <td><% if (row.reported_account_id) { %><a href="/admin/users/<%= row.reported_account_id %>"><%= row.reported_name %></a><% } else { %><%= row.reported_name %><% } %></td>
+                  <td><%= row.status %></td>
+                  <td><%= row.body %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Audit</h3>
+        <% if (!detail.audit.length) { %><p class="hint">No audit rows.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Action</th><th>Admin</th><th>Reason</th></tr></thead>
+            <tbody>
+              <% detail.audit.forEach(function (row) { %>
+                <tr>
+                  <td><%= new Date(row.created_at).toLocaleString() %></td>
+                  <td><%= row.action %></td>
+                  <td><%= row.admin_account_id || "—" %></td>
+                  <td><%= row.reason || "—" %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

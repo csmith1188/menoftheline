@@ -258,6 +258,76 @@ test("reconnect during reconnect wait resumes the match", async () => {
   cleanup(mm, room);
 });
 
+test("lobby and state expose opponent to both seats", () => {
+  const { mm, room, a, b } = loggedInPair();
+  room.status = "countdown";
+  room.countdownEnds = Date.now() + 10_000;
+
+  const lobbyA = room.lobbyFor(room.seat.a);
+  const lobbyB = room.lobbyFor(room.seat.b);
+  assert.equal(lobbyA.opponent.name, "Bob");
+  assert.equal(lobbyA.opponent.kind, "human");
+  assert.equal(lobbyB.opponent.name, "Alice");
+  assert.equal(lobbyB.opponent.kind, "human");
+
+  const snapA = room.publicStateFor(room.seat.a);
+  const snapB = room.publicStateFor(room.seat.b);
+  assert.equal(snapA.you.name, "Alice");
+  assert.equal(snapA.opponent.name, "Bob");
+  assert.equal(snapB.you.name, "Bob");
+  assert.equal(snapB.opponent.name, "Alice");
+
+  cleanup(mm, room);
+});
+
+test("countdown concede forfeits without refund path", () => {
+  const { mm, room, a, b } = loggedInPair();
+  room.status = "countdown";
+  room.countdownEnds = Date.now() + 10_000;
+  room.countdownTimer = setTimeout(() => {}, 10_000);
+  room.charged = true;
+  a.events.length = 0;
+  b.events.length = 0;
+
+  room.concede(a);
+  assert.equal(room.status, "playing");
+  assert.equal(room.sim.winner, "enemy");
+  assert.equal(room.sim.winReason, "concede");
+  assert.equal(room.countdownEnds, null);
+  assert.equal(room.countdownTimer, null);
+  assert.equal(room.charged, true);
+  assert.ok(b.events.some((event) => event.event === "state" && event.payload.winner === "enemy"));
+
+  cleanup(mm, room);
+});
+
+test("countdown leave concedes instead of abandoning", () => {
+  const { mm, room, a } = loggedInPair();
+  room.status = "countdown";
+  room.countdownEnds = Date.now() + 10_000;
+  room.countdownTimer = setTimeout(() => {}, 10_000);
+
+  room.leave(a);
+  assert.equal(room.status, "playing");
+  assert.equal(room.sim.winner, "enemy");
+  assert.equal(room.sim.winReason, "concede");
+  assert.ok(room.seat.a.socket === a);
+
+  cleanup(mm, room);
+});
+
+test("waiting leave with both seats concedes", () => {
+  const { mm, room, a } = loggedInPair();
+  room.status = "waiting";
+
+  room.leave(a);
+  assert.equal(room.status, "playing");
+  assert.equal(room.sim.winner, "enemy");
+  assert.equal(room.sim.winReason, "concede");
+
+  cleanup(mm, room);
+});
+
 test("reconnect wait timeout concedes for the disconnected player", async () => {
   const { mm, room, a } = loggedInPair();
   room.disconnect(a);

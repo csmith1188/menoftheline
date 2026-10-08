@@ -34,6 +34,7 @@ const EVENT_LIMITS = {
   bgmVolume: { max: 8, windowMs: 10000 },
   concede: { max: 2, windowMs: 10000 },
   leave: { max: 4, windowMs: 10000 },
+  report: { max: 3, windowMs: 60000 },
 };
 
 function burstSize() {

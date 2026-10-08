@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Admin · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>System</h2>
+      <dl class="stats">
+        <div><dt>Accounts</dt><dd><%= admin.stats.accounts %></dd></div>
+        <div><dt>Active games</dt><dd><%= admin.stats.active %></dd></div>
+        <div><dt>Games played</dt><dd><%= admin.stats.finished %></dd></div>
+        <div><dt>Ranked games</dt><dd><%= admin.stats.ranked %></dd></div>
+        <div><dt>Tickets out</dt><dd><%= admin.stats.tickets %></dd></div>
+        <div><dt>Held</dt><dd><%= admin.stats.held || 0 %></dd></div>
+        <div><dt>Digipogs spent</dt><dd><%= admin.stats.digipogs %></dd></div>
+        <div><dt>Admins</dt><dd><%= admin.stats.admins || 0 %></dd></div>
+      </dl>
+      <% if (admin.health && admin.health.matchmakingPaused) { %>
+        <p class="notice">Matchmaking paused for new joins.</p>
+      <% } %>
+      <h3>Live</h3>
+      <% if (!admin.games.length) { %>
+        <p class="hint">No active games.</p>
+      <% } else { %>
+        <table class="admin-table">
+          <thead><tr><th>Match</th><th>Mode</th><th>Status</th><th>Players</th></tr></thead>
+          <tbody>
+            <% admin.games.forEach(function (game) { %>
+              <tr>
+                <td class="admin-mono"><a href="/admin/games/<%= game.id %>"><%= String(game.id).slice(0, 8) %></a></td>
+                <td><%= game.mode %></td>
+                <td><%= game.status %></td>
+                <td>
+                  <% (game.players || []).forEach(function (p, i) { %>
+                    <% if (i) { %> vs <% } %>
+                    <% if (p.accountId) { %><a href="/admin/users/<%= p.accountId %>"><%= p.name %></a><% } else { %><%= p.name || "—" %><% } %>
+                  <% }) %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+      <% if (admin.queues) { %>
+        <p class="admin-muted">Queues — casual <%= admin.queues.casual %>, ranked <%= admin.queues.ranked %>, training <%= admin.queues.training %></p>
+      <% } %>
+    </section>
+  </div>
+  <%- include("../suggestion-modal", { nextPath: "/admin" }) %>
+</body>
+</html>

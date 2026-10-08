@@ -4,9 +4,12 @@ import { allowCommand, allowSocketEvent, sanitizeCommand } from "./commandLimit.
 import { debugRangesEnabled } from "./hardening.js";
 import {
   allowChat,
+  chatAdminHistoryMax,
   chatHistoryMax,
+  encodeChatJson,
   matchChatEnabled,
   sanitizeChatText,
+  serializeChatLog,
 } from "./chat.js";
 import {
   metricsEnabled,
@@ -24,9 +27,13 @@ import {
 import { BotController, DIFFICULTIES, STRATEGY_MODES } from "./bot.js";
 import {
   chargeHeld,
+  createPlayerReport,
   eloK,
+  hasPlayerReport,
   recordMatchResult,
   refundTicket,
+  releaseHold,
+  REPORT_BODY_MAX,
 } from "./db.js";
 import { asErr, child as childLogger, createSampler, safeLog } from "./logger.js";
 import { nextMmr } from "./rating.js";
@@ -73,6 +80,7 @@ function emptySeat(key, sideId) {
     queue: [],
     chatBucket: null,
     reconnectAt: [],
+    alreadyReported: false,
   };
 }
 
@@ -117,8 +125,10 @@ export class GameRoom {
     this.stateAccumMs = 0;
     this.playSnapshotSent = false;
     this.winnerSent = false;
-    /** Ephemeral match chat (user + system). */
+    /** Ephemeral match chat for clients (trimmed). */
     this.chatLog = [];
+    /** Longer chat archive for admin review / games.chat_json. */
+    this.adminChatLog = [];
     this.chatSeq = 0;
     /** Bot/training: freeze sim while a human has settings open. */
     this.menuPaused = false;
@@ -207,6 +217,7 @@ export class GameRoom {
     seat.queue = [];
     seat.chatBucket = null;
     seat.reconnectAt = [];
+    seat.alreadyReported = false;
   }
 
   remember(socket) {
@@ -228,8 +239,32 @@ export class GameRoom {
     seat.formbarId = player.formbarId || null;
     seat.mmr = Number.isFinite(player.mmr) ? player.mmr : null;
     seat.bot = null;
+    seat.alreadyReported = false;
     if (player.id && this.matchmaker && this.matchmaker.rememberUserRoom) {
       this.matchmaker.rememberUserRoom(player.id, this);
+    }
+  }
+
+  /** Load whether this seat already reported the current opponent (async). */
+  async refreshReportState(seat) {
+    if (!seat || !seat.accountId) {
+      if (seat) seat.alreadyReported = false;
+      return;
+    }
+    const other = seat.key === "a" ? this.seat.b : this.seat.a;
+    if (!other || other.bot || !other.accountId) {
+      seat.alreadyReported = false;
+      return;
+    }
+    try {
+      seat.alreadyReported = await hasPlayerReport(seat.accountId, other.accountId);
+    } catch (err) {
+      safeLog(this.log, "warn", {
+        event: "report_state_failed",
+        err: asErr(err),
+        userId: seat.userId,
+      }, "report state lookup failed");
+      seat.alreadyReported = false;
     }
   }
 
@@ -297,6 +332,14 @@ export class GameRoom {
     this.clearDisconnectForSeat(seat);
     this.pushLobby();
     this.broadcastState();
+    this.refreshReportState(seat).then(() => {
+      if (seat.socket) seat.socket.emit("lobby", this.lobbyFor(seat));
+    }).catch(() => {});
+    if (other.userId && !other.bot) {
+      this.refreshReportState(other).then(() => {
+        if (other.socket) other.socket.emit("lobby", this.lobbyFor(other));
+      }).catch(() => {});
+    }
   }
 
   /**
@@ -322,6 +365,15 @@ export class GameRoom {
     return true;
   }
 
+  /** Both seats filled (human or bot) — matchup is known / about to start. */
+  seatsReady() {
+    const a = this.seat.a;
+    const b = this.seat.b;
+    const aOk = Boolean(a && (a.bot || a.userId));
+    const bOk = Boolean(b && (b.bot || b.userId));
+    return aOk && bOk;
+  }
+
   /** Opponent wins; shared by concede, disconnect timeout, reconnect spam. */
   forceConcedeSeat(seat, {
     chatLine,
@@ -330,7 +382,25 @@ export class GameRoom {
     spamMax,
     spamWindowMs,
   } = {}) {
-    if (this.status !== "playing" || this.sim.winner || this.closing) return false;
+    if (this.sim.winner || this.closing) return false;
+    if (this.status === "playing") {
+      // ok
+    } else if (this.status === "countdown" || (this.status === "waiting" && this.seatsReady())) {
+      // Pre-play leave is a forfeit once both seats know the matchup.
+      this.cancelCountdown();
+      this.countdownEnds = null;
+      if (this.status === "waiting" && this.paid && !this.charged) {
+        const ids = [this.seat.a.accountId, this.seat.b.accountId]
+          .filter((id) => Number.isInteger(id) && id > 0);
+        for (let i = 0; i < ids.length; i += 1) {
+          releaseHold(ids[i]).catch(() => {});
+        }
+      }
+      this.status = "playing";
+      this.playSnapshotSent = true;
+    } else {
+      return false;
+    }
     if (!seat || !seat.userId) return false;
     this.resetPauseState();
     this.sim.winner = seat.sideId === "player" ? "enemy" : "player";
@@ -384,6 +454,7 @@ export class GameRoom {
     seat.mmr = null;
     seat.socket = null;
     seat.queue = [];
+    seat.alreadyReported = false;
     if (this.mode === "training") {
       seat.bot = new TrainingBotController(seat.sideId);
       if (typeof seat.bot.setLog === "function") seat.bot.setLog(this.log);
@@ -999,6 +1070,20 @@ export class GameRoom {
     if (this.chatLog.length > max) {
       this.chatLog.splice(0, this.chatLog.length - max);
     }
+    this.adminChatLog.push(msg);
+    const adminMax = chatAdminHistoryMax();
+    if (this.adminChatLog.length > adminMax) {
+      this.adminChatLog.splice(0, this.adminChatLog.length - adminMax);
+    }
+  }
+
+  /** Lean chat lines for admin UI / persistence. */
+  chatArchivePublic() {
+    return serializeChatLog(this.adminChatLog);
+  }
+
+  chatArchiveJson() {
+    return encodeChatJson(this.adminChatLog);
   }
 
   broadcastChat(msg) {
@@ -1089,6 +1174,11 @@ export class GameRoom {
       this.sendHome(socket);
       return;
     }
+    // Matchup known (countdown, or waiting with both seats): leaving concedes.
+    if (this.status === "countdown" || (this.status === "waiting" && this.seatsReady())) {
+      this.forceConcedeSeat(seat, { reason: "concede" });
+      return;
+    }
     this.matchmaker.abandonSeat(this, seat, { goHome: true }).catch((err) => {
       safeLog(this.log, "error", {
         event: "match_error",
@@ -1175,6 +1265,79 @@ export class GameRoom {
     return null;
   }
 
+  /** Logged-in human vs logged-in human (not bots/guests). */
+  canReportFrom(seat) {
+    if (!seat || !seat.accountId || seat.bot) return false;
+    const other = seat.key === "a" ? this.seat.b : this.seat.a;
+    if (!other || other.bot || !other.accountId) return false;
+    return true;
+  }
+
+  /**
+   * In-match player report. Ack via socket `reportResult`.
+   * One report per reporter→reported pair forever.
+   */
+  async report(socket, payload) {
+    if (!allowSocketEvent(socket, "report")) {
+      socket.emit("reportResult", { ok: false, error: "rate_limited" });
+      return;
+    }
+    if (this.status === "dead" || this.closing) {
+      socket.emit("reportResult", { ok: false, error: "unavailable" });
+      return;
+    }
+    if (
+      this.status !== "waiting"
+      && this.status !== "countdown"
+      && this.status !== "playing"
+    ) {
+      socket.emit("reportResult", { ok: false, error: "unavailable" });
+      return;
+    }
+    const seat = this.seatBySocket(socket);
+    if (!seat || seat.bot || !seat.accountId) {
+      socket.emit("reportResult", { ok: false, error: "login_required" });
+      return;
+    }
+    const other = seat.key === "a" ? this.seat.b : this.seat.a;
+    if (!other || other.bot || !other.accountId) {
+      socket.emit("reportResult", { ok: false, error: "not_reportable" });
+      return;
+    }
+    if (seat.alreadyReported) {
+      socket.emit("reportResult", { ok: false, error: "already_reported" });
+      return;
+    }
+    const raw = payload && typeof payload === "object" ? payload.text : payload;
+    const result = await createPlayerReport({
+      reporterAccountId: seat.accountId,
+      reporterName: seat.name,
+      reportedAccountId: other.accountId,
+      reportedName: other.name,
+      matchId: this.id,
+      matchMode: this.mode,
+      body: raw,
+    });
+    if (!result.ok) {
+      if (result.error === "already_reported") seat.alreadyReported = true;
+      socket.emit("reportResult", { ok: false, error: result.error || "failed" });
+      if (result.error === "already_reported") {
+        socket.emit("lobby", this.lobbyFor(seat));
+      }
+      return;
+    }
+    seat.alreadyReported = true;
+    safeLog(this.log, "info", {
+      event: "player_reported",
+      reportId: result.id,
+      reporterAccountId: seat.accountId,
+      reportedAccountId: other.accountId,
+      matchId: this.id,
+    }, "player reported");
+    socket.emit("reportResult", { ok: true, id: result.id });
+    socket.emit("lobby", this.lobbyFor(seat));
+  }
+
   waitingText() {
     if (this.mode === "ranked") return "Searching for a ranked match";
     if (this.mode === "training") return "Waiting for a training opponent";
@@ -1208,6 +1371,7 @@ export class GameRoom {
   lobbyFor(seat) {
     const chatOn = this.roomChatActive();
     const pause = this.pausePublicFor(seat);
+    const canReport = this.canReportFrom(seat);
     return {
       seat: seat.key,
       status: this.status,
@@ -1217,6 +1381,9 @@ export class GameRoom {
       countdownLeft: this.countdownLeftMs(),
       you: seat.userId ? { id: seat.userId, name: seat.name } : null,
       opponent: this.opponentOf(seat),
+      canReport,
+      alreadyReported: canReport && Boolean(seat.alreadyReported),
+      reportBodyMax: REPORT_BODY_MAX,
       botSettings: this.botSettingsPublic(),
       debugPlay: this.debugPlayPublic(),
       chatEnabled: chatOn,
@@ -1237,6 +1404,15 @@ export class GameRoom {
     snap.status = this.status;
     snap.countdownEnds = this.countdownEnds;
     snap.countdownLeft = this.countdownLeftMs();
+    // Per-seat identity so both clients keep opponent names even if a lobby
+    // event was missed (joiner often sees state before/without a clean lobby).
+    if (seat) {
+      snap.you = seat.userId ? { id: seat.userId, name: seat.name } : null;
+      snap.opponent = this.opponentOf(seat);
+    } else {
+      snap.you = null;
+      snap.opponent = null;
+    }
     const pause = seat
       ? this.pausePublicFor(seat)
       : {
@@ -1403,6 +1579,9 @@ export class GameRoom {
         mmrBAfter,
         createdAt: this.createdAt,
         endedAt,
+        winReason,
+        outcome: winReason === "concede" ? "forfeit" : "completed",
+        chatJson: this.chatArchiveJson(),
       },
     }).catch((err) => {
       safeLog(this.log, "error", {

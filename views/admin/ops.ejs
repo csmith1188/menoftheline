@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Ops · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Website operations</h2>
+      <div class="admin-panel">
+        <h3>Health</h3>
+        <dl class="stats">
+          <div><dt>Version</dt><dd><%= health.version %></dd></div>
+          <div><dt>Uptime</dt><dd><%= Math.floor(health.uptimeSec/60) %> min</dd></div>
+          <div><dt>Env</dt><dd><%= health.nodeEnv %></dd></div>
+          <div><dt>Metrics</dt><dd><%= health.metrics ? "on" : "off" %></dd></div>
+          <div><dt>Mail</dt><dd><%= health.mailReady ? "ready" : "not ready" %></dd></div>
+        </dl>
+        <% if (health.warnings && health.warnings.length) { %>
+          <ul><% health.warnings.forEach(function (w) { %><li class="hint"><%= w %></li><% }) %></ul>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Maintenance / matchmaking</h3>
+        <form method="post" action="/admin/ops/maintenance">
+          <%- include("../csrf-field") %>
+          <label>Notice<textarea name="message" rows="2" style="width:100%"><%= health.maintenanceMessage %></textarea></label>
+          <label><input type="checkbox" name="paused" value="1" <%= health.matchmakingPaused ? "checked" : "" %>> Pause new matchmaking (active matches continue)</label>
+          <button type="submit">Save</button>
+        </form>
+      </div>
+
+      <div class="admin-panel">
+        <h3>News (JSON)</h3>
+        <form method="post" action="/admin/ops/news">
+          <%- include("../csrf-field") %>
+          <textarea name="newsJson" rows="16" style="width:100%; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;"><%= JSON.stringify(news, null, 2) %></textarea>
+          <button type="submit">Save news</button>
+        </form>
+      </div>
+
+      <div class="admin-panel">
+        <h3>CSV exports</h3>
+        <div class="admin-actions">
+          <a class="action" href="/admin/export/accounts.csv">Accounts</a>
+          <a class="action" href="/admin/export/games.csv">Games</a>
+          <a class="action" href="/admin/export/ticket_ledger.csv">Ticket ledger</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

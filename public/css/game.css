@@ -109,6 +109,25 @@ li::marker {
   border: 0;
 }
 
+.lobby-logo {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, 78vw);
+  max-height: 28vh;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.lobby-opp {
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  color: #e6d4a8;
+}
+
 .tutorial {
   /* Scale type from the top-lane band so the panel stays inside it on phones. */
   --tutorial-size: clamp(10px, calc(var(--top-lane-height, 112px) * 0.155), 18px);
@@ -514,24 +533,19 @@ li::marker {
   padding: 8px 12px;
 }
 
-.menu .action[aria-pressed="true"]:not(.southpaw) {
-  border-color: var(--gold);
-  background: #3a3120;
-}
-
 .menu-block.menu-actions .action {
   width: auto;
   flex: 1 1 8rem;
 }
 
-.southpaw {
+.pref-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.southpaw .mark {
+.pref-toggle .mark {
   position: relative;
   width: 36px;
   height: 20px;
@@ -541,7 +555,7 @@ li::marker {
   flex: 0 0 auto;
 }
 
-.southpaw .mark::after {
+.pref-toggle .mark::after {
   content: "";
   position: absolute;
   top: 2px;
@@ -552,66 +566,41 @@ li::marker {
   background: var(--text);
 }
 
-.southpaw[aria-pressed="true"] .mark {
+.pref-toggle[aria-pressed="true"] .mark {
   border-color: var(--gold);
   background: #3a3120;
 }
 
-.southpaw[aria-pressed="true"] .mark::after {
+.pref-toggle[aria-pressed="true"] .mark::after {
   left: 18px;
   background: var(--gold);
 }
 
-.sound {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.sound-range {
+  width: 100%;
+  margin: -2px 0 2px;
+  accent-color: var(--gold);
+  cursor: pointer;
+}
+
+.menu .report-body {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
   padding: 8px 10px;
-  border: 1px solid var(--line);
-  background: #1a222c;
-  color: var(--text);
-  font: inherit;
-  cursor: default;
-}
-
-.sound-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 0.95rem;
-}
-
-.sound-mute {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #121821;
   color: var(--text);
   font: inherit;
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  min-height: 28px;
-  padding: 2px 8px;
-  cursor: pointer;
-  touch-action: manipulation;
+  resize: vertical;
+  min-height: 4.5rem;
 }
 
-.sound-mute:hover {
-  border-color: var(--gold);
-}
-
-.sound-mute[aria-pressed="true"] {
-  border-color: var(--gold);
-  background: #3a3120;
-  color: var(--gold);
-}
-
-.sound input[type="range"] {
-  width: 100%;
-  margin: 0;
-  accent-color: var(--gold);
-  cursor: pointer;
+.menu .confirm .hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  opacity: 0.85;
 }
 
 .training {
@@ -703,13 +692,8 @@ li::marker {
     font-size: 0.9rem;
   }
 
-  .sound {
-    padding: 6px 8px;
-    gap: 4px;
-  }
-
-  .sound-head {
-    font-size: 0.85rem;
+  .sound-range {
+    margin: -2px 0 0;
   }
 
   .training-grid {
@@ -799,19 +783,18 @@ li::marker {
     font-size: 0.8rem;
   }
 
-  .sound {
-    padding: 4px 6px;
-    gap: 3px;
+  .pref-toggle .mark {
+    width: 32px;
+    height: 18px;
   }
 
-  .sound-head {
-    font-size: 0.78rem;
+  .pref-toggle .mark::after {
+    width: 12px;
+    height: 12px;
   }
 
-  .sound-mute {
-    min-height: 22px;
-    padding: 0 6px;
-    font-size: 0.65rem;
+  .pref-toggle[aria-pressed="true"] .mark::after {
+    left: 16px;
   }
 
   .training-grid {

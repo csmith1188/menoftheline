@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Analytics · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Analytics</h2>
+      <form class="admin-filters" method="get">
+        <label>Range
+          <select name="range" onchange="this.form.submit()">
+            <% ["24h","7d","30d","90d","all"].forEach(function (r) { %>
+              <option value="<%= r %>" <%= range === r ? "selected" : "" %>><%= r %></option>
+            <% }) %>
+          </select>
+        </label>
+      </form>
+      <p class="admin-muted"><%= analytics.trackingNote %></p>
+      <dl class="stats">
+        <div><dt>Accounts</dt><dd><%= analytics.accounts.total %></dd></div>
+        <div><dt>New</dt><dd><%= analytics.accounts.new_in_range %></dd></div>
+        <div><dt>DAU</dt><dd><%= analytics.activity.dau %></dd></div>
+        <div><dt>WAU</dt><dd><%= analytics.activity.wau %></dd></div>
+        <div><dt>MAU</dt><dd><%= analytics.activity.mau %></dd></div>
+        <div><dt>Verified</dt><dd><%= analytics.accounts.verified %></dd></div>
+        <div><dt>Unverified</dt><dd><%= analytics.accounts.unverified %></dd></div>
+        <div><dt>Banned</dt><dd><%= analytics.accounts.banned %></dd></div>
+        <div><dt>Peak sockets</dt><dd><%= analytics.peak.peak_sockets || "—" %></dd></div>
+        <div><dt>Tickets out</dt><dd><%= analytics.accounts.tickets %></dd></div>
+      </dl>
+
+      <div class="admin-panel">
+        <h3>Games by mode</h3>
+        <% charts.gamesByMode.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+        <p class="admin-muted">
+          Avg duration <%= analytics.games.avgDurationMs ? Math.round(analytics.games.avgDurationMs/60000) + " min" : "—" %>
+          · median <%= analytics.games.medianDurationMs ? Math.round(analytics.games.medianDurationMs/60000) + " min" : "—" %>
+        </p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Registrations / day</h3>
+        <% charts.registrations.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Economy</h3>
+        <p>Purchased tickets <%= analytics.economy.purchases.tickets_bought %> · Digipogs <%= analytics.economy.purchases.digipogs %>
+          · Failed <%= analytics.economy.purchases.failed %> · Pending <%= analytics.economy.purchases.pending %></p>
+        <p>Ledger charged <%= analytics.economy.ledger.charged %> · refunded <%= analytics.economy.ledger.refunded %>
+          · adjusted <%= analytics.economy.ledger.adjusted %> · spent <%= analytics.economy.ledger.spent %></p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Matchmaking</h3>
+        <p>Queued <%= analytics.matchmaking.queued %> · paired <%= analytics.matchmaking.paired %>
+          · expired <%= analytics.matchmaking.expired %> · abandoned <%= analytics.matchmaking.abandoned %>
+          · avg wait <%= analytics.matchmaking.avg_wait_ms != null ? Math.round(analytics.matchmaking.avg_wait_ms/1000) + "s" : "—" %></p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Retention / conversion</h3>
+        <p>Cohort <%= analytics.retention.cohort %>
+          · D1 <%= analytics.retention.d1 != null ? (analytics.retention.d1*100).toFixed(1)+"%" : "—" %>
+          · D7 <%= analytics.retention.d7 != null ? (analytics.retention.d7*100).toFixed(1)+"%" : "—" %>
+          · D30 <%= analytics.retention.d30 != null ? (analytics.retention.d30*100).toFixed(1)+"%" : "—" %></p>
+        <p>New→first match <%= analytics.conversion.withFirstMatch %>/<%= analytics.conversion.newAccounts %>
+          (<%= analytics.conversion.rate != null ? (analytics.conversion.rate*100).toFixed(1)+"%" : "—" %>)</p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>MMR distribution</h3>
+        <% charts.mmr.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Providers</h3>
+        <p>Local email <%= analytics.accounts.local_email %> · Formbar <%= analytics.accounts.formbar %> · Discord <%= analytics.accounts.discord %></p>
+        <p>Logins ok <%= analytics.logins.ok %> · failed <%= analytics.logins.failed %></p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

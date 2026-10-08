@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Match · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <p><a href="/admin/games">← Games</a></p>
+      <% if (live) { %>
+        <h2>Live match <span class="admin-mono"><%= live.id %></span></h2>
+        <p><%= live.mode %> · <%= live.status %> · <%= live.durationMs != null ? Math.round(live.durationMs/1000) + "s" : "" %></p>
+        <ul>
+          <% (live.players || []).forEach(function (p) { %>
+            <li>
+              <% if (p.accountId) { %><a href="/admin/users/<%= p.accountId %>"><%= p.name %></a><% } else { %><%= p.name %><% } %>
+              <%= p.connected ? "connected" : "disconnected" %>
+            </li>
+          <% }) %>
+        </ul>
+        <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
+          <div class="admin-danger">
+            <h3>Terminate</h3>
+            <p class="hint">Refunds charged tickets; no MMR change. Requires confirmation.</p>
+            <form method="post" action="/admin/games/<%= live.id %>/terminate">
+              <%- include("../csrf-field") %>
+              <label>Reason <input name="reason" required maxlength="500"></label>
+              <label><input type="checkbox" name="confirm" value="1"> Confirm terminate</label>
+              <button type="submit">Terminate match</button>
+            </form>
+          </div>
+        <% } %>
+      <% } %>
+      <% if (hist && hist.game) { %>
+        <h2>Finished match <span class="admin-mono"><%= hist.game.id %></span></h2>
+        <div class="admin-grid">
+          <div><strong>Mode</strong><div><%= hist.game.mode %></div></div>
+          <div><strong>Winner</strong><div><%= hist.game.winner_side || "—" %></div></div>
+          <div><strong>Outcome</strong><div><%= hist.game.outcome || "—" %></div></div>
+          <div><strong>Reason</strong><div><%= hist.game.win_reason || "—" %></div></div>
+          <div><strong>Started</strong><div><%= new Date(hist.game.created_at).toLocaleString() %></div></div>
+          <div><strong>Ended</strong><div><%= new Date(hist.game.ended_at).toLocaleString() %></div></div>
+        </div>
+        <p>
+          <% if (hist.game.account_a) { %><a href="/admin/users/<%= hist.game.account_a %>"><%= hist.game.name_a %></a><% } else { %><%= hist.game.name_a %><% } %>
+          vs
+          <% if (hist.game.account_b) { %><a href="/admin/users/<%= hist.game.account_b %>"><%= hist.game.name_b %></a><% } else { %><%= hist.game.name_b %><% } %>
+        </p>
+        <h3>Related events</h3>
+        <% if (!hist.events.length) { %><p class="hint">No admin events for this match.</p><% } else { %>
+          <table class="admin-table">
+            <thead><tr><th>When</th><th>Event</th><th>Message</th></tr></thead>
+            <tbody>
+              <% hist.events.forEach(function (e) { %>
+                <tr><td><%= new Date(e.created_at).toLocaleString() %></td><td><%= e.event %></td><td><%= e.message || "—" %></td></tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      <% } %>
+
+      <div class="admin-panel">
+        <h3>Match chat</h3>
+        <p class="hint">In-match chat (logged-in human vs human). Stored with the game when it ends; live matches show the current buffer.</p>
+        <% if (!chat || !chat.length) { %>
+          <p class="hint">No chat recorded for this match.</p>
+        <% } else { %>
+          <ol class="admin-chat-log">
+            <% chat.forEach(function (line) { %>
+              <li class="admin-chat-line <%= line.kind === 'system' ? 'system' : 'user' %>">
+                <span class="admin-chat-time"><%= line.at ? new Date(line.at).toLocaleTimeString() : "—" %></span>
+                <% if (line.kind === "system") { %>
+                  <span class="admin-chat-kind">system</span>
+                  <span class="admin-chat-text"><%= line.text %></span>
+                <% } else { %>
+                  <span class="admin-chat-from"><%= line.from || "Player" %></span>
+                  <span class="admin-chat-text"><%= line.text %></span>
+                <% } %>
+              </li>
+            <% }) %>
+          </ol>
+        <% } %>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

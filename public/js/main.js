@@ -22,13 +22,18 @@ import { bindRules } from "./rules.js";
 import { bindUnitInfo } from "./unitInfo.js";
 import { bindChat } from "./chat.js";
 import { readTooltipsDefault } from "./tooltips.js";
+import { writeBgmVolumePref, writeTooltipsPref } from "./prefs.js";
 import { createTutorial } from "./tutorial.js";
 
 const canvas = document.getElementById("board");
 const lobby = document.getElementById("lobby");
+const lobbyLogo = document.getElementById("lobby-logo");
 const lobbyYou = document.getElementById("lobby-you");
+const lobbyOpp = document.getElementById("lobby-opp");
 const lobbyText = document.getElementById("lobby-text");
 const lobbyLeave = document.getElementById("lobby-leave");
+/** First click arms concede on the pre-game leave button. */
+let lobbyLeaveArmed = false;
 const banner = document.getElementById("banner");
 const bannerText = document.getElementById("banner-text");
 const leave = document.getElementById("leave");
@@ -38,6 +43,12 @@ const menuYou = document.getElementById("menu-you");
 const oppName = document.getElementById("opp-name");
 const oppKind = document.getElementById("opp-kind");
 const pauseBtn = document.getElementById("pause-btn");
+const reportPlayerBtn = document.getElementById("report-player");
+const reportForm = document.getElementById("report-form");
+const reportBody = document.getElementById("report-body");
+const reportStatus = document.getElementById("report-status");
+const reportYes = document.getElementById("report-yes");
+const reportNo = document.getElementById("report-no");
 const concede = document.getElementById("concede");
 const confirmBox = document.getElementById("confirm");
 const concedeYes = document.getElementById("concede-yes");
@@ -91,6 +102,7 @@ tooltipsBtn.addEventListener("click", () => {
   board.tooltips = !board.tooltips;
   tooltipsBtn.setAttribute("aria-pressed", board.tooltips ? "true" : "false");
   if (!board.tooltips) board.gestureHints = null;
+  writeTooltipsPref(board.tooltips);
   socket.emit("tooltips", board.tooltips);
 });
 terrainLabelsBtn.setAttribute("aria-pressed", board.terrainLabels ? "true" : "false");
@@ -109,20 +121,18 @@ let controlSide = null;
 
 function syncSoundUi() {
   const volume = getSoundVolume();
-  const muted = volume <= 0;
+  const on = volume > 0;
   soundVolume.value = String(Math.round(volume * 100));
-  soundMute.setAttribute("aria-pressed", muted ? "true" : "false");
-  soundMute.textContent = muted ? "Unmute" : "Mute";
-  soundMute.title = muted ? "Unmute sound" : "Mute sound";
+  soundMute.setAttribute("aria-pressed", on ? "true" : "false");
+  soundMute.title = on ? "Mute sound" : "Unmute sound";
 }
 
 function syncBgmUi() {
   const volume = getBgmVolume();
-  const muted = volume <= 0;
+  const on = volume > 0;
   bgmVolume.value = String(Math.round(volume * 100));
-  bgmMute.setAttribute("aria-pressed", muted ? "true" : "false");
-  bgmMute.textContent = muted ? "Unmute" : "Mute";
-  bgmMute.title = muted ? "Unmute music" : "Mute music";
+  bgmMute.setAttribute("aria-pressed", on ? "true" : "false");
+  bgmMute.title = on ? "Mute music" : "Unmute music";
 }
 
 function syncMatchBgm() {
@@ -176,7 +186,9 @@ soundMute.addEventListener("click", () => {
   }
   syncSoundUi();
 });
-const meta = { you: null, opponent: null };
+const meta = { you: null, opponent: null, canReport: false, alreadyReported: false };
+let reportBusy = false;
+let reportBodyMax = 1000;
 let seat = null;
 let pending = null;
 let lastTick = -1;
@@ -209,7 +221,9 @@ board.onCommand = (cmd) => {
 bindInput(board);
 
 function persistBgmVolume() {
-  socket.emit("bgmVolume", Math.round(getBgmVolume() * 100));
+  const percent = Math.round(getBgmVolume() * 100);
+  writeBgmVolumePref(percent);
+  socket.emit("bgmVolume", percent);
 }
 
 bgmVolume.addEventListener("input", () => {
@@ -269,7 +283,7 @@ function syncPauseButton() {
     pauseBtn.setAttribute("aria-pressed", "true");
     return;
   }
-  pauseBtn.textContent = "Pause";
+  pauseBtn.textContent = "Request Pause";
   pauseBtn.setAttribute("aria-pressed", "false");
 }
 
@@ -289,12 +303,21 @@ function syncChrome() {
   const pausedBanner = playing && board.paused && !unpausing && !reconnecting;
   const showLobby = (waiting || countdown || unpausing || pausedBanner || reconnecting)
     && !board.winner;
+  const preGame = waiting || countdown;
+  // Opponent is known as soon as they seat — often before status flips to countdown.
+  const matchStarting = preGame && Boolean(meta.opponent);
   lobby.classList.toggle("hidden", !showLobby);
+  if (lobbyLogo) lobbyLogo.classList.toggle("hidden", !showLobby || !preGame);
   lobbyLeave.classList.toggle(
     "hidden",
     lobby.classList.contains("hidden") || unpausing || pausedBanner || reconnecting,
   );
-  if (waiting) lobbyText.textContent = lobbyMessage || "Waiting for an opponent";
+  if (!matchStarting) lobbyLeaveArmed = false;
+  if (waiting && matchStarting) {
+    lobbyText.textContent = "Match starting…";
+  } else if (waiting) {
+    lobbyText.textContent = lobbyMessage || "Waiting for an opponent";
+  }
   if (countdown) {
     const left = countdownSecondsLeft(board);
     lobbyText.textContent = `Match starts in ${left}`;
@@ -323,12 +346,28 @@ function syncChrome() {
     lastUnpauseBeep = null;
   }
   lobbyYou.textContent = meta.you ? `You are ${meta.you.name}` : "";
+  const oppLabel = meta.opponent && meta.opponent.name
+    ? (meta.opponent.kind === "bot" ? "Bot" : meta.opponent.name)
+    : "";
+  const showOpp = matchStarting && Boolean(oppLabel);
+  if (lobbyOpp) {
+    lobbyOpp.textContent = showOpp ? `vs ${oppLabel}` : "";
+    lobbyOpp.classList.toggle("hidden", !showOpp);
+  }
+  if (!lobbyLeave.classList.contains("hidden")) {
+    if (matchStarting) {
+      lobbyLeave.textContent = lobbyLeaveArmed ? "Confirm concede" : "Concede";
+    } else {
+      lobbyLeave.textContent = "Leave";
+    }
+  }
   const showBanner = Boolean(board.winner);
   banner.classList.toggle("hidden", !showBanner);
   if (showBanner) bannerText.textContent = bannerCopy();
   menuYou.textContent = meta.you ? meta.you.name : "";
   oppName.textContent = meta.opponent ? meta.opponent.name : "";
   oppKind.textContent = meta.opponent ? (meta.opponent.kind === "bot" ? "Bot" : "Player") : "";
+  syncReportUi();
   const canConcede = playing && !board.winner;
   const confirming = !confirmBox.classList.contains("hidden");
   concede.classList.toggle("hidden", !canConcede || confirming);
@@ -338,7 +377,16 @@ function syncChrome() {
   syncMatchBgm();
 }
 
+function applyMetaFromSnap(snap) {
+  if (!snap || typeof snap !== "object") return;
+  if (snap.you && snap.you.name) meta.you = snap.you;
+  if (Object.prototype.hasOwnProperty.call(snap, "opponent")) {
+    meta.opponent = snap.opponent || null;
+  }
+}
+
 function apply(snap) {
+  applyMetaFromSnap(snap);
   const sounds = applySnapshot(board, snap, seat, controlSide);
   if (snap.tick !== lastTick) {
     playSounds(sounds);
@@ -381,10 +429,52 @@ function queueState(snap) {
   stateRaf = requestAnimationFrame(flushState);
 }
 
+function setReportStatus(text, { error = false } = {}) {
+  if (!reportStatus) return;
+  if (!text) {
+    reportStatus.textContent = "";
+    reportStatus.classList.add("hidden");
+    return;
+  }
+  reportStatus.textContent = text;
+  reportStatus.classList.toggle("error", Boolean(error));
+  reportStatus.classList.remove("hidden");
+}
+
+function closeReportForm() {
+  if (!reportForm) return;
+  reportForm.classList.add("hidden");
+  if (reportBody) reportBody.value = "";
+  setReportStatus("");
+  reportBusy = false;
+  if (reportYes) reportYes.disabled = false;
+}
+
+function syncReportUi() {
+  if (!reportPlayerBtn) return;
+  const reporting = reportForm && !reportForm.classList.contains("hidden");
+  if (meta.alreadyReported) {
+    reportPlayerBtn.textContent = "Reported";
+    reportPlayerBtn.classList.toggle("hidden", !meta.canReport || reporting);
+    reportPlayerBtn.disabled = true;
+  } else {
+    reportPlayerBtn.textContent = "Report player";
+    reportPlayerBtn.disabled = false;
+    reportPlayerBtn.classList.toggle("hidden", !meta.canReport || reporting);
+  }
+  if ((!meta.canReport || meta.alreadyReported) && reporting) closeReportForm();
+}
+
 socket.on("lobby", (lobbyState) => {
   seat = lobbyState.seat;
   meta.you = lobbyState.you;
   meta.opponent = lobbyState.opponent;
+  meta.canReport = Boolean(lobbyState.canReport);
+  meta.alreadyReported = Boolean(lobbyState.alreadyReported);
+  if (Number.isFinite(Number(lobbyState.reportBodyMax))) {
+    reportBodyMax = Number(lobbyState.reportBodyMax);
+    if (reportBody) reportBody.maxLength = reportBodyMax;
+  }
   matchMode = lobbyState.mode || null;
   applyBotSettingsUi(lobbyState.botSettings || null);
   applyDebugPlayUi(lobbyState.debugPlay || null);
@@ -413,6 +503,12 @@ socket.on("lobby", (lobbyState) => {
     const snap = pending;
     pending = null;
     apply(snap);
+    // Lobby phase wins over a stale pending snapshot (e.g. waiting after countdown).
+    board.status = lobbyState.status;
+    applyCountdownTiming(board, lobbyState);
+    meta.you = lobbyState.you;
+    meta.opponent = lobbyState.opponent;
+    syncChrome();
   } else {
     syncChrome();
   }
@@ -482,13 +578,39 @@ function askLeave() {
   socket.emit("leave");
 }
 
-lobbyLeave.addEventListener("click", askLeave);
+function matchIsStarting() {
+  const preGame = board.status === "waiting" || board.status === "countdown";
+  return preGame && Boolean(meta.opponent);
+}
+
+function askLobbyLeave() {
+  if (matchIsStarting()) {
+    if (!lobbyLeaveArmed) {
+      lobbyLeaveArmed = true;
+      lobbyLeave.textContent = "Confirm concede";
+      return;
+    }
+    lobbyLeaveArmed = false;
+    if (!socket.connected) {
+      leaving = true;
+      stopMatchBgm();
+      window.location.assign("/");
+      return;
+    }
+    socket.emit("concede");
+    return;
+  }
+  askLeave();
+}
+
+lobbyLeave.addEventListener("click", askLobbyLeave);
 leave.addEventListener("click", askLeave);
 
 function closeMenu() {
   if (menu.classList.contains("hidden")) return;
   menu.classList.add("hidden");
   gear.setAttribute("aria-expanded", "false");
+  closeReportForm();
   setSettingsOpen(false);
 }
 
@@ -500,10 +622,12 @@ gear.addEventListener("click", () => {
   menu.classList.toggle("hidden");
   gear.setAttribute("aria-expanded", menu.classList.contains("hidden") ? "false" : "true");
   confirmBox.classList.add("hidden");
+  closeReportForm();
   if (board.status === "playing" && !board.winner) {
     concede.classList.remove("hidden");
     syncPauseButton();
   }
+  syncReportUi();
   setSettingsOpen(opening);
 });
 
@@ -513,8 +637,65 @@ if (pauseBtn) {
   });
 }
 
+if (reportPlayerBtn && reportForm) {
+  reportPlayerBtn.addEventListener("click", () => {
+    if (!meta.canReport || meta.alreadyReported) return;
+    confirmBox.classList.add("hidden");
+    reportForm.classList.remove("hidden");
+    reportPlayerBtn.classList.add("hidden");
+    setReportStatus("");
+    if (reportBody) reportBody.focus();
+  });
+  reportNo.addEventListener("click", () => {
+    closeReportForm();
+    syncReportUi();
+  });
+  reportYes.addEventListener("click", () => {
+    if (reportBusy || !meta.canReport || meta.alreadyReported) return;
+    const text = reportBody ? String(reportBody.value || "").trim() : "";
+    if (!text) {
+      setReportStatus("Describe what happened.", { error: true });
+      return;
+    }
+    reportBusy = true;
+    reportYes.disabled = true;
+    setReportStatus("Sending…");
+    socket.emit("report", { text });
+  });
+}
+
+socket.on("reportResult", (result) => {
+  reportBusy = false;
+  if (reportYes) reportYes.disabled = false;
+  if (!result || !result.ok) {
+    const err = result && result.error;
+    const msg = err === "already_reported"
+      ? "You already reported this player."
+      : err === "login_required"
+        ? "Log in to report players."
+        : err === "not_reportable"
+          ? "You can only report human opponents."
+          : err === "rate_limited"
+            ? "Slow down and try again."
+            : err === "body_required"
+              ? "Describe what happened."
+              : "Could not send report.";
+    if (err === "already_reported") {
+      meta.alreadyReported = true;
+      closeReportForm();
+      syncReportUi();
+    }
+    setReportStatus(msg, { error: true });
+    return;
+  }
+  meta.alreadyReported = true;
+  closeReportForm();
+  syncReportUi();
+});
+
 concede.addEventListener("click", () => {
   concede.classList.add("hidden");
+  closeReportForm();
   confirmBox.classList.remove("hidden");
 });
 

@@ -6,7 +6,12 @@ process.env.MATCH_CHAT = "1";
 
 const { GameRoom } = await import("../server/room.js");
 const { Matchmaker } = await import("../server/matchmaking.js");
-const { sanitizeChatText, allowChat } = await import("../server/chat.js");
+const {
+  sanitizeChatText,
+  allowChat,
+  encodeChatJson,
+  parseStoredChat,
+} = await import("../server/chat.js");
 const { CONFIG } = await import("../shared/config.js");
 
 function fakeSocket(id, name = id, accountId = null) {
@@ -80,12 +85,32 @@ test("room chat broadcasts user messages and keeps history", () => {
   assert.equal(fromA[0].from.name, "Alice");
   assert.equal(fromA[0].id, fromB[0].id);
   assert.ok(room.chatLog.some((msg) => msg.id === fromA[0].id));
+  assert.ok(room.adminChatLog.some((msg) => msg.id === fromA[0].id));
 
   const lobby = room.lobbyFor(room.seat.b);
   assert.equal(lobby.chatEnabled, true);
   assert.ok(lobby.chatHistory.some((msg) => msg.text === "Hello line"));
 
+  const archive = room.chatArchivePublic();
+  assert.ok(archive.some((msg) => msg.text === "Hello line" && msg.from === "Alice"));
+  const json = room.chatArchiveJson();
+  assert.ok(json);
+  assert.ok(parseStoredChat(json).some((msg) => msg.text === "Hello line"));
+
   cleanup(mm, room);
+});
+
+test("encodeChatJson / parseStoredChat round-trip", () => {
+  const json = encodeChatJson([
+    { id: "m1", kind: "system", text: "joined", at: 100 },
+    { id: "m2", kind: "user", from: { name: "Alice" }, text: "hi", at: 200 },
+  ]);
+  const rows = parseStoredChat(json);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].kind, "system");
+  assert.equal(rows[1].from, "Alice");
+  assert.equal(parseStoredChat(null).length, 0);
+  assert.equal(parseStoredChat("not-json").length, 0);
 });
 
 test("empty chat is dropped", () => {

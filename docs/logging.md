@@ -58,7 +58,11 @@ rg '"userId":"<id>"' ~/.pm2/logs/motl-*.log
 rg '"matchId":"<uuid>"' ~/.pm2/logs/motl-out.log | jq -c 'select(.event=="match_ended")'
 ```
 
-Useful events: `match_started`, `match_ended`, `player_disconnected`, `auth_failed`, `ticket_purchase`, `ticket_purchase_ambiguous`, `invalid_action`, `match_error`.
+Useful events: `match_started`, `match_ended`, `player_disconnected`, `auth_failed`, `ticket_purchase`, `ticket_purchase_ambiguous`, `invalid_action`, `match_error`, `admin_action`.
+
+## Admin event sink
+
+High-value events are also written to the SQLite `admin_events` table for `/admin/logs` (auth failures, ticket failures, match lifecycle, admin actions). Retention defaults to 14 days (`ADMIN_EVENT_RETAIN_DAYS`). This is not a full Pino mirror and does not store sim ticks or high-volume socket traffic.
 
 ## Recommended pm2-logrotate
 

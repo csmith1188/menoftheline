@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Reports · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Player reports</h2>
+      <p class="hint">Open reports from in-match settings. Each reporter may report a given player only once.</p>
+      <form class="admin-filters" method="get" action="/admin/reports">
+        <label>Status
+          <select name="status">
+            <% ["open", "resolved", "dismissed", "all"].forEach(function (s) { %>
+              <option value="<%= s %>" <%= status === s ? "selected" : "" %>><%= s %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label>Reported account ID
+          <input name="reported" type="number" min="1" step="1" value="<%= reportedFilter || "" %>" placeholder="optional">
+        </label>
+        <button type="submit">Filter</button>
+      </form>
+      <% if (!reports.length) { %>
+        <p class="hint">No reports match this filter.</p>
+      <% } else { %>
+        <ul class="list">
+          <% reports.forEach(function (item) { %>
+            <li class="card">
+              <div class="suggest-meta">
+                <span>
+                  <% if (item.reporter_account_id) { %><a href="/admin/users/<%= item.reporter_account_id %>"><%= item.reporter_name %></a><% } else { %><%= item.reporter_name %><% } %>
+                  →
+                  <% if (item.reported_account_id) { %><a href="/admin/users/<%= item.reported_account_id %>"><%= item.reported_name %></a><% } else { %><%= item.reported_name %><% } %>
+                </span>
+                <span class="hint"><%= new Date(item.created_at).toLocaleString() %></span>
+                <span class="admin-pill"><%= item.status %></span>
+              </div>
+              <p class="suggest-body"><%= item.body %></p>
+              <p class="hint">
+                Match <%= item.match_id ? item.match_id.slice(0, 8) : "—" %>
+                · <%= item.match_mode || "—" %>
+                <% if (item.match_id) { %> · <a href="/admin/games/<%= item.match_id %>">open match</a><% } %>
+                · <a href="/admin/reports?status=open&amp;reported=<%= item.reported_account_id %>">all open for reported</a>
+                · <a href="/admin/reports?status=all&amp;reported=<%= item.reported_account_id %>">all reports for reported</a>
+              </p>
+              <% if (item.status === "open") { %>
+                <div class="wiki-admin-actions">
+                  <form method="post" action="/admin/reports/<%= item.id %>/resolve">
+                    <%- include("../csrf-field") %>
+                    <input type="hidden" name="status" value="resolved">
+                    <input type="hidden" name="next" value="<%= listQuery %>">
+                    <label class="admin-inline-note">Note <input name="note" maxlength="500" placeholder="optional"></label>
+                    <button type="submit">Resolve</button>
+                  </form>
+                  <form method="post" action="/admin/reports/<%= item.id %>/resolve">
+                    <%- include("../csrf-field") %>
+                    <input type="hidden" name="status" value="dismissed">
+                    <input type="hidden" name="next" value="<%= listQuery %>">
+                    <button type="submit">Dismiss</button>
+                  </form>
+                  <form method="post" action="/admin/reports/user/<%= item.reported_account_id %>/resolve-all">
+                    <%- include("../csrf-field") %>
+                    <input type="hidden" name="status" value="resolved">
+                    <input type="hidden" name="next" value="<%= listQuery %>">
+                    <label class="admin-inline-note">Note <input name="note" maxlength="500" placeholder="optional"></label>
+                    <button type="submit">Resolve all for user</button>
+                  </form>
+                  <form method="post" action="/admin/reports/user/<%= item.reported_account_id %>/resolve-all">
+                    <%- include("../csrf-field") %>
+                    <input type="hidden" name="status" value="dismissed">
+                    <input type="hidden" name="next" value="<%= listQuery %>">
+                    <button type="submit">Dismiss all for user</button>
+                  </form>
+                </div>
+                <% if (typeof isAdmin !== "undefined" && isAdmin) { %>
+                  <div class="admin-panel admin-danger" style="margin-top:0.75rem">
+                    <h3>Quick ban reported player</h3>
+                    <form method="post" action="/admin/reports/user/<%= item.reported_account_id %>/ban">
+                      <%- include("../csrf-field") %>
+                      <input type="hidden" name="reportId" value="<%= item.id %>">
+                      <input type="hidden" name="next" value="<%= listQuery %>">
+                      <div class="admin-filters">
+                        <label>Reason<input name="reason" required maxlength="500" value="Player report #<%= item.id %>"></label>
+                        <label>Duration
+                          <select name="durationUnit">
+                            <option value="days">Days</option>
+                            <option value="hours">Hours</option>
+                            <option value="permanent">Permanent</option>
+                          </select>
+                        </label>
+                        <label>Value<input type="number" name="durationValue" min="1" step="1" value="7"></label>
+                        <label><input type="checkbox" name="confirm" value="1"> Confirm</label>
+                        <label><input type="checkbox" name="resolveAll" value="1" checked> Resolve all open reports</label>
+                        <button type="submit">Ban</button>
+                      </div>
+                    </form>
+                  </div>
+                <% } %>
+              <% } else if (item.resolution_note || item.resolved_at) { %>
+                <p class="hint">
+                  <%= item.status %> <%= item.resolved_at ? new Date(item.resolved_at).toLocaleString() : "" %>
+                  <% if (item.resolution_note) { %> · <%= item.resolution_note %><% } %>
+                </p>
+              <% } %>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </section>
+  </div>
+  <%- include("../suggestion-modal", { nextPath: "/admin/reports" }) %>
+</body>
+</html>

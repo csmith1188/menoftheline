@@ -1529,12 +1529,14 @@ export function writeSouthpaw(on) {
   }
 }
 
-/** Terrain emoji labels; off by default. */
+/** Terrain emoji labels; on by default when unset. */
 export function readTerrainLabels() {
   try {
-    return localStorage.getItem(TERRAIN_LABELS_KEY) === "1";
+    const stored = localStorage.getItem(TERRAIN_LABELS_KEY);
+    if (stored == null) return true;
+    return stored === "1";
   } catch (err) {
-    return false;
+    return true;
   }
 }
 

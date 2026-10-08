@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Logs · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Logs &amp; diagnostics</h2>
+      <% if (metricsEnabled && metrics) { %>
+        <div class="admin-panel">
+          <h3>Live metrics</h3>
+          <dl class="stats">
+            <div><dt>Rooms</dt><dd><%= metrics.rooms %></dd></div>
+            <div><dt>Sockets</dt><dd><%= metrics.sockets %></dd></div>
+            <div><dt>CPU %</dt><dd><%= metrics.cpuPercent != null ? metrics.cpuPercent.toFixed(1) : "—" %></dd></div>
+            <div><dt>RSS MB</dt><dd><%= metrics.rssMb != null ? metrics.rssMb.toFixed(1) : "—" %></dd></div>
+            <div><dt>Heap MB</dt><dd><%= metrics.heapMb != null ? metrics.heapMb.toFixed(1) : "—" %></dd></div>
+            <div><dt>Loop p99</dt><dd><%= metrics.eventLoopDelayMs && metrics.eventLoopDelayMs.p99 != null ? metrics.eventLoopDelayMs.p99.toFixed(2) : "—" %> ms</dd></div>
+            <div><dt>Cmds/s</dt><dd><%= metrics.commandsPerSec != null ? metrics.commandsPerSec.toFixed(1) : "—" %></dd></div>
+            <div><dt>Rejected</dt><dd><%= metrics.commandsRejected != null ? metrics.commandsRejected : "—" %></dd></div>
+          </dl>
+        </div>
+      <% } else { %>
+        <p class="hint">Set METRICS=1 to show live performance gauges.</p>
+      <% } %>
+
+      <form class="admin-filter-form" method="get" action="/admin/logs">
+        <table class="admin-table admin-filter-table">
+          <thead>
+            <tr>
+              <th>Level</th>
+              <th>Event</th>
+              <th>Module</th>
+              <th>Account</th>
+              <th>Match</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input name="level" value="<%= filters.level %>" aria-label="Level"></td>
+              <td><input name="event" value="<%= filters.event %>" aria-label="Event"></td>
+              <td><input name="module" value="<%= filters.module %>" aria-label="Module"></td>
+              <td><input name="accountId" value="<%= filters.accountId %>" aria-label="Account"></td>
+              <td><input name="matchId" value="<%= filters.matchId %>" aria-label="Match"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="admin-filter-actions">
+          <button type="submit">Filter</button>
+          <a class="action" href="/admin/logs">Refresh</a>
+          <a class="action" href="/admin/logs/download?level=<%= encodeURIComponent(filters.level) %>&event=<%= encodeURIComponent(filters.event) %>&module=<%= encodeURIComponent(filters.module) %>&accountId=<%= encodeURIComponent(filters.accountId) %>&matchId=<%= encodeURIComponent(filters.matchId) %>">CSV</a>
+        </div>
+      </form>
+      <p class="admin-muted"><%= events.total %> events · page <%= events.page %></p>
+      <table class="admin-table">
+        <thead><tr><th>When</th><th>Level</th><th>Event</th><th>Module</th><th>Account</th><th>Match</th><th>Message</th></tr></thead>
+        <tbody>
+          <% events.rows.forEach(function (row) { %>
+            <tr>
+              <td><%= new Date(row.created_at).toLocaleString() %></td>
+              <td><%= row.level %></td>
+              <td class="admin-mono"><%= row.event %></td>
+              <td><%= row.module || "—" %></td>
+              <td><% if (row.account_id) { %><a href="/admin/users/<%= row.account_id %>"><%= row.account_id %></a><% } else { %>—<% } %></td>
+              <td class="admin-mono"><% if (row.match_id) { %><a href="/admin/games/<%= row.match_id %>"><%= String(row.match_id).slice(0,8) %></a><% } else { %>—<% } %></td>
+              <td><%= row.message || "—" %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

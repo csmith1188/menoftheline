@@ -1,0 +1,292 @@
+.admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 0 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.admin-nav a {
+  text-decoration: none;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.admin-nav a.active,
+.admin-nav a:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  vertical-align: top;
+}
+
+.admin-table th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.7;
+}
+
+.admin-filters {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.65rem 0.75rem;
+  margin-bottom: 1rem;
+  align-items: end;
+}
+
+.admin-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 16rem;
+}
+
+.admin-filters label:first-child {
+  flex: 2 1 12rem;
+  max-width: 22rem;
+}
+
+.admin-filters input,
+.admin-filters select,
+.admin-panel input,
+.admin-panel select,
+.admin-panel textarea {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* landing.css makes every button width:100% — keep submit inline with fields */
+.admin-filters button {
+  width: auto;
+  min-width: 6.5rem;
+  min-height: 2.4rem;
+  flex: 0 0 auto;
+  padding: 0.4rem 1rem;
+  align-self: end;
+}
+
+.admin-filter-form {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.admin-filter-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.admin-filter-table th,
+.admin-filter-table td {
+  border-bottom: none;
+  padding: 0.25rem 0.35rem;
+  vertical-align: middle;
+}
+
+.admin-filter-table input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.admin-filter-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.admin-filter-actions button,
+.admin-filter-actions .action {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  min-height: 2.4rem;
+  padding: 0.35rem 0.75rem;
+  margin: 0;
+}
+
+.admin-panel {
+  margin: 1.25rem 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.admin-inline-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  margin-right: 0.35rem;
+}
+
+.admin-inline-note input {
+  width: 10rem;
+  max-width: 40vw;
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+}
+
+.admin-panel h3 {
+  margin: 0 0 0.5rem;
+}
+
+.admin-chat-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  max-height: 28rem;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.admin-chat-line {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(4rem, 7rem) 1fr;
+  gap: 0.35rem 0.65rem;
+  padding: 0.4rem 0.65rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 0.9rem;
+  align-items: baseline;
+}
+
+.admin-chat-line:last-child {
+  border-bottom: none;
+}
+
+.admin-chat-line.system {
+  opacity: 0.85;
+  font-style: italic;
+}
+
+.admin-chat-time,
+.admin-chat-kind {
+  font-size: 0.78rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-chat-from {
+  font-weight: 600;
+}
+
+.admin-chat-text {
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .admin-chat-line {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+
+.admin-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.admin-bar .track {
+  flex: 1;
+  height: 0.55rem;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.admin-bar .fill {
+  height: 100%;
+  background: rgba(40, 80, 40, 0.65);
+}
+
+.admin-bar .val {
+  min-width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-danger {
+  border: 1px solid rgba(140, 40, 40, 0.35);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.admin-muted {
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.admin-pill {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 0.8rem;
+}
+
+.admin-pill.banned {
+  background: rgba(140, 40, 40, 0.15);
+  color: #6a1a1a;
+}
+
+.admin-pill.admin-role {
+  background: rgba(40, 70, 120, 0.15);
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.admin-actions button,
+.admin-filters button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.admin-mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+  .admin-table {
+    display: block;
+    overflow-x: auto;
+  }
+}

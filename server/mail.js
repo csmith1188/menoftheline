@@ -61,18 +61,27 @@ export async function sendMail({ to, subject, text, html }) {
     recordMessage(message);
     return { messageId: "capture" };
   }
+  const toDomain = String(to || "").includes("@")
+    ? String(to).split("@").pop()
+    : undefined;
   try {
-    return await getTransporter().sendMail(message);
+    const info = await getTransporter().sendMail(message);
+    logger.info({
+      event: "mail_send_ok",
+      toDomain,
+      messageId: info && info.messageId,
+      response: info && info.response,
+      accepted: info && info.accepted,
+      rejected: info && info.rejected,
+    }, "SMTP send accepted");
+    return info;
   } catch (err) {
-    const domain = String(to || "").includes("@")
-      ? String(to).split("@").pop()
-      : undefined;
     logger.error({
       event: "mail_send_failed",
       err: asErr(err),
       errCode: err && err.code,
       responseCode: err && err.responseCode,
-      toDomain: domain,
+      toDomain,
     }, "SMTP send failed");
     throw err;
   }

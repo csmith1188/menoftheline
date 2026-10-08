@@ -292,8 +292,10 @@ export const CONFIG = {
   chatRefillPerSec: 1,
   /** Max characters in a chat message (after sanitize). */
   chatMaxChars: 200,
-  /** Ring buffer size for in-room chat history. */
+  /** Ring buffer size for in-room chat history (clients). */
   chatHistoryMax: 50,
+  /** Longer ring kept for admin review / game row persistence. */
+  chatAdminHistoryMax: 200,
   /** Mid-match reconnects in the window before forced concede. */
   reconnectSpamMax: 10,
   /** Sliding window (ms) for reconnect spam detection. */

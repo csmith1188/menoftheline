@@ -1,4 +1,12 @@
-import { clearOwner, ensureHold, holdTicket, ownerForUser, refundTicket, releaseHold } from "./db.js";
+import {
+  clearOwner,
+  ensureHold,
+  holdTicket,
+  ownerForUser,
+  recordMmEvent,
+  refundTicket,
+  releaseHold,
+} from "./db.js";
 import { allowSocketEvent } from "./commandLimit.js";
 import { asErr, child as childLogger, safeLog } from "./logger.js";
 import { workerCount, workerIndex } from "./owners.js";
@@ -294,6 +302,11 @@ export class Matchmaker {
       userId: user.id,
       socketId: socket.id,
     }, "joined casual queue");
+    recordMmEvent({
+      event: "queued",
+      mode: "casual",
+      accountId: entry.accountId,
+    }).catch(() => {});
     this.markSearchSession(socket, "casual");
     this.emitSearchLobby(entry);
     await this.pairCasual();
@@ -414,6 +427,11 @@ export class Matchmaker {
       mmr: user.mmr,
       socketId: socket.id,
     }, "joined ranked queue");
+    recordMmEvent({
+      event: "queued",
+      mode: "ranked",
+      accountId: entry.accountId,
+    }).catch(() => {});
     this.markSearchSession(socket, "ranked");
     this.emitSearchLobby(entry);
     await this.pairRanked();
@@ -513,6 +531,21 @@ export class Matchmaker {
       userIdA: a.userId,
       userIdB: b.userId,
     }, "players paired");
+    const now = Date.now();
+    recordMmEvent({
+      event: "paired",
+      mode,
+      matchId: room.id,
+      accountId: a.accountId || null,
+      waitMs: a.joinedAt ? now - a.joinedAt : null,
+    }).catch(() => {});
+    recordMmEvent({
+      event: "paired",
+      mode,
+      matchId: room.id,
+      accountId: b.accountId || null,
+      waitMs: b.joinedAt ? now - b.joinedAt : null,
+    }).catch(() => {});
     const ok = await room.startCountdown();
     if (ok) return;
     this.log.warn({
@@ -585,6 +618,12 @@ export class Matchmaker {
           userId: entry.userId,
           ageMs: now - entry.joinedAt,
         }, "queue search timed out");
+        recordMmEvent({
+          event: "expired",
+          mode: entry.mode,
+          accountId: entry.accountId || null,
+          waitMs: now - entry.joinedAt,
+        }).catch(() => {});
         await this.removeQueued(entry);
         if (entry.socket) this.failHome(entry.socket, "Search timed out.");
       }
@@ -660,6 +699,12 @@ export class Matchmaker {
   chat(socket, payload) {
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.chat(socket, payload);
+  }
+
+  async report(socket, payload) {
+    const room = this.rooms.get(socket.data.gameId);
+    if (room) await room.report(socket, payload);
+    else if (socket) socket.emit("reportResult", { ok: false, error: "unavailable" });
   }
 
   pause(socket) {
@@ -812,6 +857,13 @@ export class Matchmaker {
       wasCountdown,
       goHome: Boolean(goHome),
     }, "seat abandoned before play");
+    recordMmEvent({
+      event: "abandoned",
+      mode,
+      matchId: room.id,
+      accountId: seat.accountId || null,
+      meta: { wasCountdown, goHome: Boolean(goHome) },
+    }).catch(() => {});
     const other = seat.key === "a" ? room.seat.b : room.seat.a;
     const otherSnap = {
       userId: other.userId,

@@ -1,13 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { io as ioClient } from "socket.io-client";
 import { publicKeyB64, signFormbar } from "./formbarToken.js";
 
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "motl-client-api-"));
+process.env.DATA_DIR = dataDir;
 process.env.BOT_COUNTDOWN_MS = "50";
 process.env.COUNTDOWN_MS = "50";
 process.env.SKIP_FORMBAR = "1";
 process.env.FORMBAR_LOGIN = "1";
 process.env.FORMBAR_PUBLIC_KEY_B64 = publicKeyB64;
+process.env.NODE_ENV = "test";
 
 const { listen, httpServer, io } = await import("../app.js");
 const { disconnectFormbar } = await import("../server/formbar.js");
@@ -25,6 +31,11 @@ test.after(async () => {
       httpServer.close(() => resolve());
     });
   });
+  try {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  } catch {
+    // SQLite may still hold the temp database on Windows.
+  }
 });
 
 function onceEvent(socket, event, timeoutMs = 8000) {

@@ -262,7 +262,7 @@ test("create order includes return/cancel URLs for mobile App Switch", async () 
   const api = mockPaypalApi();
   const checkoutUrl = "https://example.test/buy";
   const created = await createPaypalOrder({
-    packageId: "pack_5",
+    packageId: "pack_50",
     accountId: account.id,
     returnUrl: checkoutUrl,
     cancelUrl: checkoutUrl,
@@ -279,7 +279,7 @@ test("create order includes return/cancel URLs for mobile App Switch", async () 
   assert.equal(experience.cancel_url, checkoutUrl);
   assert.equal(experience.user_action, "PAY_NOW");
   assert.equal(experience.shipping_preference, "NO_SHIPPING");
-  assert.equal(api.lastCreateBody.purchase_units[0].amount.value, "5.00");
+  assert.equal(api.lastCreateBody.purchase_units[0].amount.value, "50.00");
 });
 
 test("amount mismatch does not credit", async () => {

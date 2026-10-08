@@ -187,18 +187,21 @@ function buttonOptions(root, packageId, csrf) {
 
 function mountButtons(paypal, root, packageId, csrf, { resume = false } = {}) {
   const container = root.querySelector(`#paypal-buttons-${packageId}`);
-  if (!container || !paypal.Buttons) return null;
+  if (!container || !paypal.Buttons) return { buttons: null, resumed: false };
 
   const buttons = paypal.Buttons(buttonOptions(root, packageId, csrf));
+  let resumed = false;
   if (resume && typeof buttons.resume === "function") {
     try {
+      // PayPal docs: resume() before render() after App Switch / redirect return.
       buttons.resume();
+      resumed = true;
     } catch (err) {
       logPaypalDiag("resume", err);
     }
   }
   buttons.render(container);
-  return buttons;
+  return { buttons, resumed };
 }
 
 async function handleReturnWithoutResume(root, csrf) {
@@ -235,8 +238,8 @@ async function init() {
     if (isReturn && packages.length) {
       // Resume on the first package button so SDK can fire onApprove/onCancel.
       const first = packages[0];
-      const buttons = mountButtons(paypal, root, first.dataset.packageId, csrf, { resume: true });
-      resumed = Boolean(buttons && typeof buttons.resume === "function");
+      const mounted = mountButtons(paypal, root, first.dataset.packageId, csrf, { resume: true });
+      resumed = mounted.resumed;
       for (let i = 1; i < packages.length; i += 1) {
         mountButtons(paypal, root, packages[i].dataset.packageId, csrf);
       }
@@ -247,7 +250,14 @@ async function init() {
         clearPaypalQuery();
         setStatus(root, "Payment cancelled.", "");
       } else {
-        setStatus(root, "", "");
+        // Resume should invoke onApprove; keep a capture fallback if it does not.
+        setStatus(root, "Confirming payment…", "busy");
+        window.setTimeout(() => {
+          const el = statusEl(root);
+          const kind = el && el.dataset.kind;
+          if (kind === "ok" || kind === "error") return;
+          handleReturnWithoutResume(root, csrf);
+        }, 2500);
       }
     } else {
       for (const el of packages) {

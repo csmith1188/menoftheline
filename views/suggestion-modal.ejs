@@ -1,4 +1,4 @@
-<% if (viewer) { %>
+<% if (viewer && accountEmailVerified(viewer)) { %>
   <div id="suggest-modal" class="suggest-modal hidden" role="dialog" aria-modal="true" aria-labelledby="suggest-title" tabindex="-1">
     <div class="suggest-card">
       <h2 id="suggest-title">Suggestion</h2>

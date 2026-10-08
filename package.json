@@ -9,6 +9,7 @@
     "patch-notes": "node scripts/generate-patch-notes.js",
     "load": "node scripts/load/socket-load.js",
     "sim-bench": "node scripts/load/sim-bench.js",
+    "export-graphics": "node scripts/export-graphics.js",
     "test": "node --test test/assess.test.js test/authValidation.test.js test/botTerrain.test.js test/capacity.test.js test/capacityHttp.test.js test/chat.test.js test/clientApi.test.js test/controller.test.js test/economy.test.js test/fortCover.test.js test/interp.test.js test/keep.test.js test/lineBonus.test.js test/localAuth.test.js test/map.test.js test/matchOptions.test.js test/owners.test.js test/pathCache.test.js test/pause.test.js test/pushback.test.js test/reform.test.js test/sanitizeUserText.test.js test/security.test.js test/securityHttp.test.js test/settingsWrite.test.js test/simHash.test.js test/submissionLimits.test.js test/tactics.test.js test/targeting.test.js test/terrain.test.js test/uiMetrics.test.js test/variants.test.js"
   },
   "dependencies": {
@@ -25,5 +26,8 @@
     "socket.io-client": "^4.8.3",
     "sqlite3": "^5.1.7",
     "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.10"
   }
 }

@@ -45,6 +45,33 @@ export function authEmailEnabled() {
   return envFlag("AUTH_EMAIL", true);
 }
 
+/** Millisecond epoch floor (~2001); rejects null/0/boolean-ish SQLite `1` leftovers. */
+const EMAIL_VERIFIED_AT_MIN_MS = 1_000_000_000_000;
+
+/**
+ * Account features (suggest, tickets UI, account play id) require a verified email
+ * when AUTH_EMAIL is on. Provider-only accounts (no email) count as verified.
+ * Unverified local accounts may still log in with guest-level access.
+ */
+export function accountEmailVerified(account) {
+  if (!account) return false;
+  if (!authEmailEnabled()) return true;
+  if (!account.email) return true;
+  const at = Number(account.email_verified_at);
+  return Number.isFinite(at) && at >= EMAIL_VERIFIED_AT_MIN_MS;
+}
+
+/** Local account still needs a verification email (AUTH_EMAIL on, address set, not verified). */
+export function needsEmailVerification(account) {
+  return Boolean(
+    authEmailEnabled()
+    && account
+    && account.email
+    && account.password_hash
+    && !accountEmailVerified(account),
+  );
+}
+
 export function anyLoginEnabled() {
   return localAccountsEnabled() || formbarLoginEnabled() || discordLoginEnabled();
 }

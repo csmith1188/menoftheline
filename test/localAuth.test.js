@@ -153,14 +153,20 @@ test("signup verify login and password reset", async (t) => {
   assert.equal(signup.status, 302);
   assert.match(String(signup.headers.get("location")), /\/login$/);
 
-  const loginBlocked = await fetchSession(server.base, "/login", jar, {
+  const loginUnverified = await fetchSession(server.base, "/login", jar, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ email, password: "password123" }),
   });
-  assert.equal(loginBlocked.status, 400);
-  const blockedHtml = await loginBlocked.text();
-  assert.match(blockedHtml, /Verify your email/);
+  assert.equal(loginUnverified.status, 302);
+  assert.equal(loginUnverified.headers.get("location"), "/");
+
+  const homeUnverified = await fetchSession(server.base, "/", jar);
+  assert.equal(homeUnverified.status, 200);
+  const unverifiedHtml = await homeUnverified.text();
+  assert.match(unverifiedHtml, /Verify User/);
+  assert.match(unverifiedHtml, /Verify your email to unlock account features/);
+  assert.ok(!unverifiedHtml.includes("[ Suggest ]"));
 
   const token = lastMailUrl(server.mailPath, "/verify");
   assert.ok(token);
@@ -170,7 +176,9 @@ test("signup verify login and password reset", async (t) => {
 
   const home = await fetchSession(server.base, "/", jar);
   assert.equal(home.status, 200);
-  assert.match(await home.text(), /Verify User/);
+  const verifiedHtml = await home.text();
+  assert.match(verifiedHtml, /Verify User/);
+  assert.ok(verifiedHtml.includes("[ Suggest ]"));
 
   await fetchSession(server.base, "/logout", jar);
   const forgot = await fetchSession(server.base, "/forgot", jar, {

@@ -17,6 +17,7 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
 | `npm run sim-bench` | One crowded match: step and snapshot times |
 | `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
+| `npm run export-graphics` | Transparent PNGs of lanes/keeps/towns/terrain/units → `public/img/` |
 
 Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). In-match chat: `MATCH_CHAT` (default on).
 
@@ -101,10 +102,11 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `app.js` routes |
 | Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `app.js` routes, `views/login.ejs` / signup / forgot / reset / profile. Profile link merges when the identity is already taken (union providers; refuse same-provider conflicts). New accounts take the provider/local display name; collisions get `Name 2`…; owners can rename on profile (3/hour). |
-| Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js`, `test/security.test.js` |
+| Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js` (static assets before session), `test/security.test.js` / `test/securityHttp.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
+| Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` |
 | Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `app.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |

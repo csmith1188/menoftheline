@@ -1,6 +1,7 @@
 node_modules/
 data/*
 scripts/load/results/
+exports/
 *.cpuprofile
 !data/news.json
 .env

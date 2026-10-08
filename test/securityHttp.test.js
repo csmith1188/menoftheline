@@ -122,6 +122,32 @@ test("csrf rejects a missing token and accepts a real one", async (t) => {
   assert.equal(present.status, 400);
 });
 
+test("guest play csrf survives a parallel static asset fetch", async (t) => {
+  const server = spawnServer({});
+  t.after(() => stopServer(server));
+  await server.ready;
+  const [page, css] = await Promise.all([
+    fetch(`${server.base}/games`, { redirect: "manual" }),
+    fetch(`${server.base}/css/landing.css`, { redirect: "manual" }),
+  ]);
+  assert.equal(page.status, 200);
+  assert.equal(css.status, 200);
+  assert.equal(cookieFrom(css), "");
+  const cookie = cookieFrom(page);
+  assert.ok(cookie);
+  const html = await page.text();
+  const token = (html.match(/name="_csrf" value="([^"]+)"/) || [])[1];
+  assert.ok(token);
+  const play = await fetch(`${server.base}/play/bot`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ _csrf: token }),
+    redirect: "manual",
+  });
+  assert.equal(play.status, 302);
+  assert.equal(play.headers.get("location"), "/play");
+});
+
 test("login rate limit returns before another password check", async (t) => {
   const server = spawnServer({ RATE_LOGIN_MAX: "2", RATE_LOGIN_WINDOW_MS: "60000" });
   t.after(() => stopServer(server));

@@ -633,7 +633,24 @@ socket.on("disconnect", () => {
   chatUi.close();
 });
 
+socket.on("connect_error", (err) => {
+  if (replaced || leaving || socket.connected) return;
+  const detail = err && err.message ? String(err.message) : "";
+  lobbyMessage = detail && detail !== "websocket error"
+    ? `Could not connect (${detail}). Leave and try again.`
+    : "Could not connect. Leave and try again.";
+  lobby.classList.remove("hidden");
+  lobbyLeave.classList.remove("hidden");
+  lobbyText.textContent = lobbyMessage;
+});
+
 function askLeave() {
+  if (!socket.connected) {
+    leaving = true;
+    stopMatchBgm();
+    window.location.assign("/");
+    return;
+  }
   socket.emit("leave");
 }
 

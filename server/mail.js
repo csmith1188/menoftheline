@@ -52,12 +52,25 @@ export async function sendMail({ to, subject, text, html }) {
     throw new Error("SMTP is not configured");
   }
   const from = String(process.env.SMTP_FROM || "").trim();
+  if (!from) {
+    throw new Error("SMTP_FROM is empty");
+  }
   const message = { from, to, subject, text, html };
   if (capture || String(process.env.AUTH_MAIL_CAPTURE_PATH || "").trim()) {
     recordMessage(message);
     return { messageId: "capture" };
   }
-  return getTransporter().sendMail(message);
+  try {
+    return await getTransporter().sendMail(message);
+  } catch (err) {
+    const detail = [
+      err && err.message,
+      err && err.code,
+      err && err.response,
+    ].filter(Boolean).join(" | ");
+    console.error(`SMTP send failed to=${to}: ${detail}`);
+    throw err;
+  }
 }
 
 export async function sendVerifyEmail({ to, name, verifyUrl }) {

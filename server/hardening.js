@@ -75,8 +75,42 @@ export function requestClientIp(req, env = process.env) {
 }
 
 /**
+ * Loopback, RFC1918, link-local, and .local hosts used when phones/tablets
+ * open the dev server by LAN IP while THIS_URL still points at localhost.
+ */
+export function isDevLocalHost(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host) return false;
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+  if (host.endsWith(".local")) return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const parts = v4.slice(1).map(Number);
+    if (parts.some((n) => n > 255)) return false;
+    const [a, b] = parts;
+    if (a === 10 || a === 127) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    return false;
+  }
+  if (host.includes(":")) {
+    if (host.startsWith("fe80:")) return true;
+    const first = host.split(":", 1)[0];
+    if (/^f[cd][0-9a-f]{0,2}$/i.test(first)) return true;
+  }
+  return false;
+}
+
+/**
  * Browser sockets must send an Origin that matches THIS_URL.
- * Localhost origins are extra-allowed only in development and test.
+ *
+ * Extra allowance for loopback / private LAN Origins when:
+ * - NODE_ENV is development or test, or
+ * - THIS_URL itself is loopback/private (local play with phones on Wi‑Fi
+ *   while THIS_URL stays http://localhost:PORT — works even if NODE_ENV
+ *   was never set in .env).
+ *
  * A missing Origin is a non-browser client and is allowed only when the
  * native API token is present on the handshake.
  */
@@ -84,20 +118,25 @@ export function originAllowed(origin, { thisUrl, nodeEnv, hasAuthToken } = {}) {
   const value = typeof origin === "string" ? origin.trim() : "";
   if (!value) return Boolean(hasAuthToken);
   let expected = "";
+  let thisHost = "";
   try {
-    expected = new URL(thisUrl).origin;
+    const expectedUrl = new URL(thisUrl);
+    expected = expectedUrl.origin;
+    thisHost = expectedUrl.hostname;
   } catch {
     expected = "";
   }
   if (expected && value === expected) return true;
-  if (nodeEnv === "development" || nodeEnv === "test") {
-    try {
-      const host = new URL(value).hostname;
-      if (host === "localhost" || host === "127.0.0.1") return true;
-    } catch {
-      return false;
-    }
+  let originHost = "";
+  try {
+    originHost = new URL(value).hostname;
+  } catch {
+    return false;
   }
+  const relaxLocal = nodeEnv === "development"
+    || nodeEnv === "test"
+    || isDevLocalHost(thisHost);
+  if (relaxLocal && isDevLocalHost(originHost)) return true;
   return false;
 }
 

@@ -32,13 +32,28 @@
           <% } %>
         </dl>
       </section>
-      <% if (isOwner) { %>
+      <% if (isOwner && !accountEmailVerified(account)) { %>
+        <section>
+          <h2>Verify email</h2>
+          <p class="hint">Verify your email to unlock account features. Until then you can play like a guest.</p>
+          <ul class="list">
+            <li class="hint">Email: <%= account.email || "not linked" %> (unverified)</li>
+          </ul>
+          <% if (authEmailEnabled && account.email) { %>
+            <form method="post" action="/verify/resend">
+<%- include("csrf-field") %>
+              <input type="hidden" name="email" value="<%= account.email %>">
+              <button type="submit" class="action">Resend verification</button>
+            </form>
+          <% } %>
+        </section>
+      <% } else if (isOwner) { %>
         <section>
           <h2>Display name</h2>
           <form method="post" action="/profile/name">
             <label for="display-name">Name</label>
             <input id="display-name" name="name" type="text" autocomplete="nickname" required minlength="2" maxlength="32" value="<%= account.name %>">
-            <p class="hint">Letters, numbers, spaces, hyphens, apostrophes, and underscores. Up to 3 changes per hour.</p>
+            <p class="hint">Letters, numbers, spaces, hyphens, apostrophes, and underscores.</p>
             <button type="submit" class="action">Save display name</button>
           </form>
         </section>
@@ -46,7 +61,7 @@
           <h2>Account links</h2>
           <p class="hint">Linking a login that already belongs to another account merges that account’s stats and other logins into this one.</p>
           <ul class="list">
-            <li class="hint">Email: <%= account.email || "not linked" %><% if (account.email && !account.email_verified_at && authEmailEnabled) { %> (unverified)<% } %></li>
+            <li class="hint">Email: <%= account.email || "not linked" %><% if (account.email && !accountEmailVerified(account) && authEmailEnabled) { %> (unverified)<% } %></li>
             <li class="hint">Formbar: <%= account.formbar_id ? ("#" + account.formbar_id) : "not linked" %></li>
             <li class="hint">Discord: <%= account.discord_id ? ("#" + account.discord_id) : "not linked" %></li>
           </ul>

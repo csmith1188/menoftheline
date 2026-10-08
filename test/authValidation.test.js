@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  accountEmailVerified,
   buildDiscriminatedDisplayName,
   isProfaneName,
   isValidEmail,
@@ -48,6 +49,21 @@ test("discriminated display names append a numeric suffix", () => {
   const d2 = buildDiscriminatedDisplayName(long, 2);
   assert.ok(d2.length <= 32);
   assert.match(d2, / 2$/);
+});
+
+test("accountEmailVerified gates local email when AUTH_EMAIL is on", () => {
+  const prev = process.env.AUTH_EMAIL;
+  process.env.AUTH_EMAIL = "1";
+  try {
+    assert.equal(accountEmailVerified(null), false);
+    assert.equal(accountEmailVerified({ email: null, email_verified_at: null }), true);
+    assert.equal(accountEmailVerified({ email: "a@b.co", email_verified_at: null }), false);
+    assert.equal(accountEmailVerified({ email: "a@b.co", email_verified_at: 1 }), false);
+    assert.equal(accountEmailVerified({ email: "a@b.co", email_verified_at: 1_700_000_000_000 }), true);
+  } finally {
+    if (prev == null) delete process.env.AUTH_EMAIL;
+    else process.env.AUTH_EMAIL = prev;
+  }
 });
 
 test("signup fields validate name email and password together", () => {

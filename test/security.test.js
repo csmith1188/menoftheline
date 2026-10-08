@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { makeSim } from "./helpers.js";
-import { assertSessionSecret, debugRangesEnabled, originAllowed } from "../server/hardening.js";
+import { assertSessionSecret, debugRangesEnabled, isDevLocalHost, originAllowed } from "../server/hardening.js";
 import { sanitizeCommand, allowSocketEvent } from "../server/commandLimit.js";
 import {
   authenticateFormbarToken,
@@ -45,8 +45,32 @@ test("origin checks follow THIS_URL and native tokens", () => {
   assert.equal(originAllowed("https://evil.example", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
   assert.equal(originAllowed("http://localhost:3000", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
   assert.equal(originAllowed("http://localhost:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), true);
+  assert.equal(originAllowed("http://192.168.1.20:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), true);
+  assert.equal(originAllowed("http://10.0.0.5:3000", { thisUrl, nodeEnv: "test", hasAuthToken: false }), true);
+  assert.equal(originAllowed("http://192.168.1.20:3000", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
+  assert.equal(originAllowed("http://8.8.8.8:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), false);
+  // Local THIS_URL + phone on LAN works even when NODE_ENV is unset/production.
+  assert.equal(originAllowed("http://192.168.1.20:3000", {
+    thisUrl: "http://localhost:3000",
+    nodeEnv: undefined,
+    hasAuthToken: false,
+  }), true);
+  assert.equal(originAllowed("http://192.168.1.20:3000", {
+    thisUrl: "http://localhost:3000",
+    nodeEnv: "production",
+    hasAuthToken: false,
+  }), true);
+  assert.equal(originAllowed("http://evil.example", {
+    thisUrl: "http://localhost:3000",
+    nodeEnv: "production",
+    hasAuthToken: false,
+  }), false);
   assert.equal(originAllowed("", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
   assert.equal(originAllowed("", { thisUrl, nodeEnv: "production", hasAuthToken: true }), true);
+  assert.equal(isDevLocalHost("192.168.0.12"), true);
+  assert.equal(isDevLocalHost("172.16.4.1"), true);
+  assert.equal(isDevLocalHost("macbook.local"), true);
+  assert.equal(isDevLocalHost("example.com"), false);
 });
 
 test("commands reject non-finite numbers, bad types, and prototype keys", () => {

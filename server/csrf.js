@@ -35,7 +35,9 @@ export function requireCsrf(req, res, next) {
   const expected = req.session && req.session.csrfToken;
   const sent = req.body && req.body._csrf;
   if (!tokensMatch(sent, expected)) {
-    res.status(403).send("Invalid form token. Reload the page and try again.");
+    const err = new Error("Invalid form token. Reload the page and try again.");
+    err.status = 403;
+    next(err);
     return;
   }
   next();

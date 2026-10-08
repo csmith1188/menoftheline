@@ -39,8 +39,10 @@
       <p class="wiki-actions">
         <% if (canEdit) { %>
           <a class="action" href="/rules/new-page/edit">New page</a>
-        <% } else if (viewer) { %>
+        <% } else if (viewer && accountEmailVerified(viewer)) { %>
           <span class="hint">Editing requires buying tickets and finishing a ranked game.</span>
+        <% } else if (viewer) { %>
+          <span class="hint">Verify your email to unlock account features.</span>
         <% } else { %>
           <a href="/login">Log in</a> <span class="hint">to edit the wiki.</span>
         <% } %>

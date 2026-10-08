@@ -24,6 +24,7 @@ import {
   createAuthToken,
   createLocalAccount,
   createSuggestion,
+  deleteLocalAccount,
   dataPath,
   ensureGuest,
   failTicketPurchase,
@@ -78,6 +79,7 @@ import {
   WIKI_TITLE_MAX,
 } from "./server/db.js";
 import {
+  accountEmailVerified,
   anyLoginEnabled,
   authEmailEnabled,
   discordLoginEnabled,
@@ -87,6 +89,7 @@ import {
   isValidEmail,
   localAccountsEnabled,
   matchChatEnabled,
+  needsEmailVerification,
   newAuthToken,
   normalizeEmail,
   passwordError,
@@ -303,6 +306,7 @@ function saveSession(sess) {
 app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
 app.locals.assetVersion = process.env.ASSET_VERSION || "1";
+app.locals.accountEmailVerified = accountEmailVerified;
 app.locals.suggestionBodyMax = SUGGESTION_BODY_MAX;
 app.locals.suggestionReproMax = SUGGESTION_REPRO_MAX;
 app.locals.wikiTitleMax = WIKI_TITLE_MAX;
@@ -311,6 +315,22 @@ app.locals.maxOpenBugs = MAX_OPEN_BUGS;
 app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
 app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
 app.use(securityHeadersMiddleware(THIS_URL));
+// Serve static assets before sessions. Otherwise a cookieless first visit races
+// HTML + CSS/JS through ensureCsrf, each minting a different lane.sid / CSRF
+// token, and guest form POSTs fail with "Invalid form token".
+const staticHour = { maxAge: "1h", etag: true };
+app.use("/shared", express.static(path.join(root, "shared"), staticHour));
+app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticHour));
+app.get("/manifest.webmanifest", (req, res) => {
+  res.type("application/manifest+json");
+  res.sendFile(path.join(root, "public", "manifest.webmanifest"));
+});
+// Long-cache match music so return visits skip the multi-MB download on the game host.
+app.use("/bgm", express.static(path.join(root, "public", "bgm"), {
+  maxAge: "7d",
+  fallthrough: false,
+}));
+app.use(express.static(path.join(root, "public"), staticHour));
 app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 app.use(sessionMiddleware);
 app.use(ensureCsrf);
@@ -325,19 +345,6 @@ app.use((req, res, next) => {
   res.locals.matchChatEnabled = matchChatEnabled();
   next();
 });
-const staticHour = { maxAge: "1h", etag: true };
-app.use("/shared", express.static(path.join(root, "shared"), staticHour));
-app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticHour));
-app.get("/manifest.webmanifest", (req, res) => {
-  res.type("application/manifest+json");
-  res.sendFile(path.join(root, "public", "manifest.webmanifest"));
-});
-// Long-cache match music so return visits skip the multi-MB download on the game host.
-app.use("/bgm", express.static(path.join(root, "public", "bgm"), {
-  maxAge: "7d",
-  fallthrough: false,
-}));
-app.use(express.static(path.join(root, "public"), staticHour));
 
 function adminId() {
   const id = Number(process.env.ADMIN_USER_ID);
@@ -512,7 +519,7 @@ async function applyFormbarToken(sess, tokenString) {
 async function playerFromSession(sess, options = {}) {
   if (!sess) return null;
   const account = await resolveSessionAccount(sess);
-  if (account) {
+  if (account && accountEmailVerified(account)) {
     return {
       id: `a:${account.id}`,
       name: account.name,
@@ -576,7 +583,9 @@ async function preparePlayIntent(sess, intent) {
   if (!GUEST_PLAY_MODES.has(mode) && !paid) {
     return { error: "bad_mode", status: 400 };
   }
-  if (paid && !sess.formbarId) {
+  const account = await resolveSessionAccount(sess);
+  const privileged = accountEmailVerified(account);
+  if (paid && (!privileged || !sess.formbarId)) {
     return { error: "login_required", status: 403 };
   }
   const player = await playerFromSession(sess, { createGuest: !paid });
@@ -587,7 +596,6 @@ async function preparePlayIntent(sess, intent) {
     return { ok: true, rejoin: true };
   }
   if (paid) {
-    const account = await resolveSessionAccount(sess);
     if (!account || account.tickets <= account.held) {
       return { error: "no_ticket", status: 403 };
     }
@@ -656,6 +664,43 @@ async function pageViewer(req) {
   return resolveSessionAccount(req.session);
 }
 
+function errorTitle(status) {
+  if (status === 404) return "Not found";
+  if (status === 403) return "Forbidden";
+  if (status === 400) return "Bad request";
+  if (status === 429) return "Too many requests";
+  if (status === 503) return "Unavailable";
+  return "Error";
+}
+
+function errorMessage(status) {
+  if (status === 404) return "That page does not exist.";
+  if (status === 403) return "You do not have access to that.";
+  if (status === 400) return "The request could not be understood.";
+  if (status === 429) return "Too many requests. Try again shortly.";
+  if (status === 503) return "That service is temporarily unavailable.";
+  return "Something went wrong.";
+}
+
+/** Render the shared HTML error page (header + message + home link). */
+async function renderError(req, res, { status = 500, title, message } = {}) {
+  const code = Number(status) || 500;
+  let viewer = null;
+  try {
+    viewer = await pageViewer(req);
+  } catch {
+    viewer = null;
+  }
+  if (res.headersSent) return;
+  res.status(code).render("error", {
+    viewer,
+    notice: null,
+    status: code,
+    title: title || errorTitle(code),
+    message: message || errorMessage(code),
+  });
+}
+
 async function homeData(req) {
   return {
     nav: "home",
@@ -667,18 +712,16 @@ async function homeData(req) {
 
 async function gamesData(req) {
   const viewer = await pageViewer(req);
+  const privileged = accountEmailVerified(viewer);
   const player = await playerFromSession(req.session, { createGuest: false });
   const rejoin = player ? matchmaker.isBusy(player.id) : false;
-  const pack = ticketPack();
   return {
     nav: "games",
     viewer,
     rejoin,
-    canTicket: Boolean(viewer && viewer.tickets > viewer.held && !rejoin),
+    canTicket: Boolean(privileged && viewer.tickets > viewer.held && !rejoin),
     waiting: matchmaker.waitingCounts(),
     lobbies: matchmaker.listLobbies(),
-    packSize: pack.size,
-    packCost: pack.cost,
     notice: takeNotice(req),
   };
 }
@@ -952,11 +995,10 @@ app.post("/login", async (req, res, next) => {
       renderFail("Invalid email or password.");
       return;
     }
-    if (authEmailEnabled() && !account.email_verified_at) {
-      renderFail("Verify your email before logging in.");
-      return;
-    }
-    await establishAccountSession(req, account);
+    const notice = needsEmailVerification(account)
+      ? "Verify your email to unlock account features. Until then you can play like a guest."
+      : undefined;
+    await establishAccountSession(req, account, notice);
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1047,6 +1089,11 @@ app.post("/signup", async (req, res, next) => {
         await issueVerifyEmail(account);
       } catch (err) {
         console.error(err);
+        try {
+          await deleteLocalAccount(account.id);
+        } catch (cleanupErr) {
+          console.error(cleanupErr);
+        }
         renderFail("Could not send verification email. Try again later.");
         return;
       }
@@ -1100,7 +1147,7 @@ app.post("/verify/resend", async (req, res, next) => {
       return;
     }
     const account = await getAccountByEmail(email);
-    if (account && account.password_hash && !account.email_verified_at && mailReady()) {
+    if (needsEmailVerification(account) && mailReady()) {
       try {
         await issueVerifyEmail(account);
       } catch (err) {
@@ -1141,7 +1188,12 @@ app.post("/forgot", async (req, res, next) => {
     const email = normalizeEmail(req.body && req.body.email);
     if (rateLimit(`forgot:${clientIp(req)}:${email}`, { max: 5 })) {
       const account = await getAccountByEmail(email);
-      if (account && account.password_hash && account.email_verified_at && mailReady()) {
+      if (
+        account
+        && account.password_hash
+        && accountEmailVerified(account)
+        && mailReady()
+      ) {
         try {
           await issueResetEmail(account);
         } catch (err) {
@@ -1233,11 +1285,32 @@ app.get("/games", async (req, res, next) => {
   }
 });
 
+app.get("/buy", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    const pack = ticketPack();
+    req.session.save(() => res.render("tickets", {
+      nav: "buy",
+      viewer,
+      notice: takeNotice(req),
+      packSize: pack.size,
+      packCost: pack.cost,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get("/games/create", async (req, res, next) => {
   try {
     const data = await gamesData(req);
-    if (!data.viewer) {
-      res.redirect("/login");
+    if (!accountEmailVerified(data.viewer)) {
+      if (data.viewer) {
+        req.session.notice = "Verify your email to unlock account features.";
+        req.session.save(() => res.redirect("/games"));
+      } else {
+        res.redirect("/login");
+      }
       return;
     }
     if (!data.canTicket && !data.rejoin) {
@@ -1293,26 +1366,28 @@ app.get("/profile/:id", async (req, res, next) => {
   try {
     const account = await findAccountForProfile(req.params.id);
     const viewer = await pageViewer(req);
+    const privileged = accountEmailVerified(viewer);
     const pack = ticketPack();
+    const isOwner = Boolean(account && viewer && account.id === viewer.id);
     const body = {
       account,
       viewer,
-      isOwner: Boolean(account && viewer && account.id === viewer.id),
+      isOwner,
       notice: takeNotice(req),
       packSize: pack.size,
       packCost: pack.cost,
       canLinkFormbar: Boolean(
-        account && viewer && account.id === viewer.id
+        isOwner && privileged
         && !account.formbar_id
         && formbarLoginEnabled(),
       ),
       canLinkDiscord: Boolean(
-        account && viewer && account.id === viewer.id
+        isOwner && privileged
         && !account.discord_id
         && discordLoginEnabled(),
       ),
       canAddLocal: Boolean(
-        account && viewer && account.id === viewer.id
+        isOwner && privileged
         && !account.email
         && localAccountsEnabled(),
       ),
@@ -1332,7 +1407,7 @@ app.get("/profile/:id", async (req, res, next) => {
 app.post("/profile/name", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
-    if (!viewer) {
+    if (!accountEmailVerified(viewer)) {
       res.redirect("/login");
       return;
     }
@@ -1377,7 +1452,7 @@ app.post("/profile/name", async (req, res, next) => {
 app.post("/profile/link/formbar", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
-    if (!viewer) {
+    if (!accountEmailVerified(viewer)) {
       res.redirect("/login");
       return;
     }
@@ -1403,7 +1478,7 @@ app.post("/profile/link/formbar", async (req, res, next) => {
 app.post("/profile/link/discord", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
-    if (!viewer) {
+    if (!accountEmailVerified(viewer)) {
       res.redirect("/login");
       return;
     }
@@ -1429,7 +1504,7 @@ app.post("/profile/link/discord", async (req, res, next) => {
 app.post("/profile/link/local", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
-    if (!viewer) {
+    if (!accountEmailVerified(viewer)) {
       res.redirect("/login");
       return;
     }
@@ -1477,7 +1552,7 @@ app.post("/profile/link/local", async (req, res, next) => {
         return;
       }
       setAccountSession(req.session, merged.account);
-      if (authEmailEnabled() && !merged.account.email_verified_at && mailReady()) {
+      if (needsEmailVerification(merged.account) && mailReady()) {
         try {
           await issueVerifyEmail(merged.account);
           req.session.notice = "Accounts merged. Check your email to verify.";
@@ -1525,7 +1600,7 @@ app.post("/tickets", async (req, res, next) => {
   try {
     const back = safeNext(req.body && req.body.next);
     const account = await pageViewer(req);
-    if (!account) {
+    if (!accountEmailVerified(account)) {
       res.redirect("/login");
       return;
     }
@@ -1590,7 +1665,7 @@ app.post("/suggestions", async (req, res, next) => {
   try {
     const back = safeNext(req.body && req.body.next);
     const account = await pageViewer(req);
-    if (!account) {
+    if (!accountEmailVerified(account)) {
       res.redirect("/login");
       return;
     }
@@ -1760,7 +1835,7 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
 
 async function viewerCanEditWiki(sess) {
   const account = await resolveSessionAccount(sess);
-  if (!account) return false;
+  if (!accountEmailVerified(account)) return false;
   if (isAdmin(sess)) return true;
   return canEditWiki(account.id);
 }
@@ -1935,19 +2010,25 @@ async function startPlay(req, res, next, intent) {
       return;
     }
     const account = await resolveSessionAccount(req.session);
+    const privileged = accountEmailVerified(account);
     if (account && !rateLimit(`play-acct:${account.id}`, { max: playMax, windowMs: 60 * 1000 })) {
       req.session.notice = "Too many game requests. Try again in a minute.";
       req.session.save(() => res.redirect("/games"));
       return;
     }
-    const needsNewGuest = !paid && !account && !req.session.guestId && !req.session.userId;
+    const needsNewGuest = !paid && !privileged && !req.session.guestId && !req.session.userId;
     if (needsNewGuest && !rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
       req.session.notice = "Too many new players from this network. Try again later.";
       req.session.save(() => res.redirect("/games"));
       return;
     }
-    if (paid && !account) {
-      res.redirect("/login");
+    if (paid && !privileged) {
+      if (account) {
+        req.session.notice = "Verify your email to unlock account features.";
+        req.session.save(() => res.redirect("/games"));
+      } else {
+        res.redirect("/login");
+      }
       return;
     }
     const player = await playerFromSession(req.session, { createGuest: !paid });
@@ -2042,7 +2123,7 @@ app.get("/rules", async (req, res, next) => {
 app.get("/rules/:slug/edit", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
-    if (!viewer) {
+    if (!accountEmailVerified(viewer)) {
       res.redirect("/login");
       return;
     }
@@ -2073,7 +2154,7 @@ app.get("/rules/:slug/edit", async (req, res, next) => {
 app.post("/rules/:slug/edit", async (req, res, next) => {
   try {
     const account = await pageViewer(req);
-    if (!account) {
+    if (!accountEmailVerified(account)) {
       res.redirect("/login");
       return;
     }
@@ -2122,7 +2203,7 @@ app.post("/rules/:slug/edit", async (req, res, next) => {
 
 app.post("/rules/:slug/delete", async (req, res, next) => {
   try {
-    if (!(await pageViewer(req))) {
+    if (!accountEmailVerified(await pageViewer(req))) {
       res.redirect("/login");
       return;
     }
@@ -2392,12 +2473,13 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
     }
     const busy = matchmaker.isBusy(player.id);
     const account = await resolveSessionAccount(req.session);
+    const privileged = accountEmailVerified(account);
     const pack = ticketPack();
     res.json({
       player: playerPublic(player),
       busy,
-      account: accountPublic(account),
-      canTicket: Boolean(account && account.tickets > account.held && !busy),
+      account: privileged ? accountPublic(account) : null,
+      canTicket: Boolean(privileged && account.tickets > account.held && !busy),
       pack: { size: pack.size, cost: pack.cost },
     });
   } catch (err) {
@@ -2434,7 +2516,7 @@ app.get("/api/v1/match-options", requireApiSession, async (req, res, next) => {
 app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
   try {
     const account = await resolveSessionAccount(req.session);
-    if (!account || !account.formbar_id) {
+    if (!accountEmailVerified(account) || !account.formbar_id) {
       res.status(403).json({ error: "login_required" });
       return;
     }
@@ -2505,12 +2587,14 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
       res.status(429).json({ error: "rate_limited" });
       return;
     }
-    const accountId = req.session && req.session.accountId;
+    const account = await resolveSessionAccount(req.session);
+    const privileged = accountEmailVerified(account);
+    const accountId = account && account.id;
     if (accountId && !rateLimit(`play-acct:${accountId}`, { max: playMax, windowMs: 60 * 1000 })) {
       res.status(429).json({ error: "rate_limited" });
       return;
     }
-    const needsNewGuest = !paid && !req.session.accountId && !req.session.guestId && !req.session.userId;
+    const needsNewGuest = !paid && !privileged && !req.session.guestId && !req.session.userId;
     if (needsNewGuest && !rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
       res.status(429).json({ error: "rate_limited" });
       return;
@@ -2543,17 +2627,34 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
   }
 });
 
+app.use((req, res, next) => {
+  if (String(req.path || "").startsWith("/api/")) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  renderError(req, res, { status: 404 }).catch(next);
+});
+
 app.use((err, req, res, next) => {
   console.error(err);
   if (res.headersSent) {
     next(err);
     return;
   }
+  const raw = Number(err && (err.status || err.statusCode)) || 500;
+  const status = raw >= 400 && raw < 600 ? raw : 500;
   if (String(req.path || "").startsWith("/api/")) {
-    res.status(500).json({ error: "server_error" });
+    const code = status === 403 ? "forbidden"
+      : status === 404 ? "not_found"
+      : status === 429 ? "rate_limited"
+      : "server_error";
+    res.status(status).json({ error: code });
     return;
   }
-  res.status(500).send("Something went wrong");
+  const message = status < 500 && err && err.message ? err.message : undefined;
+  renderError(req, res, { status, message }).catch(() => {
+    if (!res.headersSent) res.status(status).send("Something went wrong");
+  });
 });
 
 const socketsByUser = new Map();

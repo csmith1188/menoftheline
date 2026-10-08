@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("pwa-head") %>
+  <title>Buy tickets · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("header") %>
+    <% if (notice) { %>
+      <p class="notice" role="status"><%= notice %></p>
+    <% } %>
+
+    <section>
+      <h2>Tickets</h2>
+      <% if (!viewer) { %>
+        <p class="hint">Log in to buy tickets.</p>
+        <p><a class="action" href="/login">Log in</a></p>
+      <% } else { %>
+        <dl class="stats">
+          <div><dt>Balance</dt><dd><%= viewer.tickets %></dd></div>
+          <% if (viewer.held > 0) { %>
+            <div><dt>In use</dt><dd><%= viewer.held %></dd></div>
+            <div><dt>Free</dt><dd><%= Math.max(0, viewer.tickets - viewer.held) %></dd></div>
+          <% } %>
+        </dl>
+        <% if (!accountEmailVerified(viewer)) { %>
+          <p class="hint">Verify your email to buy tickets.</p>
+          <p><a class="action" href="/profile/<%= viewer.id %>">Open profile</a></p>
+        <% } else if (!viewer.formbar_id) { %>
+          <p class="hint">Link a Formbar account to buy tickets with Digipogs.</p>
+          <p><a class="action" href="/profile/<%= viewer.id %>">Link on profile</a></p>
+        <% } else { %>
+          <h2>Buy tickets</h2>
+          <p class="hint">Tickets are spent on ranked matches, custom lobbies, and extra suggestions.</p>
+          <%- include("buy", { nextPath: "/buy", buyLayout: "row" }) %>
+        <% } %>
+      <% } %>
+    </section>
+  </div>
+  <%- include("suggestion-modal", { nextPath: "/buy" }) %>
+</body>
+</html>

@@ -573,11 +573,41 @@ export async function setAccountPassword(accountId, passwordHash) {
 export async function setEmailVerified(accountId, at = Date.now()) {
   const id = Number(accountId);
   if (!Number.isInteger(id) || id <= 0) return false;
+  const when = Number(at);
+  if (!Number.isFinite(when) || when < 1_000_000_000_000) {
+    throw new Error("email_verified_at must be a millisecond timestamp");
+  }
   const result = await run(
     "UPDATE accounts SET email_verified_at = ?, updated_at = ? WHERE id = ?",
-    [at, Date.now(), id],
+    [when, Date.now(), id],
   );
   return result.changes > 0;
+}
+
+/** Remove a brand-new local account when verification email fails to send. */
+export async function deleteLocalAccount(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet(
+        "SELECT id, formbar_id, discord_id, email, password_hash FROM accounts WHERE id = ?",
+        [id],
+      );
+      if (!row || row.formbar_id || row.discord_id || !row.email || !row.password_hash) {
+        await execRun("ROLLBACK");
+        return false;
+      }
+      await execRun("DELETE FROM auth_tokens WHERE account_id = ?", [id]);
+      const result = await execRun("DELETE FROM accounts WHERE id = ?", [id]);
+      await execRun("COMMIT");
+      return result.changes > 0;
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch { /* ignore */ }
+      throw err;
+    }
+  });
 }
 
 export async function setLocalCredentials(accountId, { email, passwordHash, verifiedAt }) {

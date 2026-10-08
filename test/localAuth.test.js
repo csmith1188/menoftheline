@@ -729,14 +729,32 @@ test("profile can change display name with rate limiting", async (t) => {
     }),
   });
 
+  const noTicket = await fetchSession(server.base, "/profile/name", jar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ name: "Needs Ticket" }),
+  });
+  assert.equal(noTicket.status, 302);
+  let profile = await fetchSession(server.base, `/profile/${profileId}`, jar);
+  assert.match(await profile.text(), /costs 1 ticket/i);
+  let row = await getAccountRow(server.dataDir, "email = ?", ["rename@example.com"]);
+  assert.equal(row.name, "Rename Me");
+  assert.equal(row.tickets, 0);
+
+  await runSql(server.dataDir, "UPDATE accounts SET tickets = 3 WHERE email = ?", [
+    "rename@example.com",
+  ]);
+
   const taken = await fetchSession(server.base, "/profile/name", jar, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ name: "Taken Name" }),
   });
   assert.equal(taken.status, 302);
-  let profile = await fetchSession(server.base, `/profile/${profileId}`, jar);
+  profile = await fetchSession(server.base, `/profile/${profileId}`, jar);
   assert.match(await profile.text(), /already taken/);
+  row = await getAccountRow(server.dataDir, "email = ?", ["rename@example.com"]);
+  assert.equal(row.tickets, 3);
 
   for (const name of ["Rename One", "Rename Two", "Rename Three"]) {
     const res = await fetchSession(server.base, "/profile/name", jar, {
@@ -746,9 +764,13 @@ test("profile can change display name with rate limiting", async (t) => {
     });
     assert.equal(res.status, 302);
   }
-  const row = await getAccountRow(server.dataDir, "email = ?", ["rename@example.com"]);
+  row = await getAccountRow(server.dataDir, "email = ?", ["rename@example.com"]);
   assert.equal(row.name, "Rename Three");
+  assert.equal(row.tickets, 0);
 
+  await runSql(server.dataDir, "UPDATE accounts SET tickets = 1 WHERE email = ?", [
+    "rename@example.com",
+  ]);
   const blocked = await fetchSession(server.base, "/profile/name", jar, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -759,6 +781,7 @@ test("profile can change display name with rate limiting", async (t) => {
   assert.match(await profile.text(), /too often/);
   const still = await getAccountRow(server.dataDir, "email = ?", ["rename@example.com"]);
   assert.equal(still.name, "Rename Three");
+  assert.equal(still.tickets, 1);
 });
 
 test("local link with password merges Discord from the other account", async (t) => {

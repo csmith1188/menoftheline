@@ -1718,21 +1718,28 @@ app.post("/profile/name", async (req, res, next) => {
       req.session.save(() => res.redirect(back));
       return;
     }
+    if (viewer.tickets <= viewer.held) {
+      req.session.notice = "Changing your display name costs 1 ticket.";
+      req.session.save(() => res.redirect(back));
+      return;
+    }
     if (!rateLimit(`displayname:${viewer.id}`, { max: 3, windowMs: 60 * 60 * 1000 })) {
       req.session.notice = "Display name changed too often. Try again in an hour.";
       req.session.save(() => res.redirect(back));
       return;
     }
-    const result = await setAccountDisplayName(viewer.id, nameCheck.name);
+    const result = await setAccountDisplayName(viewer.id, nameCheck.name, { spendTicket: true });
     if (!result.ok) {
       req.session.notice = result.error === "taken"
         ? "That display name is already taken."
-        : result.message || "Could not update display name.";
+        : result.error === "no_ticket"
+          ? "Changing your display name costs 1 ticket."
+          : result.message || "Could not update display name.";
       req.session.save(() => res.redirect(back));
       return;
     }
     setAccountSession(req.session, result.account);
-    req.session.notice = "Display name updated.";
+    req.session.notice = "Display name updated. Used 1 ticket.";
     req.session.save(() => res.redirect(`/profile/${result.account.id}`));
   } catch (err) {
     next(err);

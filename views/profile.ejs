@@ -105,10 +105,11 @@
         <section>
           <h2>Display name</h2>
           <form method="post" action="/profile/name">
+<%- include("csrf-field") %>
             <label for="display-name">Name</label>
             <input id="display-name" name="name" type="text" autocomplete="nickname" required minlength="2" maxlength="32" value="<%= account.name %>">
-            <p class="hint">Letters, numbers, spaces, hyphens, apostrophes, and underscores.</p>
-            <button type="submit" class="action">Save display name</button>
+            <p class="hint">Letters, numbers, spaces, hyphens, apostrophes, and underscores. Costs 1 ticket (up to 3 changes per hour).</p>
+            <button type="submit" class="action">Save display name (1 ticket)</button>
           </form>
         </section>
         <section>

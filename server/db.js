@@ -747,20 +747,84 @@ export async function allocateUniqueDisplayName(desired, options = {}) {
   return { name: fallback, adjusted: true };
 }
 
-export async function setAccountDisplayName(accountId, name) {
+/**
+ * Set display name. When spendTicket is true, charges 1 free ticket in the
+ * same transaction (profile self-rename). Admin renames leave spendTicket false.
+ */
+export async function setAccountDisplayName(accountId, name, { spendTicket = false } = {}) {
   const id = Number(accountId);
   if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
   const check = validateDisplayName(name);
   if (!check.ok) return { ok: false, error: "invalid", message: check.error };
-  if (await isDisplayNameTaken(check.name, id)) {
-    return { ok: false, error: "taken" };
+
+  if (!spendTicket) {
+    if (await isDisplayNameTaken(check.name, id)) {
+      return { ok: false, error: "taken" };
+    }
+    const result = await run(
+      "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
+      [check.name, Date.now(), id],
+    );
+    if (!result.changes) return { ok: false, error: "missing" };
+    return { ok: true, name: check.name, account: await getAccount(id) };
   }
-  const result = await run(
-    "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
-    [check.name, Date.now(), id],
-  );
-  if (!result.changes) return { ok: false, error: "missing" };
-  return { ok: true, name: check.name, account: await getAccount(id) };
+
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const taken = await execGet(
+        "SELECT id FROM accounts WHERE name = ? COLLATE NOCASE AND id != ? LIMIT 1",
+        [check.name, id],
+      );
+      if (taken) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "taken" };
+      }
+      const row = await execGet(
+        "SELECT tickets, held FROM accounts WHERE id = ?",
+        [id],
+      );
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "missing" };
+      }
+      if (row.tickets <= row.held) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "no_ticket" };
+      }
+      const now = Date.now();
+      const renamed = await execRun(
+        `UPDATE accounts
+         SET name = ?, tickets = tickets - 1, updated_at = ?
+         WHERE id = ? AND tickets > held`,
+        [check.name, now, id],
+      );
+      if (!renamed.changes) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "no_ticket" };
+      }
+      await insertTicketLedger(execRun, {
+        accountId: id,
+        delta: -1,
+        balanceAfter: row.tickets - 1,
+        heldAfter: row.held,
+        kind: "spend",
+        reason: "display_name",
+        createdAt: now,
+      });
+      await execRun("COMMIT");
+      const account = await execGet(
+        `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
+        [id],
+      );
+      return { ok: true, name: check.name, account };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("setAccountDisplayName", rollbackErr);
+      }
+      throw err;
+    }
+  });
 }
 
 export async function upsertAccount(formbarId, name) {

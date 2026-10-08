@@ -1,5 +1,5 @@
 import { bindAccountBar, bootMenus, startPlay } from "./api.js";
-import { gamesPath } from "../runtime.js";
+import { gamesPath, isShell } from "../runtime.js";
 
 const form = document.getElementById("lobby-create-form");
 const accountEl = document.getElementById("games-account");
@@ -51,7 +51,8 @@ async function fillOptions() {
 
 (async () => {
   const me = await bootMenus();
-  bindAccountBar(accountEl, me);
+  if (accountEl && isShell()) bindAccountBar(accountEl, me);
+  else if (accountEl) accountEl.replaceChildren();
   if (cancel) cancel.setAttribute("href", gamesPath());
   await fillOptions();
   if (form) {

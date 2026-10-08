@@ -1,4 +1,7 @@
 # Bugs (Will fix first)
+- damage numbers not smooth. server or client problem?
+- units are drawn sharply, but lanes are not
+- terrain footprints
 - easy bot doesn't buy upgraded units
 
 # Feature (Will add to game)
@@ -13,7 +16,6 @@
 - Wiki Categories
 
 # Capacity
-
 One Node process still owns each match. `METRICS=1` and `npm run load -- bot` measure it. Sim steps stay at 50 ms; snapshots go out about every 100 ms. A crowded 20-vs-20 bench is too heavy for 100 rooms on one core (see `npm run sim-bench`), so `WORKER_COUNT` can pin each match to one owner process. That does not copy GameSim through Redis. Leave PM2 at one instance until you set workers on purpose.
 
 # Ideas (May add to game)

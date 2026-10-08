@@ -1,11 +1,11 @@
 import {
   bindAccountBar,
   bootMenus,
-  buyTickets,
   loadQueues,
   lobbyCreatePath,
   startPlay,
 } from "./api.js";
+import { isShell, playPath } from "../runtime.js";
 
 const root = document.getElementById("games-root");
 const accountEl = document.getElementById("games-account");
@@ -22,6 +22,15 @@ function setNotice(text) {
   noticeEl.textContent = text;
 }
 
+/** Match landing.css: play-split / play-thirds style form > button children. */
+function cell(attrs, label) {
+  const parts = Object.entries(attrs)
+    .filter(([, v]) => v != null && v !== false)
+    .map(([k, v]) => (v === true ? k : `${k}="${escapeAttr(v)}"`))
+    .join(" ");
+  return `<form><button type="button" ${parts}>${label}</button></form>`;
+}
+
 function render(me, queues) {
   if (!root) return;
   const rejoin = Boolean(me && me.busy);
@@ -29,38 +38,48 @@ function render(me, queues) {
   const waiting = (queues && queues.waiting) || { unranked: 0, ranked: 0 };
   const lobbies = (queues && queues.lobbies) || [];
   const privileged = Boolean(me && me.account);
+  const disabled = rejoin ? "disabled" : null;
 
   let html = `<section><h2>Play</h2><div class="stack">`;
   if (rejoin) {
-    html += `<a class="action" href="${me && me.busy ? (window.MOTL_SHELL ? "/app/play.html" : "/play") : "#"}">Rejoin match</a>`;
+    html += `<a class="action" href="${playPath(false)}">Rejoin match</a>`;
   }
   html += `
     <div class="play-split play-thirds">
-      <button type="button" class="action" data-play="bot" data-view="2d" ${rejoin ? "disabled" : ""}>Play vs bot</button>
-      <button type="button" class="action" data-play="trainBot" data-view="2d" ${rejoin ? "disabled" : ""}>Train vs bot</button>
-      <button type="button" class="action" data-play="bot" data-view="3d" ${rejoin ? "disabled" : ""}>3D</button>
+      ${cell({ "data-play": "bot", "data-view": "2d", disabled }, "Play vs bot")}
+      ${cell({ "data-play": "trainBot", "data-view": "2d", disabled }, "Train vs bot")}
+      ${cell({ "data-play": "bot", "data-view": "3d", disabled, title: "Play vs bot in 3D", "aria-label": "Play vs bot in 3D" }, "3D")}
     </div>
     <div class="play-split play-thirds">
-      <button type="button" class="action" data-play="casual" data-view="2d" ${rejoin ? "disabled" : ""}>Random unranked</button>
-      <button type="button" class="action" data-play="trainCasual" data-view="2d" ${rejoin ? "disabled" : ""}>Train vs random</button>
-      <button type="button" class="action" data-play="casual" data-view="3d" ${rejoin ? "disabled" : ""}>3D</button>
+      ${cell({ "data-play": "casual", "data-view": "2d", disabled }, "Random unranked")}
+      ${cell({ "data-play": "trainCasual", "data-view": "2d", disabled }, "Train vs random")}
+      ${cell({ "data-play": "casual", "data-view": "3d", disabled, title: "Random unranked in 3D", "aria-label": "Random unranked in 3D" }, "3D")}
     </div>`;
 
   if (privileged) {
-    const tip = "A ticket is required for ranked or custom games.";
-    html += `
+    const tip = "A free ticket is required for a lobby, a specific join, or ranked search.";
+    const rankedOk = canTicket && !rejoin;
+    if (rankedOk) {
+      html += `
       <div class="play-split">
-        <button type="button" class="action" data-play="ranked" data-view="2d" ${canTicket && !rejoin ? "" : "disabled"} title="${tip}">Find ranked match</button>
-        <button type="button" class="action" data-play="ranked" data-view="3d" ${canTicket && !rejoin ? "" : "disabled"}>3D</button>
+        ${cell({ "data-play": "ranked", "data-view": "2d" }, "Find ranked match")}
+        ${cell({ "data-play": "ranked", "data-view": "3d", title: "Find ranked match in 3D", "aria-label": "Find ranked match in 3D" }, "3D")}
       </div>
       <div class="play-split">
-        <a class="action" href="${lobbyCreatePath(false)}" ${canTicket && !rejoin ? "" : 'aria-disabled="true"'}>Create Custom Game</a>
-        <a class="action" href="${lobbyCreatePath(true)}">3D</a>
-      </div>
-      <div class="ticket-buy">
-        <label>Buy Digipog tickets <input id="ticket-pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN"></label>
-        <button type="button" class="action" data-act="tickets">Buy pack</button>
+        <a class="action" href="${lobbyCreatePath(false)}">Create Custom Game</a>
+        <a class="action" href="${lobbyCreatePath(true)}" title="Create lobby in 3D" aria-label="Create lobby in 3D">3D</a>
       </div>`;
+    } else {
+      html += `
+      <div class="play-split">
+        <span class="has-tip" title="${escapeAttr(tip)}"><button type="button" disabled>Find ranked match</button></span>
+        <span class="has-tip" title="${escapeAttr(tip)}"><button type="button" disabled aria-label="Find ranked match in 3D">3D</button></span>
+      </div>
+      <div class="play-split">
+        <span class="has-tip" title="${escapeAttr(tip)}"><button type="button" disabled>Create lobby</button></span>
+        <span class="has-tip" title="${escapeAttr(tip)}"><button type="button" disabled aria-label="Create lobby in 3D">3D</button></span>
+      </div>`;
+    }
   }
 
   html += `</div></section>
@@ -70,6 +89,7 @@ function render(me, queues) {
         <div><dt>Waiting unranked</dt><dd>${waiting.unranked}</dd></div>
         <div><dt>Waiting ranked</dt><dd>${waiting.ranked}</dd></div>
       </dl>
+      <br>
       <h2>Custom games</h2>`;
   if (!lobbies.length) {
     html += `<p class="hint">No custom games.</p>`;
@@ -88,11 +108,16 @@ function render(me, queues) {
         </dl>`;
       if (rejoin) html += `<p class="hint">You are already in a match.</p>`;
       else if (!privileged) html += `<p class="hint">Log in to join.</p>`;
-      else if (!canTicket) html += `<p class="hint">A ticket is required to join.</p>`;
-      else {
+      else if (!canTicket) {
+        const joinTip = "A ticket is required for a lobby, a specific join, or ranked search.";
         html += `<div class="play-split">
-          <button type="button" class="action" data-join="${escapeAttr(lobby.id)}" data-view="2d">Join</button>
-          <button type="button" class="action" data-join="${escapeAttr(lobby.id)}" data-view="3d">3D</button>
+          <span class="has-tip" title="${escapeAttr(joinTip)}"><button type="button" disabled>Join</button></span>
+          <span class="has-tip" title="${escapeAttr(joinTip)}"><button type="button" disabled aria-label="Join in 3D">3D</button></span>
+        </div>`;
+      } else {
+        html += `<div class="play-split">
+          ${cell({ "data-join": lobby.id, "data-view": "2d" }, "Join")}
+          ${cell({ "data-join": lobby.id, "data-view": "3d", title: "Join in 3D", "aria-label": "Join in 3D" }, "3D")}
         </div>`;
       }
       html += `</li>`;
@@ -119,27 +144,17 @@ async function refresh() {
   if (!me && !document.getElementById("motl-outdated")) {
     setNotice("Could not load session.");
   }
-  bindAccountBar(accountEl, me);
+  // Website pages already have the site header nav; only shells need an account strip.
+  if (accountEl && isShell()) bindAccountBar(accountEl, me);
+  else if (accountEl) accountEl.replaceChildren();
   const queues = await loadQueues();
   render(me, queues);
 }
 
 root?.addEventListener("click", async (ev) => {
-  const btn = ev.target.closest("[data-play],[data-join],[data-act]");
-  if (!btn) return;
-  if (btn.hasAttribute("disabled")) return;
+  const btn = ev.target.closest("[data-play],[data-join]");
+  if (!btn || btn.hasAttribute("disabled")) return;
   setNotice("");
-  if (btn.dataset.act === "tickets") {
-    const pin = document.getElementById("ticket-pin")?.value || "";
-    const result = await buyTickets(pin);
-    if (!result.ok) {
-      setNotice(result.data?.error || "Ticket purchase failed.");
-      return;
-    }
-    setNotice("Tickets purchased.");
-    await refresh();
-    return;
-  }
   if (btn.dataset.join) {
     const result = await startPlay("join", {
       roomId: btn.dataset.join,

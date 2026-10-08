@@ -1,0 +1,49 @@
+<% const packs = typeof paypalPackages !== "undefined" && paypalPackages ? paypalPackages : []; %>
+<% const history = typeof paypalPurchases !== "undefined" && paypalPurchases ? paypalPurchases : []; %>
+<div
+  id="paypal-store"
+  class="paypal-store"
+  data-client-id="<%= paypalClientId %>"
+  data-mode="<%= paypalMode %>"
+  data-csrf="<%= csrfToken %>"
+>
+  <p class="hint">Pay with PayPal. Tickets are added after payment is confirmed.</p>
+  <div class="paypal-packages">
+    <% packs.forEach(function (pack) { %>
+      <div class="paypal-package" data-package-id="<%= pack.id %>">
+        <div class="paypal-package-info">
+          <strong><%= pack.label %></strong>
+          <span class="paypal-package-price">$<%= pack.amountValue %> <%= pack.currency %></span>
+        </div>
+        <div class="paypal-buttons" id="paypal-buttons-<%= pack.id %>"></div>
+      </div>
+    <% }) %>
+  </div>
+  <p class="paypal-status hint" id="paypal-status" role="status" aria-live="polite"></p>
+  <% if (history.length) { %>
+    <h3>Purchase history</h3>
+    <table class="paypal-history">
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Package</th>
+          <th>Amount</th>
+          <th>Tickets</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% history.forEach(function (row) { %>
+          <tr>
+            <td><%= new Date(row.created_at).toLocaleString() %></td>
+            <td><%= row.package_id %></td>
+            <td>$<%= row.amount_value %> <%= row.currency %></td>
+            <td><%= row.tickets %></td>
+            <td><%= row.status %><% if (row.clawback_shortfall) { %> (shortfall <%= row.clawback_shortfall %>)<% } %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+<script type="module" src="/js/paypalBuy.js?v=<%= assetVersion %>"></script>

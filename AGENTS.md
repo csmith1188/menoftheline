@@ -21,7 +21,7 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 | `npm run export-graphics` | Transparent PNGs of lanes/keeps/towns/terrain/units → `public/img/` |
 
-Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). In-match chat: `MATCH_CHAT` (default on). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
+Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. In-match chat: `MATCH_CHAT` (default on). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
 
 ## Layout (start here)
 
@@ -47,9 +47,11 @@ server/
   training.js          Training-mode rule tweaks
   trainingBot.js       Scripted training opponent
   admin/               Staff dashboard (role authz, audit, users, analytics, logs, matches, ops, routes)
-  db.js                SQLite accounts (internal id), tickets, wiki, suggestions, games, admin audit/ledger
+  db.js                SQLite accounts (internal id), tickets, wiki, suggestions, games, admin audit/ledger, paypal_purchases
   auth.js              Local auth flags (incl. MATCH_CHAT), scrypt passwords, tokens, rate limits, EN/ES name filter (glin-profanity)
   mail.js              Nodemailer verify/reset email (SMTP_*)
+  paypal.js            PayPal Orders v2 (create/capture/webhook verify/settle) + reconcile loop
+  paypalPackages.js    Server-only USD ticket package catalog
   rating.js            MMR/Elo
   news.js              Landing news from data/news.json
   wiki-render.js       Markdown → HTML for wiki
@@ -115,7 +117,8 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | Admin dashboard (roles, users, analytics, logs, games, ops, reports) | `server/admin/` (`routes.js`, `auth.js`, …) | `views/admin/` (incl. `reports.ejs`), `server/db.js` (audit/ledger/activity/`player_reports`), `public/css/admin.css` |
-| Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` |
+| Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` (Formbar-linked only) |
+| Buy PayPal ticket packs | `server/paypal.js`, `server/paypalPackages.js`, `docs/paypal.md` | `/buy` + `views/paypal-store.ejs` / `public/js/paypalBuy.js`; `POST /api/paypal/orders` + capture; `POST /webhooks/paypal`; gated: local/Discord login + credentials; blocked when `formbar_id` set; ledger `paypal_purchase` / `paypal_clawback`; admin user + ops lookup/export |
 | Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `app.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
@@ -131,6 +134,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 - Pre-game lobby overlay (`#lobby`): logo; once an opponent is seated (waiting or countdown) show them and two-click Concede; alone waiting uses Leave (abandon). Leave/concede with both seats filled forfeits (tickets stay charged if already charged).
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`. Chat is not a sim command.
 - Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie.
+- PayPal (browser): `POST /api/paypal/orders` `{ packageId }`, `POST /api/paypal/orders/:orderId/capture`, webhook `POST /webhooks/paypal` (signature-verified).
 
 ### Shared code rule
 

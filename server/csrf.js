@@ -21,8 +21,9 @@ export function ensureCsrf(req, res, next) {
 }
 
 /**
- * Browser form POSTs must echo the session token.
+ * Browser form POSTs must echo the session token (body or X-CSRF-Token).
  * Native /api/v1 calls use a bearer session id and are exempt.
+ * PayPal webhooks use signature verification instead of CSRF.
  */
 export function requireCsrf(req, res, next) {
   if (SAFE_METHODS.has(req.method)) {
@@ -34,8 +35,14 @@ export function requireCsrf(req, res, next) {
     next();
     return;
   }
+  if (path === "/webhooks/paypal") {
+    next();
+    return;
+  }
   const expected = req.session && req.session.csrfToken;
-  const sent = req.body && req.body._csrf;
+  const sent = (req.body && req.body._csrf)
+    || req.get("x-csrf-token")
+    || req.get("X-CSRF-Token");
   if (!tokensMatch(sent, expected)) {
     logger.warn({
       event: "csrf_failed",

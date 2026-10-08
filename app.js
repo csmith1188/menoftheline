@@ -34,6 +34,7 @@ import {
   linkDiscordToAccount,
   linkFormbarToAccount,
   listAccountMmrHistory,
+  listPaypalPurchasesForAccount,
   listWikiPages,
   listWikiSlugs,
   deleteWikiPageBySlug,
@@ -100,6 +101,19 @@ import { readPrefsCookies, writePrefsCookies } from "./server/prefsCookie.js";
 import { connectFormbar, disconnectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
 import { authenticateFormbarToken } from "./server/formbarAuth.js";
 import { ensureCsrf, requireCsrf } from "./server/csrf.js";
+import {
+  accountCanBuyPaypal,
+  createPaypalOrder,
+  handlePaypalWebhookEvent,
+  listPaypalPackages,
+  paypalCheckoutEnabled,
+  paypalClientIdPublic,
+  paypalMode,
+  settlePaypalPurchase,
+  startPaypalReconcileLoop,
+  stopPaypalReconcileLoop,
+  verifyPaypalWebhookSignature,
+} from "./server/paypal.js";
 import {
   assertSessionSecret,
   debugRangesEnabled,
@@ -1531,15 +1545,136 @@ app.get("/buy", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
     const pack = ticketPack();
+    const canPaypal = accountCanBuyPaypal(viewer);
+    const paypalPurchases = canPaypal && viewer
+      ? await listPaypalPurchasesForAccount(viewer.id, { limit: 25 })
+      : [];
     req.session.save(() => res.render("tickets", {
       nav: "buy",
       viewer,
       notice: takeNotice(req),
       packSize: pack.size,
       packCost: pack.cost,
+      paypalEnabled: paypalCheckoutEnabled(),
+      canPaypal,
+      paypalClientId: paypalClientIdPublic(),
+      paypalMode: paypalMode(),
+      paypalPackages: listPaypalPackages(),
+      paypalPurchases,
     }));
   } catch (err) {
     next(err);
+  }
+});
+
+const paypalJson = express.json({ limit: "16kb" });
+const paypalWebhookJson = express.json({
+  limit: "256kb",
+  verify(req, _res, buf) {
+    req.rawBody = buf.toString("utf8");
+  },
+});
+
+app.post("/api/paypal/orders", paypalJson, async (req, res, next) => {
+  try {
+    const account = await pageViewer(req);
+    if (!account) {
+      res.status(401).json({ error: "login_required" });
+      return;
+    }
+    if (!accountCanBuyPaypal(account)) {
+      res.status(403).json({ error: "paypal_unavailable" });
+      return;
+    }
+    const packageId = req.body && req.body.packageId;
+    const created = await createPaypalOrder({
+      packageId,
+      accountId: account.id,
+    });
+    if (!created.ok) {
+      const status = created.error === "unknown_package" ? 400 : 502;
+      res.status(status).json({ error: created.error });
+      return;
+    }
+    res.json({ id: created.orderId, orderId: created.orderId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/paypal/orders/:orderId/capture", paypalJson, async (req, res, next) => {
+  try {
+    const account = await pageViewer(req);
+    if (!account) {
+      res.status(401).json({ error: "login_required" });
+      return;
+    }
+    if (!accountCanBuyPaypal(account)) {
+      res.status(403).json({ error: "paypal_unavailable" });
+      return;
+    }
+    const orderId = String(req.params.orderId || "").trim();
+    const settled = await settlePaypalPurchase(orderId, {
+      accountId: account.id,
+      captureIfNeeded: true,
+    });
+    if (!settled.ok) {
+      const map = {
+        forbidden: 403,
+        not_found: 404,
+        amount_mismatch: 409,
+        merchant_mismatch: 409,
+        not_completed: 409,
+      };
+      res.status(map[settled.error] || 502).json({
+        error: settled.error,
+        purchase: settled.purchase
+          ? { id: settled.purchase.id, status: settled.purchase.status }
+          : null,
+      });
+      return;
+    }
+    const fresh = await getAccount(account.id);
+    res.json({
+      ok: true,
+      credited: Boolean(settled.credited),
+      duplicate: Boolean(settled.duplicate),
+      tickets: settled.purchase ? settled.purchase.tickets : 0,
+      balance: settled.balance != null
+        ? settled.balance
+        : (fresh ? fresh.tickets : null),
+      status: settled.purchase ? settled.purchase.status : "credited",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/webhooks/paypal", paypalWebhookJson, async (req, res) => {
+  try {
+    const rawBody = req.rawBody != null
+      ? req.rawBody
+      : JSON.stringify(req.body || {});
+    const verified = await verifyPaypalWebhookSignature({
+      headers: req.headers,
+      rawBody,
+    });
+    if (!verified.ok) {
+      logger.warn({
+        event: "paypal_webhook_rejected",
+        reason: verified.error,
+      }, "PayPal webhook rejected");
+      res.status(400).json({ error: verified.error || "invalid" });
+      return;
+    }
+    const result = await handlePaypalWebhookEvent(verified.event);
+    res.status(200).json({ ok: true, duplicate: Boolean(result.duplicate) });
+  } catch (err) {
+    logger.error({
+      event: "paypal_webhook_error",
+      err: asErr(err),
+    }, "PayPal webhook handler error");
+    res.status(500).json({ error: "server_error" });
   }
 });
 
@@ -1652,7 +1787,6 @@ app.get("/profile/:id", async (req, res, next) => {
     const account = await findAccountForProfile(req.params.id);
     const viewer = await pageViewer(req);
     const privileged = accountEmailVerified(viewer);
-    const pack = ticketPack();
     const isOwner = Boolean(account && viewer && account.id === viewer.id);
     const mmrPage = Math.max(1, Number.parseInt(String(req.query.mmrpage || "1"), 10) || 1);
     const mmrHistory = account
@@ -1664,20 +1798,21 @@ app.get("/profile/:id", async (req, res, next) => {
       isOwner,
       mmrHistory,
       notice: takeNotice(req),
-      packSize: pack.size,
-      packCost: pack.cost,
       canLinkFormbar: Boolean(
         isOwner && privileged
+        && account
         && !account.formbar_id
         && formbarLoginEnabled(),
       ),
       canLinkDiscord: Boolean(
         isOwner && privileged
+        && account
         && !account.discord_id
         && discordLoginEnabled(),
       ),
       canAddLocal: Boolean(
         isOwner && privileged
+        && account
         && !account.email
         && localAccountsEnabled(),
       ),
@@ -3124,6 +3259,11 @@ async function shutdown(signal) {
     setTimeout(resolve, 5000).unref?.();
   });
   try {
+    stopPaypalReconcileLoop();
+  } catch {
+    // ignore
+  }
+  try {
     disconnectFormbar();
   } catch {
     // ignore
@@ -3158,6 +3298,13 @@ if (isMain) {
     url: THIS_URL,
     workers: workerCount(),
   }, `Men Of The Line listening on ${THIS_URL}`);
+  if (paypalCheckoutEnabled()) {
+    startPaypalReconcileLoop();
+    logger.info({
+      event: "paypal_enabled",
+      mode: paypalMode(),
+    }, "PayPal ticket checkout enabled");
+  }
   if (debugRangesEnabled()) {
     logger.info({
       event: "debug_ranges_enabled",

@@ -54,7 +54,38 @@
           <a class="action" href="/admin/export/accounts.csv">Accounts</a>
           <a class="action" href="/admin/export/games.csv">Games</a>
           <a class="action" href="/admin/export/ticket_ledger.csv">Ticket ledger</a>
+          <a class="action" href="/admin/export/paypal_purchases.csv">PayPal purchases</a>
         </div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>PayPal lookup</h3>
+        <form method="post" action="/admin/ops/paypal-lookup">
+          <%- include("../csrf-field") %>
+          <label>Order or capture ID
+            <input name="query" required maxlength="128" placeholder="PayPal order or capture id">
+          </label>
+          <button type="submit">Look up</button>
+        </form>
+        <% if (typeof paypalLookup !== "undefined" && paypalLookup) { %>
+          <% if (paypalLookup.ok && paypalLookup.purchase) { %>
+            <% const p = paypalLookup.purchase; %>
+            <p class="hint">
+              Purchase #<%= p.id %> ·
+              <a href="/admin/users/<%= p.account_id %>">account #<%= p.account_id %></a> ·
+              <%= p.package_id %> · $<%= p.amount_value %> · <%= p.tickets %> tickets ·
+              status <strong><%= p.status %></strong>
+              <% if (p.clawback_shortfall) { %> · clawback shortfall <%= p.clawback_shortfall %><% } %>
+            </p>
+            <p class="hint admin-mono">order <%= p.paypal_order_id || "—" %> · capture <%= p.paypal_capture_id || "—" %></p>
+          <% } else { %>
+            <p class="hint">No purchase found for “<%= paypalLookup.query %>”.</p>
+          <% } %>
+        <% } %>
+        <form method="post" action="/admin/ops/paypal-reconcile" style="margin-top:0.75rem">
+          <%- include("../csrf-field") %>
+          <button type="submit">Reconcile stale PayPal orders</button>
+        </form>
       </div>
     </section>
   </div>

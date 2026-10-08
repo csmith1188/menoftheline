@@ -130,6 +130,16 @@ export function ledgerToCsv(rows) {
   return toCsv(header, rows);
 }
 
+export function paypalPurchasesToCsv(rows) {
+  const header = [
+    "id", "account_id", "package_id", "amount_value", "currency", "tickets",
+    "paypal_order_id", "paypal_capture_id", "status",
+    "clawback_applied", "clawback_shortfall",
+    "created_at", "updated_at", "credited_at", "refunded_at",
+  ];
+  return toCsv(header, rows);
+}
+
 function toCsv(header, rows) {
   const lines = [header.join(",")];
   for (const row of rows) {

@@ -31,4 +31,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - demo recorder/playback
 - Capacitor to wrap into clients for iOS and Android
 
-
+- revenue goals
+- account deletion
+- LLC
+- refund based on purchase type (5/20/50)

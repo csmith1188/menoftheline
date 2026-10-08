@@ -145,11 +145,8 @@
         </section>
         <section>
           <h2>Tickets</h2>
-          <% if (account.formbar_id) { %>
-            <%- include("buy", { nextPath: "/profile/" + account.id }) %>
-          <% } else { %>
-            <p class="hint">Digipog ticket packs need a linked Formbar account. Another payment method will be added later.</p>
-          <% } %>
+          <p class="hint">Buy tickets and view purchase history on the ticket store.</p>
+          <p><a class="action" href="/buy">Ticket store</a></p>
         </section>
       <% } %>
     <% } %>

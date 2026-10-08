@@ -3,10 +3,12 @@ import {
   banAccount,
   bumpSessionEpoch,
   countOpenPlayerReports,
+  findPaypalPurchaseByOrderOrCapture,
   getAccount,
   isAccountBanned,
   listAccountGames,
   listAdminAudit,
+  listPaypalPurchasesForAccount,
   listPlayerReports,
   listTicketLedger,
   normalizeAccountRole,
@@ -24,6 +26,7 @@ export {
   listTicketLedger,
   listAccountGames,
   isAccountBanned,
+  findPaypalPurchaseByOrderOrCapture,
 };
 
 export function publicAccount(account) {
@@ -35,7 +38,7 @@ export function publicAccount(account) {
 export async function getUserDetail(accountId) {
   const account = await getAccount(accountId);
   if (!account) return null;
-  const [ledger, games, audit, reportsAgainst, reportsFiled, openReportsAgainst] = await Promise.all([
+  const [ledger, games, audit, reportsAgainst, reportsFiled, openReportsAgainst, paypalPurchases] = await Promise.all([
     listTicketLedger(account.id, { limit: 50 }),
     listAccountGames(account.id, { limit: 20 }),
     listAdminAudit({
@@ -46,6 +49,7 @@ export async function getUserDetail(accountId) {
     listPlayerReports({ reportedAccountId: account.id, status: "all", limit: 30 }),
     listPlayerReports({ reporterAccountId: account.id, status: "all", limit: 20 }),
     countOpenPlayerReports(account.id),
+    listPaypalPurchasesForAccount(account.id, { limit: 50 }),
   ]);
   return {
     account: publicAccount(account),
@@ -55,6 +59,7 @@ export async function getUserDetail(accountId) {
     reportsAgainst,
     reportsFiled,
     openReportsAgainst,
+    paypalPurchases,
     banned: isAccountBanned(account),
   };
 }

@@ -231,6 +231,72 @@ form,
   }
 }
 
+.paypal-store {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.paypal-packages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.paypal-package {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.paypal-package:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.paypal-package-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.paypal-package-price {
+  color: var(--gold);
+  font-family: var(--font-header);
+}
+
+.paypal-buttons {
+  min-height: 42px;
+}
+
+.paypal-status--busy {
+  color: #b8c7d8;
+}
+
+.paypal-status--ok {
+  color: #9dcea3;
+}
+
+.paypal-status--error {
+  color: #e8a0a0;
+}
+
+.paypal-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.paypal-history th,
+.paypal-history td {
+  text-align: left;
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
 button,
 .action {
   appearance: none;

@@ -21,7 +21,7 @@
         <p><a class="action" href="/login">Log in</a></p>
       <% } else { %>
         <dl class="stats">
-          <div><dt>Balance</dt><dd><%= viewer.tickets %></dd></div>
+          <div><dt>Balance</dt><dd id="ticket-balance"><%= viewer.tickets %></dd></div>
           <% if (viewer.held > 0) { %>
             <div><dt>In use</dt><dd><%= viewer.held %></dd></div>
             <div><dt>Free</dt><dd><%= Math.max(0, viewer.tickets - viewer.held) %></dd></div>
@@ -30,13 +30,19 @@
         <% if (!accountEmailVerified(viewer)) { %>
           <p class="hint">Verify your email to buy tickets.</p>
           <p><a class="action" href="/profile/<%= viewer.id %>">Open profile</a></p>
-        <% } else if (!viewer.formbar_id) { %>
-          <p class="hint">Link a Formbar account to buy tickets with Digipogs.</p>
-          <p><a class="action" href="/profile/<%= viewer.id %>">Link on profile</a></p>
-        <% } else { %>
-          <h2>Buy tickets</h2>
-          <p class="hint">Tickets are spent on ranked matches, custom lobbies, and extra suggestions.</p>
+        <% } else if (viewer.formbar_id) { %>
+          <h2>Buy with Digipogs</h2>
+          <p class="hint">Tickets are spent on ranked matches, custom lobbies, and extra suggestions. Formbar-linked accounts use Digipogs (PayPal is not available).</p>
           <%- include("buy", { nextPath: "/buy", buyLayout: "row" }) %>
+        <% } else if (canPaypal) { %>
+          <h2>Buy with PayPal</h2>
+          <p class="hint">Tickets are spent on ranked matches, custom lobbies, and extra suggestions.</p>
+          <%- include("paypal-store") %>
+        <% } else if (paypalEnabled) { %>
+          <p class="hint">PayPal checkout is unavailable for this account.</p>
+        <% } else { %>
+          <p class="hint">Link a Formbar account to buy tickets with Digipogs, or enable PayPal checkout on this server.</p>
+          <p><a class="action" href="/profile/<%= viewer.id %>">Open profile</a></p>
         <% } %>
       <% } %>
     </section>

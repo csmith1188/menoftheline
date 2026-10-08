@@ -10,6 +10,7 @@ import {
   exportAccountsRows,
   exportGamesRows,
   exportLedgerRows,
+  exportPaypalPurchaseRows,
   getSuggestion,
   getWikiRevision,
   listAdminAudit,
@@ -46,6 +47,7 @@ import {
   configHealth,
   gamesToCsv,
   ledgerToCsv,
+  paypalPurchasesToCsv,
   readNews,
   saveNews,
   setMaintenance,
@@ -59,9 +61,11 @@ import {
   adminUnban,
   adminUpdateNotes,
   adminVerifyEmail,
+  findPaypalPurchaseByOrderOrCapture,
   getUserDetail,
   searchAccounts,
 } from "./users.js";
+import { reconcileStalePaypalPurchases } from "../paypal.js";
 
 function routeId(value) {
   const id = Number(value);
@@ -645,12 +649,51 @@ export function createAdminRouter(deps) {
       if (!(await requireAdmin(req, res))) return;
       const health = await configHealth();
       const news = readNews();
+      const paypalLookup = req.session && req.session.paypalLookup
+        ? req.session.paypalLookup
+        : null;
+      if (req.session) req.session.paypalLookup = null;
       const data = await baseLocals(req, {
         health,
         news,
+        paypalLookup,
         adminSection: "ops",
       });
       req.session.save(() => res.render("admin/ops", data));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/ops/paypal-lookup", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const q = String(req.body && req.body.query || "").trim();
+      const row = q ? await findPaypalPurchaseByOrderOrCapture(q) : null;
+      req.session.paypalLookup = row
+        ? { ok: true, purchase: row }
+        : { ok: false, query: q, error: "not_found" };
+      req.session.save(() => res.redirect("/admin/ops"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/ops/paypal-reconcile", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const result = await reconcileStalePaypalPurchases({
+        olderThanMs: 60_000,
+        limit: 50,
+      });
+      req.session.notice = `PayPal reconcile: processed ${result.processed} of ${result.considered} stale rows.`;
+      await auditAdmin(req, {
+        action: "paypal_reconcile",
+        targetType: "site",
+        targetId: "paypal",
+        after: result,
+      });
+      req.session.save(() => res.redirect("/admin/ops"));
     } catch (err) {
       next(err);
     }
@@ -739,6 +782,13 @@ export function createAdminRouter(deps) {
         res.setHeader("Content-Type", "text/csv; charset=utf-8");
         res.setHeader("Content-Disposition", "attachment; filename=\"ticket_ledger.csv\"");
         res.send(ledgerToCsv(rows));
+        return;
+      }
+      if (kind === "paypal" || kind === "paypal_purchases") {
+        const rows = await exportPaypalPurchaseRows();
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", "attachment; filename=\"paypal_purchases.csv\"");
+        res.send(paypalPurchasesToCsv(rows));
         return;
       }
       res.status(404).send("Unknown export");

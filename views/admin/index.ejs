@@ -23,7 +23,7 @@
         <div><dt>Tickets out</dt><dd><%= admin.stats.tickets %></dd></div>
         <div><dt>Held</dt><dd><%= admin.stats.held || 0 %></dd></div>
         <div><dt>Digipogs spent</dt><dd><%= admin.stats.digipogs %></dd></div>
-        <div><dt>Admins</dt><dd><%= admin.stats.admins || 0 %></dd></div>
+        <div><dt>Total income</dt><dd>$<%= Number(admin.stats.paypalIncomeUsd || 0).toFixed(2) %></dd></div>
       </dl>
       <% if (admin.health && admin.health.matchmakingPaused) { %>
         <p class="notice">Matchmaking paused for new joins.</p>

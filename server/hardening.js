@@ -140,16 +140,26 @@ export function originAllowed(origin, { thisUrl, nodeEnv, hasAuthToken } = {}) {
   return false;
 }
 
+const PAYPAL_HOSTS = [
+  "https://www.paypal.com",
+  "https://www.sandbox.paypal.com",
+  "https://www.paypalobjects.com",
+  "https://c.paypal.com",
+  "https://c.sandbox.paypal.com",
+].join(" ");
+
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' ${PAYPAL_HOSTS}`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: https:",
-  "connect-src 'self'",
+  `connect-src 'self' ${PAYPAL_HOSTS}`,
+  `frame-src 'self' ${PAYPAL_HOSTS}`,
+  "child-src 'self' https://www.paypal.com https://www.sandbox.paypal.com",
   "object-src 'none'",
   "base-uri 'self'",
-  "form-action 'self'",
+  "form-action 'self' https://www.paypal.com https://www.sandbox.paypal.com",
   "frame-ancestors 'none'",
 ].join("; ");
 
@@ -158,7 +168,7 @@ export function securityHeaders(thisUrl) {
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(self \"https://www.paypal.com\" \"https://www.sandbox.paypal.com\")",
   };
   if (httpsDeployment(thisUrl)) {
     headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains";

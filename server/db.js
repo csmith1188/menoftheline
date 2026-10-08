@@ -174,6 +174,31 @@ export async function initDb() {
   }
   await run("CREATE INDEX IF NOT EXISTS ticket_purchases_formbar ON ticket_purchases (formbar_id)");
   await run("CREATE INDEX IF NOT EXISTS ticket_purchases_pending ON ticket_purchases (account_id, status)");
+  await run(`CREATE TABLE IF NOT EXISTS paypal_purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    package_id TEXT NOT NULL,
+    amount_value TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    tickets INTEGER NOT NULL,
+    paypal_order_id TEXT UNIQUE,
+    paypal_capture_id TEXT UNIQUE,
+    status TEXT NOT NULL,
+    clawback_applied INTEGER NOT NULL DEFAULT 0,
+    clawback_shortfall INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    credited_at INTEGER,
+    refunded_at INTEGER
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS paypal_purchases_account ON paypal_purchases (account_id, created_at DESC)");
+  await run("CREATE INDEX IF NOT EXISTS paypal_purchases_status ON paypal_purchases (status, updated_at)");
+  await run(`CREATE TABLE IF NOT EXISTS paypal_webhook_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    processed_at INTEGER NOT NULL,
+    purchase_id INTEGER
+  )`);
   await run(`CREATE TABLE IF NOT EXISTS match_assignments (
     user_id TEXT PRIMARY KEY,
     worker INTEGER NOT NULL,
@@ -1615,6 +1640,435 @@ export async function grantTickets(accountId, tickets) {
   });
 }
 
+const PAYPAL_PURCHASE_SELECT = `id, account_id, package_id, amount_value, currency, tickets,
+  paypal_order_id, paypal_capture_id, status, clawback_applied, clawback_shortfall,
+  created_at, updated_at, credited_at, refunded_at`;
+
+export async function createPaypalPurchase({
+  accountId,
+  packageId,
+  amountValue,
+  currency,
+  tickets,
+  paypalOrderId,
+}) {
+  const id = Number(accountId);
+  const count = Number(tickets);
+  const orderId = String(paypalOrderId || "").trim();
+  const pkg = String(packageId || "").trim();
+  const amount = String(amountValue || "").trim();
+  const cur = String(currency || "USD").trim().toUpperCase() || "USD";
+  if (!Number.isInteger(id) || id <= 0) return null;
+  if (!Number.isInteger(count) || count <= 0) return null;
+  if (!pkg || !amount || !orderId) return null;
+  const now = Date.now();
+  const result = await run(
+    `INSERT INTO paypal_purchases (
+      account_id, package_id, amount_value, currency, tickets,
+      paypal_order_id, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'created', ?, ?)`,
+    [id, pkg, amount, cur, count, orderId, now, now],
+  );
+  return getPaypalPurchase(result.lastID);
+}
+
+export async function getPaypalPurchase(purchaseId) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return get(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+    [id],
+  );
+}
+
+export async function getPaypalPurchaseByOrderId(orderId) {
+  const oid = String(orderId || "").trim();
+  if (!oid) return null;
+  return get(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE paypal_order_id = ?`,
+    [oid],
+  );
+}
+
+export async function getPaypalPurchaseByCaptureId(captureId) {
+  const cid = String(captureId || "").trim();
+  if (!cid) return null;
+  return get(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE paypal_capture_id = ?`,
+    [cid],
+  );
+}
+
+export async function listPaypalPurchasesForAccount(accountId, { limit = 50 } = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  const size = Math.min(200, Math.max(1, Number(limit) || 50));
+  return all(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases
+     WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`,
+    [id, size],
+  );
+}
+
+export async function listStalePaypalPurchases({ olderThanMs = 120_000, limit = 50 } = {}) {
+  const cutoff = Date.now() - Math.max(0, Number(olderThanMs) || 0);
+  const size = Math.min(200, Math.max(1, Number(limit) || 50));
+  return all(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases
+     WHERE status IN ('created', 'approved', 'captured')
+       AND updated_at < ?
+     ORDER BY updated_at ASC LIMIT ?`,
+    [cutoff, size],
+  );
+}
+
+export async function findPaypalPurchaseByOrderOrCapture(query) {
+  const q = String(query || "").trim();
+  if (!q) return null;
+  const byOrder = await getPaypalPurchaseByOrderId(q);
+  if (byOrder) return byOrder;
+  return getPaypalPurchaseByCaptureId(q);
+}
+
+export async function exportPaypalPurchaseRows(limit = 5000) {
+  const size = Math.min(10000, Math.max(1, Number(limit) || 5000));
+  return all(
+    `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases
+     ORDER BY created_at DESC LIMIT ?`,
+    [size],
+  );
+}
+
+/**
+ * Mark purchase approved (buyer approved in PayPal UI).
+ * No-op if already past approved.
+ */
+export async function markPaypalPurchaseApproved(purchaseId) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const now = Date.now();
+  const result = await run(
+    `UPDATE paypal_purchases SET status = 'approved', updated_at = ?
+     WHERE id = ? AND status IN ('created', 'approved')`,
+    [now, id],
+  );
+  return result.changes > 0;
+}
+
+/**
+ * Attach capture id and move to captured (or keep credited/refunded if already settled).
+ * Returns { ok, purchase, duplicate }.
+ */
+export async function markPaypalPurchaseCaptured(purchaseId, captureId) {
+  const id = Number(purchaseId);
+  const cid = String(captureId || "").trim();
+  if (!Number.isInteger(id) || id <= 0 || !cid) {
+    return { ok: false, error: "invalid" };
+  }
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (row.paypal_capture_id && row.paypal_capture_id !== cid) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "capture_mismatch", purchase: row };
+      }
+      if (row.status === "credited" || row.status === "refunded" || row.status === "reversed") {
+        await execRun("COMMIT");
+        return { ok: true, purchase: row, alreadySettled: true };
+      }
+      if (row.status === "captured" && row.paypal_capture_id === cid) {
+        await execRun("COMMIT");
+        return { ok: true, purchase: row, duplicate: true };
+      }
+      const now = Date.now();
+      try {
+        await execRun(
+          `UPDATE paypal_purchases
+           SET status = 'captured', paypal_capture_id = ?, updated_at = ?
+           WHERE id = ? AND status IN ('created', 'approved', 'captured')`,
+          [cid, now, id],
+        );
+      } catch (err) {
+        if (String(err && err.message || "").includes("UNIQUE")) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "capture_taken" };
+        }
+        throw err;
+      }
+      const updated = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      await execRun("COMMIT");
+      return { ok: true, purchase: updated };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("markPaypalPurchaseCaptured", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function markPaypalPurchaseFailed(purchaseId, reason = null) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const now = Date.now();
+  const result = await run(
+    `UPDATE paypal_purchases SET status = 'failed', updated_at = ?
+     WHERE id = ? AND status IN ('created', 'approved', 'captured', 'denied')`,
+    [now, id],
+  );
+  if (reason) {
+    logger.info({
+      event: "paypal_purchase_failed",
+      purchaseId: id,
+      reason: String(reason).slice(0, 200),
+    }, "paypal purchase marked failed");
+  }
+  return result.changes > 0;
+}
+
+export async function markPaypalPurchaseDenied(purchaseId) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const now = Date.now();
+  const result = await run(
+    `UPDATE paypal_purchases SET status = 'denied', updated_at = ?
+     WHERE id = ? AND status IN ('created', 'approved', 'captured', 'failed')`,
+    [now, id],
+  );
+  return result.changes > 0;
+}
+
+/**
+ * Idempotent ticket credit: CAS status captured → credited.
+ * Returns { ok, credited, purchase, balance }.
+ */
+export async function creditPaypalPurchase(purchaseId) {
+  const id = Number(purchaseId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return { ok: false, error: "invalid" };
+  }
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (row.status === "credited") {
+        const account = await execGet(
+          "SELECT tickets, held FROM accounts WHERE id = ?",
+          [row.account_id],
+        );
+        await execRun("COMMIT");
+        return {
+          ok: true,
+          credited: false,
+          duplicate: true,
+          purchase: row,
+          balance: account ? account.tickets : null,
+        };
+      }
+      if (row.status === "refunded" || row.status === "reversed") {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "already_refunded", purchase: row };
+      }
+      if (row.status !== "captured") {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_captured", purchase: row };
+      }
+      const marked = await execRun(
+        `UPDATE paypal_purchases
+         SET status = 'credited', credited_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'captured'`,
+        [Date.now(), Date.now(), id],
+      );
+      if (!marked.changes) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "race", purchase: row };
+      }
+      const account = await execGet(
+        "SELECT tickets, held FROM accounts WHERE id = ?",
+        [row.account_id],
+      );
+      if (!account) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "account_missing" };
+      }
+      const now = Date.now();
+      const nextTickets = account.tickets + row.tickets;
+      await execRun(
+        "UPDATE accounts SET tickets = ?, updated_at = ? WHERE id = ?",
+        [nextTickets, now, row.account_id],
+      );
+      await insertTicketLedger(execRun, {
+        accountId: row.account_id,
+        delta: row.tickets,
+        balanceAfter: nextTickets,
+        heldAfter: account.held,
+        kind: "purchase",
+        refType: "paypal_purchase",
+        refId: id,
+        createdAt: now,
+      });
+      const purchase = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      await execRun("COMMIT");
+      return {
+        ok: true,
+        credited: true,
+        purchase,
+        balance: nextTickets,
+      };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("creditPaypalPurchase", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+/**
+ * Refund/reversal clawback: deduct up to free tickets; record shortfall.
+ * Never reduces balance below held.
+ */
+export async function clawbackPaypalPurchase(purchaseId, { status = "refunded", reason = null } = {}) {
+  const id = Number(purchaseId);
+  const nextStatus = status === "reversed" ? "reversed" : "refunded";
+  if (!Number.isInteger(id) || id <= 0) {
+    return { ok: false, error: "invalid" };
+  }
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (row.status === "refunded" || row.status === "reversed") {
+        await execRun("COMMIT");
+        return {
+          ok: true,
+          duplicate: true,
+          purchase: row,
+          applied: row.clawback_applied,
+          shortfall: row.clawback_shortfall,
+        };
+      }
+      const account = await execGet(
+        "SELECT tickets, held FROM accounts WHERE id = ?",
+        [row.account_id],
+      );
+      if (!account) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "account_missing" };
+      }
+      const now = Date.now();
+      const free = Math.max(0, account.tickets - account.held);
+      const want = row.status === "credited" || row.credited_at
+        ? Number(row.tickets)
+        : 0;
+      const applied = Math.min(want, free);
+      const shortfall = Math.max(0, want - applied);
+      const nextTickets = account.tickets - applied;
+      if (applied > 0) {
+        await execRun(
+          "UPDATE accounts SET tickets = ?, updated_at = ? WHERE id = ?",
+          [nextTickets, now, row.account_id],
+        );
+        await insertTicketLedger(execRun, {
+          accountId: row.account_id,
+          delta: -applied,
+          balanceAfter: nextTickets,
+          heldAfter: account.held,
+          kind: "paypal_clawback",
+          refType: "paypal_purchase",
+          refId: id,
+          reason: reason || nextStatus,
+          createdAt: now,
+        });
+      }
+      await execRun(
+        `UPDATE paypal_purchases
+         SET status = ?, clawback_applied = ?, clawback_shortfall = ?,
+             refunded_at = ?, updated_at = ?
+         WHERE id = ?`,
+        [nextStatus, applied, shortfall, now, now, id],
+      );
+      const purchase = await execGet(
+        `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
+        [id],
+      );
+      await execRun("COMMIT");
+      return {
+        ok: true,
+        purchase,
+        applied,
+        shortfall,
+        balance: nextTickets,
+      };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("clawbackPaypalPurchase", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+/**
+ * Record webhook event id for idempotency. Returns false if already seen.
+ */
+export async function claimPaypalWebhookEvent(eventId, eventType, purchaseId = null) {
+  const eid = String(eventId || "").trim();
+  const etype = String(eventType || "").trim() || "unknown";
+  if (!eid) return false;
+  try {
+    await run(
+      `INSERT INTO paypal_webhook_events (event_id, event_type, processed_at, purchase_id)
+       VALUES (?, ?, ?, ?)`,
+      [eid, etype, Date.now(), purchaseId != null ? Number(purchaseId) : null],
+    );
+    return true;
+  } catch (err) {
+    if (String(err && err.message || "").includes("UNIQUE") || err.code === "SQLITE_CONSTRAINT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export async function paypalWebhookEventSeen(eventId) {
+  const eid = String(eventId || "").trim();
+  if (!eid) return false;
+  const row = await get(
+    "SELECT event_id FROM paypal_webhook_events WHERE event_id = ?",
+    [eid],
+  );
+  return Boolean(row);
+}
+
 function workerFromCounts(rows) {
   const count = workerCount();
   const loads = [];
@@ -1868,6 +2322,11 @@ export async function systemStats() {
     `SELECT COALESCE(SUM(digipogs), 0) AS digipogs
      FROM ticket_purchases WHERE status = 'completed'`,
   );
+  // Net USD kept: credited sales only (refunded/reversed leave this set).
+  const paypal = await get(
+    `SELECT COALESCE(SUM(CAST(amount_value AS REAL)), 0) AS income_usd
+     FROM paypal_purchases WHERE status = 'credited'`,
+  );
   const roles = await get(
     `SELECT
        COALESCE(SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END), 0) AS admins,
@@ -1881,6 +2340,7 @@ export async function systemStats() {
     finished: games.finished,
     ranked: games.ranked,
     digipogs: spent.digipogs,
+    paypalIncomeUsd: Number(paypal.income_usd) || 0,
     admins: roles.admins,
     moderators: roles.moderators,
   };

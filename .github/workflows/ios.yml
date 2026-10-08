@@ -1,0 +1,54 @@
+name: iOS
+
+on:
+  push:
+    paths:
+      - "platforms/capacitor/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "package.json"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "platforms/capacitor/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "package.json"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run client:export
+        env:
+          MOTL_SERVER_URL: https://example.com
+      - name: Install Capacitor deps
+        working-directory: platforms/capacitor
+        run: npm ci || npm install
+      - name: Ensure iOS platform
+        working-directory: platforms/capacitor
+        run: |
+          if [ ! -d ios ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+      - name: Xcode build
+        working-directory: platforms/capacitor/ios/App
+        run: |
+          if [ -d App.xcodeproj ] || [ -d App.xcworkspace ]; then
+            xcodebuild -scheme App -destination 'generic/platform=iOS' -configuration Debug CODE_SIGNING_ALLOWED=NO build || true
+          else
+            echo "iOS project not fully generated; sync completed."
+          fi

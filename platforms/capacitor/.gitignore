@@ -1,0 +1,12 @@
+node_modules/
+.capacitor/
+android/.gradle/
+android/app/build/
+android/build/
+android/captures/
+android/local.properties
+ios/App/Pods/
+ios/App/build/
+*.apk
+*.aab
+*.ipa

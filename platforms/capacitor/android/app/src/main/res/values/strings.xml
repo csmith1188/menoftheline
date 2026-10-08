@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Men Of The Line</string>
+    <string name="title_activity_main">Men Of The Line</string>
+    <string name="package_name">com.menoftheline.app</string>
+    <string name="custom_url_scheme">com.menoftheline.app</string>
+</resources>

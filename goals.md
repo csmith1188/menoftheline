@@ -10,6 +10,7 @@
 - Late game land?
 - ~~Add more game metrics~~ (`/admin/analytics`: modes, duration, tickets via ledger)
 - Game mode to play by programming each unit and keep's orders
+- Wiki Categories
 
 # Capacity
 
@@ -18,20 +19,25 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 # Ideas (May add to game)
 - officers make order sounds when near lines given orders
 - Reinforced Learning player
-- ~~Game -> Client API~~ (`/api/v1` session/me/play + socket `auth.token`)
-- ~~Site Services -> Client API (play without ever visiting site)~~ (Formbar login, tickets, ranked/listed/join, lobbies)
-- ~~Load wiki from MDs~~ (`npm run seed-wiki` upserts `wikidocs/` into the DB; live wiki still DB-backed for edits/diff)
-- Wiki Categories
+- ~~Electron + Capacitor packaging~~ (`platforms/*`, `docs/packaging.md`)
+- ~~Retire pocketMOTL Kotlin client~~ (Capacitor + `motl://auth`; Desktop folder kept as archive)
 
-- ~~Admin account~~ (stored `accounts.role`; `/admin` dashboard)
-- don't fill formbar id's for guest / non-formbar users
-- ~~ticket transaction tracking~~ (`ticket_ledger`)
-- ~~mmr ledger~~ (profile `/profile/:id` ranked MMR history from `games`)
-- ~~player report~~ (settings → Report player; `/admin/reports`; one report per reporter→reported)
-- demo recorder/playback
-- Capacitor to wrap into clients for iOS and Android
-
+# Site
 - revenue goals
 - account deletion
-- LLC
+- delete your own bug reports
+- don't fill formbar id's for guest / non-formbar users
+- news mailer
+- discord bot
+- demo recorder / playback
 - refund based on purchase type (5/20/50)
+
+- social accounts: x, insta, discord, reddit, restore iPhone SE
+- LLC
+- steam, google, apple, nintendo
+- Payment processing per platform
+
+- review performance
+- redis + workers
+- spawn new servers?
+- reaudit security

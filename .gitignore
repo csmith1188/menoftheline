@@ -2,6 +2,11 @@ node_modules/
 data/*
 scripts/load/results/
 exports/
+dist/
+platforms/electron/dist/
+platforms/capacitor/android/.gradle/
+platforms/capacitor/android/app/build/
+platforms/capacitor/ios/App/Pods/
 *.cpuprofile
 !data/news.json
 .env

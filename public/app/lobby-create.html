@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Custom match · Men Of The Line</title>
+  <link rel="stylesheet" href="/css/landing.css">
+</head>
+<body>
+  <script src="/shell-config.js"></script>
+  <div class="page">
+    <header class="top">
+      <a class="brand" href="/app/games.html">
+        <img src="/img/logoA.png" alt="Men Of The Line" style="max-width:100%;height:auto;display:block;">
+      </a>
+    </header>
+    <p id="games-notice" class="notice hidden" role="status"></p>
+    <div id="games-account" class="games-account" aria-label="Account"></div>
+    <section>
+      <h2>Custom match</h2>
+      <p class="hint">Set the rules, then start the lobby and wait for an opponent.</p>
+      <form class="lobby-create" id="lobby-create-form">
+        <div class="lobby-create-grid">
+          <div class="lobby-create-fields">
+            <label for="speed">Game speed</label>
+            <select id="speed" name="speed"></select>
+            <label for="fogEnabled">Fog of war</label>
+            <select id="fogEnabled" name="fogEnabled">
+              <option value="1">Enabled</option>
+              <option value="0">Disabled</option>
+            </select>
+            <label for="mapId">Map</label>
+            <select id="mapId" name="mapId"></select>
+            <label for="fortsEnabled">Forts</label>
+            <select id="fortsEnabled" name="fortsEnabled">
+              <option value="1">Enabled</option>
+              <option value="0">Disabled</option>
+            </select>
+            <label for="baseGps">Base GPS</label>
+            <input id="baseGps" name="baseGps" type="number" step="1" required>
+            <label for="view">View</label>
+            <select id="view" name="view">
+              <option value="">2D</option>
+              <option value="3d">3D</option>
+            </select>
+            <div class="play-split">
+              <button type="submit">Start lobby</button>
+              <a class="action" id="lobby-cancel" href="/app/games.html">Cancel</a>
+            </div>
+          </div>
+          <div class="lobby-preview">
+            <p class="label">Map preview</p>
+            <canvas id="map-preview" width="320" height="200" aria-label="Map preview"></canvas>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+  <script type="module">
+    import { bindMapPreview } from "/js/mapPreview.js";
+    const form = document.getElementById("lobby-create-form");
+    const canvas = document.getElementById("map-preview");
+    if (form && canvas) bindMapPreview(form, canvas);
+  </script>
+  <script type="module" src="/js/menus/lobby-create.js"></script>
+</body>
+</html>

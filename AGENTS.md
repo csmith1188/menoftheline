@@ -20,6 +20,9 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run seed-wiki` | Load `wikidocs/*.md` into the wiki DB (`--dry-run`, `--only-missing`) |
 | `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 | `npm run export-graphics` | Transparent PNGs of lanes/keeps/towns/terrain/units → `public/img/` |
+| `npm run client:export` | Static client bundle → `dist/client/` for Electron/Capacitor |
+| `npm run desktop:dev` / `desktop:build` | Electron shell (see `docs/packaging.md`) |
+| `npm run android:dev` / `ios:dev` | Capacitor sync + open IDE |
 
 Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. In-match chat: `MATCH_CHAT` (default on). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
 
@@ -69,6 +72,8 @@ shared/                Authoritative tunables + geometry used by server, client,
   terrain.js           Terrain rules: move, LOS/fog, cover, range, snapshot helpers
   unitInfo.js          Player-facing unit copy + derived info panels
 public/js/             Browser match client (ES modules, imports ../shared/)
+  runtime.js           Cookie vs shell token, server URL, Socket.IO, openExternal
+  menus/               Shared games / lobby-create / account UI (API-driven)
   main.js              2D match bootstrap: socket, lobby, menus
   main3d.js / scene3d.js   3D match client
   board.js             Hit-testing, HUD geometry, buy UI helpers
@@ -80,11 +85,17 @@ public/js/             Browser match client (ES modules, imports ../shared/)
   unitInfo.js          In-match unit info overlay (uses shared/unitInfo.js)
   chat.js              In-match chat bubble + panel (Socket.IO `chat`)
   tooltips.js, tutorial.js, audio.js, buyArt.js, suggestion.js, debugRanges.js
+public/app/            Static shell entry HTML (games, lobby-create, play, play3d)
 public/css/            game.css, landing.css, admin.css
 views/                 EJS shells (landing, play, wiki, admin/, scores, lobby-create, …)
+platforms/electron/    Desktop shell (local dist/client + remote game server)
+platforms/capacitor/   Android/iOS shell (replaces retired pocketMOTL client)
+shared/protocol.js     PROTOCOL_VERSION / CLIENT_VERSION for packaged clients
+docs/packaging.md      Export, deep links, version gate, shell packaging
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports app.js
+scripts/export-client.js Static client export for shells
 scripts/load/          socket-load.js (100-player harness), sim-bench.js
 deploy/nginx.conf.example  One Node process behind Nginx; static files cached
 goals.md               Backlog / roadmap (not docs)
@@ -114,7 +125,8 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Tooltips / BGM prefs (guest cookies vs account DB) | `server/prefsCookie.js`, `shared/prefs.js`, `public/js/prefs.js` | Guests: cookies only. Logged-in: `accounts` via `settingsWrite` / `setPlayer*`; login and `/play` overwrite cookies from DB. |
 | Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js` (static assets before session), `test/security.test.js` / `test/securityHttp.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
-| Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, Android app in pocketMOTL |
+| Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, `public/js/runtime.js`, `docs/packaging.md` |
+| Electron / Capacitor packaging | `docs/packaging.md`, `scripts/export-client.js` | `platforms/electron/`, `platforms/capacitor/` (pocketMOTL Kotlin client retired) |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | Admin dashboard (roles, users, analytics, logs, games, ops, reports) | `server/admin/` (`routes.js`, `auth.js`, …) | `views/admin/` (incl. `reports.ejs`), `server/db.js` (audit/ledger/activity/`player_reports`), `public/css/admin.css` |
 | Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` (Formbar-linked only) |
@@ -133,7 +145,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 - Pause: human vs human mutual pause via settings `pause` (chat request + red chat alert until `pauseSeen` or both pause); both pause freezes sim; unpause votes or `UNPAUSE_MS` (60s) countdown resumes. Bot/training-vs-bot: `settingsOpen` freezes while the settings menu is open. Mid-match disconnect: `DISCONNECT_GRACE_MS` (5s) then `RECONNECT_WAIT_MS` (60s) frozen wait (“Waiting for opponent to reconnect”); timeout auto-concedes the disconnected seat.
 - Pre-game lobby overlay (`#lobby`): logo; once an opponent is seated (waiting or countdown) show them and two-click Concede; alone waiting uses Leave (abandon). Leave/concede with both seats filled forfeits (tickets stay charged if already charged).
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`. Chat is not a sim command.
-- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie.
+- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `GET /api/v1/version`, `GET /api/v1/queues`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). `/api/v1` accepts Bearer token or cookie session. Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie; packaged clients also send `auth.protocol`. Deep-link returns allow `motl://auth`.
 - PayPal (browser): `POST /api/paypal/orders` `{ packageId }`, `POST /api/paypal/orders/:orderId/capture`, webhook `POST /webhooks/paypal` (signature-verified).
 
 ### Shared code rule

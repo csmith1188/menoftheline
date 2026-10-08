@@ -1,0 +1,47 @@
+name: Desktop
+
+on:
+  push:
+    paths:
+      - "platforms/electron/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "views/index.ejs"
+      - "views/play3d.ejs"
+      - "package.json"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "platforms/electron/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "views/index.ejs"
+      - "views/play3d.ejs"
+      - "package.json"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run client:export
+        env:
+          MOTL_SERVER_URL: https://example.com
+      - run: npm --prefix platforms/electron ci || npm --prefix platforms/electron install
+      - run: npm --prefix platforms/electron run pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-unpacked
+          path: platforms/electron/dist
+          if-no-files-found: warn

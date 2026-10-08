@@ -155,6 +155,12 @@ import {
   normalizeMatchOptions,
 } from "./shared/matchOptions.js";
 import { MAP_PRESETS, mapPresetIds } from "./shared/maps.js";
+import {
+  CLIENT_VERSION,
+  PROTOCOL_VERSION,
+  isClientOutdated,
+  parseProtocol,
+} from "./shared/protocol.js";
 
 const require = createRequire(import.meta.url);
 const connectSqlite3 = require("connect-sqlite3");
@@ -301,35 +307,64 @@ function loadStoredSession(sid) {
   });
 }
 
+function minClientProtocol() {
+  const fromEnv = parseProtocol(process.env.MOTL_MIN_PROTOCOL);
+  return fromEnv == null ? PROTOCOL_VERSION : fromEnv;
+}
+
+function clientProtocolFromRequest(req) {
+  const headerProto = parseProtocol(req.headers["x-motl-protocol"]);
+  if (headerProto != null) return headerProto;
+  return parseProtocol(req.body && req.body.protocol);
+}
+
+function rejectIfClientOutdated(req, res) {
+  const clientProtocol = clientProtocolFromRequest(req);
+  const minProtocol = minClientProtocol();
+  if (!isClientOutdated(clientProtocol, minProtocol)) return false;
+  res.status(426).json({
+    error: "client_outdated",
+    protocol: PROTOCOL_VERSION,
+    minProtocol,
+    clientProtocol,
+  });
+  return true;
+}
+
 function requireApiSession(req, res, next) {
   const header = String(req.headers.authorization || "");
   const match = /^Bearer\s+(\S+)/i.exec(header);
-  if (!match) {
-    logger.warn({
-      event: "api_unauthorized",
-      path: req.path,
-      ip: clientIp(req),
-      reason: "missing_bearer",
-    }, "API unauthorized");
-    res.status(401).json({ error: "unauthorized" });
+  if (match) {
+    const sid = match[1];
+    loadStoredSession(sid).then((data) => {
+      if (!data) {
+        logger.warn({
+          event: "api_unauthorized",
+          path: req.path,
+          ip: clientIp(req),
+          reason: "no_session",
+        }, "API unauthorized");
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+      req.sessionID = sid;
+      req.session = wrapStoredSession(sid, data);
+      next();
+    }).catch(next);
     return;
   }
-  const sid = match[1];
-  loadStoredSession(sid).then((data) => {
-    if (!data) {
-      logger.warn({
-        event: "api_unauthorized",
-        path: req.path,
-        ip: clientIp(req),
-        reason: "no_session",
-      }, "API unauthorized");
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    req.sessionID = sid;
-    req.session = wrapStoredSession(sid, data);
+  // Website menus: cookie session from express-session middleware.
+  if (req.session && req.sessionID) {
     next();
-  }).catch(next);
+    return;
+  }
+  logger.warn({
+    event: "api_unauthorized",
+    path: req.path,
+    ip: clientIp(req),
+    reason: "missing_bearer",
+  }, "API unauthorized");
+  res.status(401).json({ error: "unauthorized" });
 }
 
 function saveSession(sess) {
@@ -426,14 +461,14 @@ function publicBase(req) {
   return `${proto}://${host}`;
 }
 
-/** Native app deep-link allowlist for Formbar login return. */
+/** Native app deep-link allowlist for Formbar/Discord login return. */
 function safeAppReturn(value) {
-  const text = String(value || "").trim();
-  if (text === "pocketmotl://auth" || text === "pocketmotl://auth/") {
-    return "pocketmotl://auth";
-  }
+  const text = String(value || "").trim().replace(/\/$/, "");
+  if (text === "motl://auth") return "motl://auth";
   return null;
 }
+
+const DEFAULT_APP_RETURN = "motl://auth";
 
 function accountPublic(account) {
   if (!account) return null;
@@ -2594,6 +2629,16 @@ app.get("/api/v1/metrics", async (req, res) => {
   }));
 });
 
+app.get("/api/v1/version", (req, res) => {
+  res.json({
+    protocol: PROTOCOL_VERSION,
+    minProtocol: minClientProtocol(),
+    serverVersion: CLIENT_VERSION,
+    clientVersion: CLIENT_VERSION,
+    assetVersion: app.locals.assetVersion,
+  });
+});
+
 app.post("/api/v1/session", async (req, res, next) => {
   try {
     if (!rateLimit(`guest:${clientIp(req)}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
@@ -2627,7 +2672,7 @@ app.get("/api/v1/login", (req, res, next) => {
       res.status(404).json({ error: "formbar_disabled" });
       return;
     }
-    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    const ret = safeAppReturn(req.query && req.query.return) || DEFAULT_APP_RETURN;
     req.session.apiReturn = ret;
     req.session.save((err) => {
       if (err) {
@@ -2659,7 +2704,7 @@ app.get("/api/v1/login/callback", async (req, res, next) => {
       return;
     }
     touchAccountLogin(account.id, "formbar").catch(() => {});
-    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    const ret = safeAppReturn(req.session.apiReturn) || DEFAULT_APP_RETURN;
     delete req.session.apiReturn;
     await saveSession(req.session);
     res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
@@ -2707,7 +2752,7 @@ app.post("/api/v1/login/token", requireApiSession, async (req, res, next) => {
  */
 app.get("/api/v1/login/discord", async (req, res, next) => {
   try {
-    const ret = safeAppReturn(req.query && req.query.return) || "pocketmotl://auth";
+    const ret = safeAppReturn(req.query && req.query.return) || DEFAULT_APP_RETURN;
     req.session.apiReturn = ret;
     await beginDiscordOAuth(req, res, { callbackUrl: discordApiCallbackUrl(req) });
   } catch (err) {
@@ -2756,7 +2801,7 @@ app.get("/api/v1/login/discord/callback", async (req, res, next) => {
     }
     setAccountSession(req.session, account);
     touchAccountLogin(account.id, "discord").catch(() => {});
-    const ret = safeAppReturn(req.session.apiReturn) || "pocketmotl://auth";
+    const ret = safeAppReturn(req.session.apiReturn) || DEFAULT_APP_RETURN;
     delete req.session.apiReturn;
     await saveSession(req.session);
     res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
@@ -2807,6 +2852,17 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
 app.get("/api/v1/lobbies", requireApiSession, async (req, res, next) => {
   try {
     res.json({ lobbies: matchmaker.listLobbies() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/queues", requireApiSession, async (req, res, next) => {
+  try {
+    res.json({
+      waiting: matchmaker.waitingCounts(),
+      lobbies: matchmaker.listLobbies(),
+    });
   } catch (err) {
     next(err);
   }
@@ -2946,6 +3002,7 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
 
 app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
   try {
+    if (rejectIfClientOutdated(req, res)) return;
     const body = req.body || {};
     const mode = body.mode;
     const paid = PAID_PLAY_MODES.has(mode);
@@ -3102,7 +3159,21 @@ io.use((socket, next) => {
 });
 
 io.use((socket, next) => {
-  const token = socket.handshake.auth && socket.handshake.auth.token;
+  const auth = socket.handshake.auth || {};
+  const clientProtocol = parseProtocol(auth.protocol);
+  const minProtocol = minClientProtocol();
+  if (isClientOutdated(clientProtocol, minProtocol)) {
+    logger.warn({
+      event: "socket_auth_failed",
+      reason: "client_outdated",
+      socketId: socket.id,
+      clientProtocol,
+      minProtocol,
+    }, "socket client outdated");
+    next(new Error("client_outdated"));
+    return;
+  }
+  const token = auth.token;
   if (typeof token === "string" && token.trim()) {
     const sid = token.trim();
     loadStoredSession(sid).then((data) => {

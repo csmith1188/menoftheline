@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Men Of The Line</title>
+  <link rel="stylesheet" href="/css/game.css">
+</head>
+<body data-tooltips-default="1" data-bgm-volume-default="50">
+  <div class="shell">
+    <div class="stage">
+      <canvas id="board" width="960" height="620" role="img" aria-label="Lane map"></canvas>
+      <div id="lobby" class="banner">
+        <img id="lobby-logo" class="lobby-logo" src="/img/logoA.png" alt="Men Of The Line" width="480" height="240">
+        <p id="lobby-you" class="sub"></p>
+        <p id="lobby-opp" class="sub lobby-opp hidden"></p>
+        <p id="lobby-text">Connecting...</p>
+        <button type="button" id="lobby-leave" class="action">Leave</button>
+      </div>
+      <div id="banner" class="banner hidden">
+        <p id="banner-text"></p>
+        <button type="button" id="leave" class="action">Leave</button>
+      </div>
+      <div id="tutorial" class="tutorial hidden" role="region" aria-label="Training tutorial">
+        <p class="tutorial-title"></p>
+        <p class="tutorial-body"></p>
+        <div class="tutorial-nav">
+          <button type="button" class="action tutorial-back">Back</button>
+          <p class="tutorial-step"></p>
+          <button type="button" class="action tutorial-next">Next</button>
+        </div>
+      </div>
+      <button type="button" id="gear" class="gear" aria-label="Menu" aria-controls="menu" aria-expanded="false">⚙</button>
+      <button type="button" id="chat-btn" class="chat-btn" aria-label="Chat" aria-controls="chat" aria-expanded="false">💬</button>
+      <div id="chat" class="chat hidden" role="dialog" aria-modal="true" aria-labelledby="chat-title">
+        <div class="chat-head">
+          <h2 id="chat-title">Chat</h2>
+        </div>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <input id="chat-input" type="text" maxlength="200" placeholder="Type a message…" aria-label="Chat message">
+          <button type="submit" class="action">Send</button>
+        </form>
+      </div>
+      <div id="menu" class="menu hidden" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+        <div class="menu-head">
+          <h2 id="menu-title">Settings</h2>
+        </div>
+        <div class="menu-grid">
+          <section class="menu-block">
+            <p class="label">You</p>
+            <p id="menu-you" class="value"></p>
+            <p class="label">Opponent</p>
+            <p id="opp-name" class="value"></p>
+            <p id="opp-kind" class="value"></p>
+          </section>
+          <section class="menu-block">
+            <button type="button" id="howto" class="action" aria-controls="rules" aria-expanded="false">How to play</button>
+            <button type="button" id="southpaw" class="action pref-toggle" aria-pressed="false" title="Blue on the right">
+              Southpaw
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="tooltips" class="action pref-toggle" aria-pressed="true" title="Show gesture hints while pressing">
+              Tooltips
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="terrain-labels" class="action pref-toggle" aria-pressed="true" title="Show terrain emoji labels on the map">
+              Terrain
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="sound-mute" class="action pref-toggle" aria-pressed="true" title="Toggle sound">
+              Sound
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <input type="range" id="sound-volume" class="sound-range" min="0" max="100" step="1" value="100" aria-label="Sound volume">
+            <button type="button" id="bgm-mute" class="action pref-toggle" aria-pressed="true" title="Toggle music">
+              Music
+              <span class="mark" aria-hidden="true"></span>
+            </button>
+            <input type="range" id="bgm-volume" class="sound-range" min="0" max="100" step="1" value="50" aria-label="Music volume">
+          </section>
+          <section id="training" class="menu-block training hidden">
+            <p class="label">Training</p>
+            <div class="training-grid">
+              <label class="training-row">
+                <span>Difficulty</span>
+                <select id="bot-difficulty" aria-label="Bot difficulty">
+                  <option value="simple">Simple</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+              <label class="training-row">
+                <span>Speed</span>
+                <select id="bot-speed" aria-label="Game speed">
+                  <option value="0.25">0.25×</option>
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="1.5">1.5×</option>
+                  <option value="2">2×</option>
+                </select>
+              </label>
+            </div>
+          </section>
+          <section class="menu-block menu-actions">
+            <button type="button" id="pause-btn" class="action hidden">Pause</button>
+            <button type="button" id="report-player" class="action hidden">Report player</button>
+            <div id="report-form" class="confirm hidden">
+              <p>Report this opponent? You can only report each player once.</p>
+              <textarea id="report-body" class="report-body" maxlength="1000" rows="3" placeholder="What happened?" aria-label="Report details"></textarea>
+              <p id="report-status" class="hint hidden" role="status"></p>
+              <button type="button" id="report-yes" class="action">Submit report</button>
+              <button type="button" id="report-no" class="action">Cancel</button>
+            </div>
+            <button type="button" id="concede" class="action">Concede</button>
+            <div id="confirm" class="confirm hidden">
+              <p>Concede this match?</p>
+              <button type="button" id="concede-yes" class="action">Concede</button>
+              <button type="button" id="concede-no" class="action">Cancel</button>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div id="debug-play" class="debug-play hidden">
+        <button type="button" id="debug-side" class="action" title="Switch which side inputs control">Control Player</button>
+        <button type="button" id="debug-bots" class="action" aria-pressed="true" title="Toggle bot AI">Bots Off</button>
+      </div>
+      <div id="rules" class="rules hidden" role="dialog" aria-modal="true" aria-labelledby="rules-title" tabindex="-1">
+        <div class="rules-card">
+          <div class="rules-head">
+            <h2 id="rules-title"></h2>
+            <button type="button" id="rules-close" class="action">Close</button>
+          </div>
+          <div class="rules-body">
+            <canvas id="rules-art" width="640" height="260" aria-hidden="true"></canvas>
+            <div id="rules-copy" class="rules-copy"></div>
+          </div>
+          <div class="rules-nav">
+            <button type="button" id="rules-prev" class="action">Back</button>
+            <div class="rules-mid">
+              <div id="rules-dots" class="rules-dots"></div>
+              <p id="rules-page"></p>
+            </div>
+            <button type="button" id="rules-next" class="action">Next</button>
+          </div>
+        </div>
+      </div>
+      <div id="unit-info" class="unit-info hidden" role="dialog" aria-modal="true" aria-labelledby="unit-info-title" tabindex="-1">
+        <div class="unit-info-card">
+          <div class="unit-info-head">
+            <div class="unit-info-title-row">
+              <h2 id="unit-info-title"></h2>
+              <p id="unit-info-economy" class="unit-info-economy"></p>
+            </div>
+            <button type="button" id="unit-info-close" class="action">Close</button>
+          </div>
+          <div class="unit-info-body">
+            <div class="unit-info-art-col">
+              <img id="unit-info-art" alt="" width="96" height="96">
+              <canvas id="unit-info-icon" width="72" height="72" aria-hidden="true"></canvas>
+            </div>
+            <div class="unit-info-main">
+              <p id="unit-info-summary" class="unit-info-summary"></p>
+              <div id="unit-info-stats" class="unit-info-stats"></div>
+              <ul id="unit-info-abilities" class="unit-info-abilities"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/shell-config.js"></script><script>window.DEBUG_RANGES=false;</script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

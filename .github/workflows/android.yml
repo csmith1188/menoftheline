@@ -1,0 +1,56 @@
+name: Android
+
+on:
+  push:
+    paths:
+      - "platforms/capacitor/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "package.json"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "platforms/capacitor/**"
+      - "public/**"
+      - "shared/**"
+      - "scripts/export-client.js"
+      - "scripts/generate-play-html.js"
+      - "package.json"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm run client:export
+        env:
+          MOTL_SERVER_URL: https://example.com
+      - name: Install Capacitor deps
+        working-directory: platforms/capacitor
+        run: npm ci || npm install
+      - name: Sync Capacitor Android
+        working-directory: platforms/capacitor
+        run: npx cap sync android
+      - name: Assemble debug APK
+        working-directory: platforms/capacitor/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: platforms/capacitor/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn

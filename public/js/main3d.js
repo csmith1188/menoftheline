@@ -29,6 +29,23 @@ import { bindChat } from "./chat.js";
 import { createScene } from "./scene3d.js";
 import { readTooltipsDefault } from "./tooltips.js";
 import { writeBgmVolumePref, writeTooltipsPref } from "./prefs.js";
+import {
+  PROTOCOL_VERSION,
+  checkVersion,
+  connectSocket,
+  consumeAuthQuery,
+  ensureSession,
+  goHome,
+  isShell,
+  showOutdated,
+} from "./runtime.js";
+
+consumeAuthQuery();
+if (isShell()) {
+  await ensureSession().catch(() => {});
+  const ver = await checkVersion().catch(() => null);
+  if (ver && Number(ver.minProtocol) > PROTOCOL_VERSION) showOutdated(ver);
+}
 
 const canvas = document.getElementById("board");
 const lobby = document.getElementById("lobby");
@@ -241,9 +258,7 @@ let lastCountdownBeep = null;
 
 // WebSocket first — default polling→upgrade leaves iPhone on HTTP long-poll
 // under some networks, so 20 Hz state + commands feel dead while RAF still runs.
-const socket = window.io({
-  transports: ["websocket", "polling"],
-});
+const socket = connectSocket();
 chatUi = bindChat({
   socket,
   onOpen() {
@@ -714,7 +729,7 @@ socket.on("replaced", () => {
 socket.on("go-home", () => {
   leaving = true;
   stopMatchBgm();
-  window.location.assign("/");
+  goHome();
 });
 
 socket.on("disconnect", () => {
@@ -746,7 +761,7 @@ function askLeave() {
   if (!socket.connected) {
     leaving = true;
     stopMatchBgm();
-    window.location.assign("/");
+    goHome();
     return;
   }
   socket.emit("leave");
@@ -768,7 +783,7 @@ function askLobbyLeave() {
     if (!socket.connected) {
       leaving = true;
       stopMatchBgm();
-      window.location.assign("/");
+      goHome();
       return;
     }
     socket.emit("concede");

@@ -1,0 +1,16 @@
+{
+  "appId": "com.menoftheline.app",
+  "appName": "Men Of The Line",
+  "webDir": "../../dist/client",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

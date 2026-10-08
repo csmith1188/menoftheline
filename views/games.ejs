@@ -15,6 +15,11 @@
       <p class="hint">Loading games…</p>
     </div>
   </div>
+  <%# Always expose CSRF for guests: suggestion-modal is verified-only, but
+      classic /play/* form POSTs and the static-asset session race still need it. %>
+  <div class="hidden" aria-hidden="true">
+    <%- include("csrf-field") %>
+  </div>
   <%- include("suggestion-modal", { nextPath: "/games" }) %>
   <script type="module" src="/js/menus/games.js?v=<%= assetVersion %>"></script>
 </body>

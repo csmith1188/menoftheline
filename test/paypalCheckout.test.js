@@ -269,8 +269,7 @@ test("create order includes return/cancel URLs for mobile App Switch", async () 
   });
   assert.equal(created.ok, true);
   assert.ok(api.lastCreateBody);
-  assert.equal(api.lastCreateBody.application_context.return_url, checkoutUrl);
-  assert.equal(api.lastCreateBody.application_context.cancel_url, checkoutUrl);
+  assert.equal(api.lastCreateBody.application_context, undefined);
   const experience = api.lastCreateBody.payment_source
     && api.lastCreateBody.payment_source.paypal
     && api.lastCreateBody.payment_source.paypal.experience_context;
@@ -279,6 +278,7 @@ test("create order includes return/cancel URLs for mobile App Switch", async () 
   assert.equal(experience.cancel_url, checkoutUrl);
   assert.equal(experience.user_action, "PAY_NOW");
   assert.equal(experience.shipping_preference, "NO_SHIPPING");
+  assert.equal(experience.brand_name, "Men of the Line");
   assert.equal(api.lastCreateBody.purchase_units[0].amount.value, "50.00");
 });
 

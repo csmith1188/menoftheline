@@ -60,7 +60,7 @@ Local sandbox testing often needs a tunnel (ngrok, Cloudflare Tunnel, etc.) so P
 
 1. Buyer opens `/buy` (or profile ticket section) and clicks a PayPal button.
 2. Browser `POST /api/paypal/orders` with `{ packageId }` + CSRF header.
-3. Server creates a PayPal order for the catalog amount (with `return_url` / `cancel_url` both set to `{publicBase}/buy` for App Switch / mobile redirect) and inserts `paypal_purchases` (`status=created`).
+3. Server creates a PayPal order for the catalog amount via `payment_source.paypal.experience_context` (brand, shipping, `return_url` / `cancel_url` both `{publicBase}/buy` for App Switch / mobile redirect — not the deprecated top-level `application_context`) and inserts `paypal_purchases` (`status=created`).
 4. Desktop: buyer approves in the PayPal popup. Mobile: PayPal App Switch or full-page redirect when available (`appSwitchWhenAvailable` in `paypalBuy.js`).
 5. After approve, browser `POST /api/paypal/orders/:orderId/capture` (popup `onApprove`, SDK `buttons.resume()` after redirect, or a `token`+`PayerID` fallback on `/buy`).
 6. Server captures, verifies amount/currency/merchant/status, then credits tickets once (`status=credited`) and writes `ticket_ledger` (`kind=purchase`, `ref_type=paypal_purchase`).

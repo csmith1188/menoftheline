@@ -172,6 +172,18 @@ export async function createPaypalOrder({ packageId, accountId, returnUrl, cance
     return { ok: false, error: "invalid_account" };
   }
 
+  // Prefer payment_source.paypal.experience_context only — do not also send
+  // application_context (deprecated); PayPal returns 422 INCOMPATIBLE_PARAMETER_VALUE.
+  const experience = {
+    brand_name: "Men of the Line",
+    shipping_preference: "NO_SHIPPING",
+    user_action: "PAY_NOW",
+  };
+  const ret = String(returnUrl || "").trim();
+  const can = String(cancelUrl || "").trim();
+  if (ret) experience.return_url = ret;
+  if (can) experience.cancel_url = can;
+
   const orderBody = {
     intent: "CAPTURE",
     purchase_units: [{
@@ -182,30 +194,12 @@ export async function createPaypalOrder({ packageId, accountId, returnUrl, cance
       description: `Men of the Line — ${pkg.label}`,
       custom_id: `motl:${account}:${pkg.id}`,
     }],
-    application_context: {
-      brand_name: "Men of the Line",
-      shipping_preference: "NO_SHIPPING",
-      user_action: "PAY_NOW",
+    payment_source: {
+      paypal: {
+        experience_context: experience,
+      },
     },
   };
-  const ret = String(returnUrl || "").trim();
-  const can = String(cancelUrl || "").trim();
-  if (ret) orderBody.application_context.return_url = ret;
-  if (can) orderBody.application_context.cancel_url = can;
-  // App Switch / mobile redirect require experience_context return URLs.
-  if (ret && can) {
-    orderBody.payment_source = {
-      paypal: {
-        experience_context: {
-          brand_name: "Men of the Line",
-          shipping_preference: "NO_SHIPPING",
-          user_action: "PAY_NOW",
-          return_url: ret,
-          cancel_url: can,
-        },
-      },
-    };
-  }
 
   let order;
   try {

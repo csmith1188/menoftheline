@@ -26,7 +26,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - ~~Admin account~~ (stored `accounts.role`; `/admin` dashboard)
 - don't fill formbar id's for guest / non-formbar users
 - ~~ticket transaction tracking~~ (`ticket_ledger`)
-- mmr ledger
+- ~~mmr ledger~~ (profile `/profile/:id` ranked MMR history from `games`)
 - ~~player report~~ (settings → Report player; `/admin/reports`; one report per reporter→reported)
 - demo recorder/playback
 - Capacitor to wrap into clients for iOS and Android

@@ -33,6 +33,7 @@ import {
   initDb,
   linkDiscordToAccount,
   linkFormbarToAccount,
+  listAccountMmrHistory,
   listWikiPages,
   listWikiSlugs,
   deleteWikiPageBySlug,
@@ -1653,10 +1654,15 @@ app.get("/profile/:id", async (req, res, next) => {
     const privileged = accountEmailVerified(viewer);
     const pack = ticketPack();
     const isOwner = Boolean(account && viewer && account.id === viewer.id);
+    const mmrPage = Math.max(1, Number.parseInt(String(req.query.mmrpage || "1"), 10) || 1);
+    const mmrHistory = account
+      ? await listAccountMmrHistory(account.id, { page: mmrPage })
+      : { rows: [], total: 0, page: 1, pageSize: 20 };
     const body = {
       account,
       viewer,
       isOwner,
+      mmrHistory,
       notice: takeNotice(req),
       packSize: pack.size,
       packCost: pack.cost,

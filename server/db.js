@@ -2329,6 +2329,52 @@ export async function listAccountGames(accountId, { limit = 20 } = {}) {
   );
 }
 
+/** Paginated ranked MMR deltas for a profile (seat-centric rows). */
+export async function listAccountMmrHistory(accountId, { page = 1, pageSize = 20 } = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return { rows: [], total: 0, page: 1, pageSize: 20 };
+  }
+  const size = Math.min(50, Math.max(1, Number(pageSize) || 20));
+  const offset = Math.max(0, ((Number(page) || 1) - 1) * size);
+  const where = `mode = 'ranked' AND (
+    (account_a = ? AND mmr_a_after IS NOT NULL)
+    OR (account_b = ? AND mmr_b_after IS NOT NULL)
+  )`;
+  const params = [id, id];
+  const totalRow = await get(`SELECT COUNT(*) AS n FROM games WHERE ${where}`, params);
+  const raw = await all(
+    `SELECT * FROM games WHERE ${where}
+     ORDER BY ended_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, size, offset],
+  );
+  const rows = raw.map((g) => {
+    const isA = Number(g.account_a) === id;
+    const mmrBefore = isA ? g.mmr_a_before : g.mmr_b_before;
+    const mmrAfter = isA ? g.mmr_a_after : g.mmr_b_after;
+    const won = isA ? g.winner_side === "player" : g.winner_side === "enemy";
+    return {
+      gameId: g.id,
+      endedAt: g.ended_at,
+      opponentName: isA ? g.name_b : g.name_a,
+      opponentAccountId: isA ? g.account_b : g.account_a,
+      won,
+      mmrBefore,
+      mmrAfter,
+      delta: Number(mmrAfter) - Number(mmrBefore),
+      outcome: g.outcome || null,
+      winReason: g.win_reason || null,
+    };
+  });
+  return {
+    rows,
+    total: Number(totalRow?.n) || 0,
+    page: Math.floor(offset / size) + 1,
+    pageSize: size,
+  };
+}
+
 export async function getGameById(gameId) {
   if (!gameId) return null;
   const row = await get("SELECT * FROM games WHERE id = ?", [String(gameId)]);

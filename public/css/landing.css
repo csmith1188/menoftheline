@@ -601,6 +601,51 @@ select:focus {
   font-size: 1.25rem;
 }
 
+.mmr-history-wrap {
+  overflow-x: auto;
+}
+
+.mmr-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.mmr-history th,
+.mmr-history td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.mmr-history th {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #b7c3d1;
+  font-weight: 600;
+}
+
+.mmr-history a {
+  color: var(--gold);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.mmr-history a:hover {
+  color: #f6dc96;
+}
+
+.mmr-history .mmr-up {
+  color: #8fd49a;
+}
+
+.mmr-history .mmr-down {
+  color: #e08a8a;
+}
+
 .wiki-sheet {
   background: var(--panel);
   border: 1px solid var(--line);

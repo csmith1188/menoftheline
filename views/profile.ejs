@@ -32,6 +32,60 @@
           <% } %>
         </dl>
       </section>
+      <section>
+        <h2>MMR history</h2>
+        <% if (!mmrHistory.total) { %>
+          <p class="hint">No ranked games recorded yet.</p>
+        <% } else { %>
+          <div class="mmr-history-wrap">
+            <table class="mmr-history">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Opponent</th>
+                  <th>Result</th>
+                  <th>Δ MMR</th>
+                  <th>MMR after</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% mmrHistory.rows.forEach(function (row) { %>
+                  <tr>
+                    <td><%= new Date(row.endedAt).toLocaleString() %></td>
+                    <td>
+                      <% if (row.opponentAccountId) { %>
+                        <a href="/profile/<%= row.opponentAccountId %>"><%= row.opponentName || "Unknown" %></a>
+                      <% } else { %>
+                        <%= row.opponentName || "Unknown" %>
+                      <% } %>
+                    </td>
+                    <td><%= row.won ? "Win" : "Loss" %></td>
+                    <td class="<%= row.delta > 0 ? 'mmr-up' : (row.delta < 0 ? 'mmr-down' : '') %>">
+                      <%= row.delta > 0 ? ("+" + row.delta) : String(row.delta) %>
+                    </td>
+                    <td><%= row.mmrAfter %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+          <% if (mmrHistory.total > mmrHistory.pageSize) { %>
+            <div class="news-pager">
+              <% if (mmrHistory.page > 1) { %>
+                <a class="action news-pager-btn" href="/profile/<%= account.id %>?mmrpage=<%= mmrHistory.page - 1 %>">Prev</a>
+              <% } else { %>
+                <span class="news-pager-btn" aria-hidden="true"></span>
+              <% } %>
+              <p class="hint">Page <%= mmrHistory.page %> of <%= Math.ceil(mmrHistory.total / mmrHistory.pageSize) %></p>
+              <% if (mmrHistory.page * mmrHistory.pageSize < mmrHistory.total) { %>
+                <a class="action news-pager-btn" href="/profile/<%= account.id %>?mmrpage=<%= mmrHistory.page + 1 %>">Next</a>
+              <% } else { %>
+                <span class="news-pager-btn" aria-hidden="true"></span>
+              <% } %>
+            </div>
+          <% } %>
+        <% } %>
+      </section>
       <% if (isOwner && !accountEmailVerified(account)) { %>
         <section>
           <h2>Verify email</h2>

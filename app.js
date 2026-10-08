@@ -1622,9 +1622,13 @@ app.post("/api/paypal/orders", paypalJson, async (req, res, next) => {
       return;
     }
     const packageId = req.body && req.body.packageId;
+    // Same URL for return and cancel (PayPal App Switch / mobile redirect).
+    const checkoutUrl = `${publicBase(req)}/buy`;
     const created = await createPaypalOrder({
       packageId,
       accountId: account.id,
+      returnUrl: checkoutUrl,
+      cancelUrl: checkoutUrl,
     });
     if (!created.ok) {
       const status = created.error === "unknown_package" ? 400 : 502;

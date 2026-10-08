@@ -60,11 +60,13 @@ Local sandbox testing often needs a tunnel (ngrok, Cloudflare Tunnel, etc.) so P
 
 1. Buyer opens `/buy` (or profile ticket section) and clicks a PayPal button.
 2. Browser `POST /api/paypal/orders` with `{ packageId }` + CSRF header.
-3. Server creates a PayPal order for the catalog amount and inserts `paypal_purchases` (`status=created`).
-4. Buyer approves in PayPal; browser `POST /api/paypal/orders/:orderId/capture`.
-5. Server captures, verifies amount/currency/merchant/status, then credits tickets once (`status=credited`) and writes `ticket_ledger` (`kind=purchase`, `ref_type=paypal_purchase`).
-6. If the browser drops after approve, `CHECKOUT.ORDER.APPROVED` / `PAYMENT.CAPTURE.COMPLETED` webhooks run the same settlement path.
-7. Refunds/reversals claw back free tickets (`kind=paypal_clawback`). If the account has too few free tickets (held for a match), the shortfall is stored on the purchase row for admin review — balances never go below held.
+3. Server creates a PayPal order for the catalog amount (with `return_url` / `cancel_url` both set to `{publicBase}/buy` for App Switch / mobile redirect) and inserts `paypal_purchases` (`status=created`).
+4. Desktop: buyer approves in the PayPal popup. Mobile: PayPal App Switch or full-page redirect when available (`appSwitchWhenAvailable` in `paypalBuy.js`).
+5. After approve, browser `POST /api/paypal/orders/:orderId/capture` (popup `onApprove`, SDK `buttons.resume()` after redirect, or a `token`+`PayerID` fallback on `/buy`).
+6. Server captures, verifies amount/currency/merchant/status, then credits tickets once (`status=credited`) and writes `ticket_ledger` (`kind=purchase`, `ref_type=paypal_purchase`).
+7. Cancel returns land on `/buy` with `token` and no `PayerID`; the page shows cancelled and does not credit.
+8. If the browser drops after approve, `CHECKOUT.ORDER.APPROVED` / `PAYMENT.CAPTURE.COMPLETED` webhooks run the same settlement path.
+9. Refunds/reversals claw back free tickets (`kind=paypal_clawback`). If the account has too few free tickets (held for a match), the shortfall is stored on the purchase row for admin review — balances never go below held.
 
 ## Admin
 
@@ -75,10 +77,11 @@ Local sandbox testing often needs a tunnel (ngrok, Cloudflare Tunnel, etc.) so P
 
 1. Set sandbox credentials and webhook (or rely on capture-only for a first smoke test).
 2. Log in with a **non-Formbar** local or Discord account.
-3. Open `/buy`, buy each package with a sandbox personal account.
-4. Confirm balance and purchase history update; confirm admin user page shows the row.
-5. Repeat capture/webhook (PayPal webhook simulator) and confirm tickets are not double-credited.
-6. Issue a sandbox refund and confirm clawback / shortfall behavior.
+3. **Desktop:** Open `/buy`, buy each package with a sandbox personal account (popup flow).
+4. **Mobile (iOS Safari / Android Chrome):** Tap PayPal — expect App Switch or full-page PayPal (not a blank window that closes immediately). Approve → return to `/buy` → tickets credited. Cancel → cancelled message, no credit.
+5. Confirm balance and purchase history update; confirm admin user page shows the row.
+6. Repeat capture/webhook (PayPal webhook simulator) and confirm tickets are not double-credited.
+7. Issue a sandbox refund and confirm clawback / shortfall behavior.
 
 ## Out of scope
 

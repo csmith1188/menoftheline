@@ -1,6 +1,7 @@
 /**
  * PayPal JS SDK buttons for ticket packages.
  * Server creates/captures orders; this file only handles UI callbacks.
+ * Mobile uses App Switch / redirect return; desktop keeps the popup.
  */
 
 function statusEl(root) {
@@ -45,6 +46,32 @@ function loadSdk(clientId) {
   });
 }
 
+/** Safe diagnostic fields only — no cookies, tokens, or payment payloads. */
+function logPaypalDiag(label, err) {
+  const detail = {
+    label,
+    message: err && err.message ? String(err.message) : String(err || ""),
+  };
+  if (err && err.status != null) detail.status = err.status;
+  if (err && err.data && err.data.error) detail.error = String(err.data.error);
+  console.error("[paypal]", detail);
+}
+
+function userMessageForApiError(err) {
+  const code = err && err.data && err.data.error
+    ? String(err.data.error)
+    : (err && err.message ? String(err.message) : "");
+  if (code === "login_required") return "Log in again to buy tickets.";
+  if (code === "forbidden" || code === "paypal_unavailable") {
+    return "PayPal checkout is unavailable for this account.";
+  }
+  if (code === "paypal_create_failed" || code === "request_failed_502") {
+    return "Could not start PayPal checkout. Try again.";
+  }
+  if (code === "unknown_package") return "Unknown ticket package.";
+  return "PayPal error. Try again.";
+}
+
 async function api(path, { method = "POST", csrf, body } = {}) {
   const res = await fetch(path, {
     method,
@@ -65,11 +92,53 @@ async function api(path, { method = "POST", csrf, body } = {}) {
   return data;
 }
 
-function mountButtons(paypal, root, packageId, csrf) {
-  const container = root.querySelector(`#paypal-buttons-${packageId}`);
-  if (!container || !paypal.Buttons) return;
+function paypalReturnParams() {
+  const params = new URLSearchParams(window.location.search);
+  const token = String(params.get("token") || "").trim();
+  const payerId = String(params.get("PayerID") || params.get("payerID") || "").trim();
+  // Cancel return: same /buy URL with token and no PayerID.
+  return { token, payerId, cancelled: Boolean(token) && !payerId };
+}
 
-  paypal.Buttons({
+function clearPaypalQuery() {
+  const url = new URL(window.location.href);
+  ["token", "PayerID", "payerID", "cancelled", "cancel", "ba_token"].forEach((key) => {
+    url.searchParams.delete(key);
+  });
+  const next = url.pathname + (url.search || "") + (url.hash || "");
+  window.history.replaceState({}, "", next);
+}
+
+async function showCaptureResult(root, result) {
+  const tickets = result.tickets || 0;
+  const balance = result.balance;
+  const msg = result.duplicate
+    ? `Already credited ${tickets} tickets.`
+    : `Added ${tickets} tickets.`
+      + (balance != null ? ` Balance: ${balance}.` : "");
+  setStatus(root, msg, "ok");
+  window.setTimeout(() => {
+    window.location.reload();
+  }, 900);
+}
+
+async function captureApprovedOrder(root, csrf, orderId) {
+  setStatus(root, "Confirming payment…", "busy");
+  try {
+    const result = await api(`/api/paypal/orders/${encodeURIComponent(orderId)}/capture`, {
+      csrf,
+    });
+    clearPaypalQuery();
+    await showCaptureResult(root, result);
+  } catch (err) {
+    logPaypalDiag("capture", err);
+    clearPaypalQuery();
+    setStatus(root, `Payment failed: ${err.message || "unknown error"}`, "error");
+  }
+}
+
+function buttonOptions(root, packageId, csrf) {
+  return {
     style: {
       layout: "vertical",
       color: "gold",
@@ -77,45 +146,71 @@ function mountButtons(paypal, root, packageId, csrf) {
       label: "paypal",
       height: 40,
     },
+    // Mobile: App Switch / redirect when the PayPal app is available.
+    // Desktop keeps the normal popup checkout.
+    appSwitchWhenAvailable: true,
     async createOrder() {
       setStatus(root, "Creating PayPal order…", "busy");
-      const data = await api("/api/paypal/orders", {
-        csrf,
-        body: { packageId },
-      });
-      const orderId = data.orderId || data.id;
-      if (!orderId) throw new Error("missing_order_id");
-      setStatus(root, "Approve payment in PayPal…", "busy");
-      return orderId;
-    },
-    async onApprove(data) {
-      setStatus(root, "Confirming payment…", "busy");
       try {
-        const result = await api(`/api/paypal/orders/${encodeURIComponent(data.orderID)}/capture`, {
+        const data = await api("/api/paypal/orders", {
           csrf,
+          body: { packageId },
         });
-        const tickets = result.tickets || 0;
-        const balance = result.balance;
-        const msg = result.duplicate
-          ? `Already credited ${tickets} tickets.`
-          : `Added ${tickets} tickets.`
-            + (balance != null ? ` Balance: ${balance}.` : "");
-        setStatus(root, msg, "ok");
-        window.setTimeout(() => {
-          window.location.reload();
-        }, 900);
+        const orderId = data.orderId || data.id;
+        if (!orderId) throw new Error("missing_order_id");
+        setStatus(root, "Approve payment in PayPal…", "busy");
+        return orderId;
       } catch (err) {
-        setStatus(root, `Payment failed: ${err.message || "unknown error"}`, "error");
+        logPaypalDiag("createOrder", err);
+        setStatus(root, userMessageForApiError(err), "error");
+        throw err;
       }
     },
+    async onApprove(data) {
+      const orderId = data && (data.orderID || data.orderId);
+      if (!orderId) {
+        setStatus(root, "PayPal error. Try again.", "error");
+        return;
+      }
+      await captureApprovedOrder(root, csrf, orderId);
+    },
     onCancel() {
+      clearPaypalQuery();
       setStatus(root, "Payment cancelled.", "");
     },
     onError(err) {
-      console.error(err);
-      setStatus(root, "PayPal error. Try again.", "error");
+      logPaypalDiag("onError", err);
+      setStatus(root, userMessageForApiError(err), "error");
     },
-  }).render(container);
+  };
+}
+
+function mountButtons(paypal, root, packageId, csrf, { resume = false } = {}) {
+  const container = root.querySelector(`#paypal-buttons-${packageId}`);
+  if (!container || !paypal.Buttons) return null;
+
+  const buttons = paypal.Buttons(buttonOptions(root, packageId, csrf));
+  if (resume && typeof buttons.resume === "function") {
+    try {
+      buttons.resume();
+    } catch (err) {
+      logPaypalDiag("resume", err);
+    }
+  }
+  buttons.render(container);
+  return buttons;
+}
+
+async function handleReturnWithoutResume(root, csrf) {
+  const { token, payerId } = paypalReturnParams();
+  if (!token) return false;
+  if (!payerId) {
+    clearPaypalQuery();
+    setStatus(root, "Payment cancelled.", "");
+    return true;
+  }
+  await captureApprovedOrder(root, csrf, token);
+  return true;
 }
 
 async function init() {
@@ -127,16 +222,46 @@ async function init() {
     setStatus(root, "PayPal is not configured.", "error");
     return;
   }
-  setStatus(root, "Loading PayPal…", "busy");
+
+  const ret = paypalReturnParams();
+  const isReturn = Boolean(ret.token);
+
+  setStatus(root, isReturn ? "Returning from PayPal…" : "Loading PayPal…", "busy");
   try {
     const paypal = await loadSdk(clientId);
-    const packages = root.querySelectorAll(".paypal-package[data-package-id]");
-    for (const el of packages) {
-      mountButtons(paypal, root, el.dataset.packageId, csrf);
+    const packages = [...root.querySelectorAll(".paypal-package[data-package-id]")];
+    let resumed = false;
+
+    if (isReturn && packages.length) {
+      // Resume on the first package button so SDK can fire onApprove/onCancel.
+      const first = packages[0];
+      const buttons = mountButtons(paypal, root, first.dataset.packageId, csrf, { resume: true });
+      resumed = Boolean(buttons && typeof buttons.resume === "function");
+      for (let i = 1; i < packages.length; i += 1) {
+        mountButtons(paypal, root, packages[i].dataset.packageId, csrf);
+      }
+      if (!resumed) {
+        await handleReturnWithoutResume(root, csrf);
+      } else if (!ret.payerId) {
+        // Cancel return: SDK may not always call onCancel; show status.
+        clearPaypalQuery();
+        setStatus(root, "Payment cancelled.", "");
+      } else {
+        setStatus(root, "", "");
+      }
+    } else {
+      for (const el of packages) {
+        mountButtons(paypal, root, el.dataset.packageId, csrf);
+      }
+      setStatus(root, "", "");
     }
-    setStatus(root, "", "");
   } catch (err) {
-    console.error(err);
+    logPaypalDiag("init", err);
+    if (isReturn && ret.payerId) {
+      // SDK failed after approve — still try server capture.
+      await handleReturnWithoutResume(root, csrf);
+      return;
+    }
     setStatus(root, "Could not load PayPal Checkout.", "error");
   }
 }

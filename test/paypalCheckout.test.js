@@ -99,6 +99,7 @@ function mockPaypalApi({
   verifyStatus = "SUCCESS",
 } = {}) {
   clearPaypalTokenCache();
+  const state = { lastCreateBody: null, orders };
   setPaypalFetch(async (url, init = {}) => {
     const u = String(url);
     const method = String(init.method || "GET").toUpperCase();
@@ -122,6 +123,7 @@ function mockPaypalApi({
     }
     if (u.includes("/v2/checkout/orders") && method === "POST" && !u.includes("/capture")) {
       const body = JSON.parse(init.body || "{}");
+      state.lastCreateBody = body;
       const value = body.purchase_units[0].amount.value;
       const orderId = `ORDER-${orders.size + 1}-${value}`;
       const order = {
@@ -194,7 +196,7 @@ function mockPaypalApi({
       },
     };
   });
-  return orders;
+  return state;
 }
 
 test.after(() => {
@@ -229,7 +231,7 @@ test("accountCanBuyPaypal blocks formbar and unverified", async () => {
 
 test("happy path create capture credits tickets once", async () => {
   const account = await makeAccount();
-  const orders = mockPaypalApi();
+  const api = mockPaypalApi();
   const created = await createPaypalOrder({
     packageId: "pack_5",
     accountId: account.id,
@@ -237,8 +239,8 @@ test("happy path create capture credits tickets once", async () => {
   assert.equal(created.ok, true);
   const orderId = created.orderId;
   // Buyer approved
-  orders.set(orderId, {
-    ...orders.get(orderId),
+  api.orders.set(orderId, {
+    ...api.orders.get(orderId),
     status: "APPROVED",
   });
   const settled = await settlePaypalPurchase(orderId, { accountId: account.id });
@@ -253,6 +255,31 @@ test("happy path create capture credits tickets once", async () => {
   assert.equal(still.tickets, 20);
   const ledger = await listTicketLedger(account.id);
   assert.equal(ledger.filter((r) => r.kind === "purchase" && r.ref_type === "paypal_purchase").length, 1);
+});
+
+test("create order includes return/cancel URLs for mobile App Switch", async () => {
+  const account = await makeAccount();
+  const api = mockPaypalApi();
+  const checkoutUrl = "https://example.test/buy";
+  const created = await createPaypalOrder({
+    packageId: "pack_5",
+    accountId: account.id,
+    returnUrl: checkoutUrl,
+    cancelUrl: checkoutUrl,
+  });
+  assert.equal(created.ok, true);
+  assert.ok(api.lastCreateBody);
+  assert.equal(api.lastCreateBody.application_context.return_url, checkoutUrl);
+  assert.equal(api.lastCreateBody.application_context.cancel_url, checkoutUrl);
+  const experience = api.lastCreateBody.payment_source
+    && api.lastCreateBody.payment_source.paypal
+    && api.lastCreateBody.payment_source.paypal.experience_context;
+  assert.ok(experience);
+  assert.equal(experience.return_url, checkoutUrl);
+  assert.equal(experience.cancel_url, checkoutUrl);
+  assert.equal(experience.user_action, "PAY_NOW");
+  assert.equal(experience.shipping_preference, "NO_SHIPPING");
+  assert.equal(api.lastCreateBody.purchase_units[0].amount.value, "5.00");
 });
 
 test("amount mismatch does not credit", async () => {
@@ -341,13 +368,13 @@ test("webhook event id retry is ignored", async () => {
 
 test("APPROVED webhook recovers when browser never captures", async () => {
   const account = await makeAccount();
-  const orders = mockPaypalApi();
+  const api = mockPaypalApi();
   const created = await createPaypalOrder({
     packageId: "pack_20",
     accountId: account.id,
   });
   assert.equal(created.ok, true);
-  orders.set(created.orderId, {
+  api.orders.set(created.orderId, {
     id: created.orderId,
     status: "APPROVED",
     purchase_units: [{

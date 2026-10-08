@@ -188,8 +188,24 @@ export async function createPaypalOrder({ packageId, accountId, returnUrl, cance
       user_action: "PAY_NOW",
     },
   };
-  if (returnUrl) orderBody.application_context.return_url = returnUrl;
-  if (cancelUrl) orderBody.application_context.cancel_url = cancelUrl;
+  const ret = String(returnUrl || "").trim();
+  const can = String(cancelUrl || "").trim();
+  if (ret) orderBody.application_context.return_url = ret;
+  if (can) orderBody.application_context.cancel_url = can;
+  // App Switch / mobile redirect require experience_context return URLs.
+  if (ret && can) {
+    orderBody.payment_source = {
+      paypal: {
+        experience_context: {
+          brand_name: "Men of the Line",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "PAY_NOW",
+          return_url: ret,
+          cancel_url: can,
+        },
+      },
+    };
+  }
 
   let order;
   try {

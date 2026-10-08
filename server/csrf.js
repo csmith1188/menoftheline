@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from "crypto";
+import { logger } from "./logger.js";
+import { requestClientIp } from "./hardening.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -35,6 +37,12 @@ export function requireCsrf(req, res, next) {
   const expected = req.session && req.session.csrfToken;
   const sent = req.body && req.body._csrf;
   if (!tokensMatch(sent, expected)) {
+    logger.warn({
+      event: "csrf_failed",
+      path,
+      method: req.method,
+      ip: requestClientIp(req),
+    }, "CSRF token mismatch");
     const err = new Error("Invalid form token. Reload the page and try again.");
     err.status = 403;
     next(err);

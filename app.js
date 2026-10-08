@@ -7,6 +7,7 @@ import express from "express";
 import session from "express-session";
 import { timingSafeEqual } from "crypto";
 import { Server } from "socket.io";
+import { asErr, child as childLogger, logger } from "./server/logger.js";
 import {
   assignOwner,
   archiveSuggestion,
@@ -105,7 +106,7 @@ import { mailReady, sendResetEmail, sendVerifyEmail } from "./server/mail.js";
 import { ensureMetrics, report as metricsReport, startMetrics } from "./server/metrics.js";
 import { workerCount } from "./server/owners.js";
 import { scheduleSettingWrite } from "./server/settingsWrite.js";
-import { connectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
+import { connectFormbar, disconnectFormbar, payPool, rewardFromPool } from "./server/formbar.js";
 import { authenticateFormbarToken } from "./server/formbarAuth.js";
 import { ensureCsrf, requireCsrf } from "./server/csrf.js";
 import {
@@ -154,11 +155,16 @@ let sessionSecret;
 try {
   sessionSecret = assertSessionSecret(process.env);
 } catch (err) {
-  console.error(err.message);
+  logger.fatal({ event: "server_session_secret_invalid", errMessage: err.message }, "refusing to start");
   process.exit(1);
 }
 
-await initDb();
+try {
+  await initDb();
+} catch (err) {
+  logger.fatal({ event: "db_init_failed", err: asErr(err) }, "database init failed");
+  process.exit(1);
+}
 warnAuthConfig();
 
 const app = express();
@@ -282,12 +288,24 @@ function requireApiSession(req, res, next) {
   const header = String(req.headers.authorization || "");
   const match = /^Bearer\s+(\S+)/i.exec(header);
   if (!match) {
+    logger.warn({
+      event: "api_unauthorized",
+      path: req.path,
+      ip: clientIp(req),
+      reason: "missing_bearer",
+    }, "API unauthorized");
     res.status(401).json({ error: "unauthorized" });
     return;
   }
   const sid = match[1];
   loadStoredSession(sid).then((data) => {
     if (!data) {
+      logger.warn({
+        event: "api_unauthorized",
+        path: req.path,
+        ip: clientIp(req),
+        reason: "no_session",
+      }, "API unauthorized");
       res.status(401).json({ error: "unauthorized" });
       return;
     }
@@ -458,10 +476,41 @@ function clientIp(req) {
   return requestClientIp(req);
 }
 
+function logRateLimited(req, bucket, extra = {}) {
+  logger.warn({
+    event: "rate_limited",
+    bucket,
+    ip: clientIp(req),
+    path: req.path,
+    ...extra,
+  }, "rate limited");
+}
+
 function adminLimited(req) {
   const accountId = req.session && req.session.accountId;
   const key = accountId ? `admin:${accountId}` : `admin-ip:${clientIp(req)}`;
-  return rateLimit(key, { max: LIMITS.admin, windowMs: 60 * 1000 });
+  const ok = rateLimit(key, { max: LIMITS.admin, windowMs: 60 * 1000 });
+  if (!ok) {
+    logger.warn({
+      event: "admin_rate_limited",
+      accountId: accountId || undefined,
+      ip: clientIp(req),
+      path: req.path,
+    }, "admin rate limited");
+  }
+  return ok;
+}
+
+function requireAdminOrDeny(req, res) {
+  if (isAdmin(req.session)) return true;
+  logger.warn({
+    event: "authz_denied",
+    path: req.path,
+    ip: clientIp(req),
+    accountId: req.session && req.session.accountId,
+  }, "admin access denied");
+  res.redirect("/");
+  return false;
 }
 
 function routeId(value) {
@@ -505,7 +554,17 @@ async function applyFormbarToken(sess, tokenString) {
   let identity;
   try {
     identity = await authenticateFormbarToken(tokenString, AUTH_URL);
-  } catch {
+  } catch (err) {
+    const code = err && err.code;
+    if (code === "certs_unavailable") {
+      logger.error({ event: "formbar_certs_unavailable", source: "applyFormbarToken" }, "Formbar certs unavailable");
+    } else {
+      logger.warn({
+        event: "auth_failed",
+        provider: "formbar",
+        reason: code || "token_invalid",
+      }, "Formbar token apply failed");
+    }
     return null;
   }
   const nameCheck = validateDisplayName(identity.rawName);
@@ -757,9 +816,11 @@ async function completeFormbarLogin(req, res, token) {
     identity = await authenticateFormbarToken(token, AUTH_URL);
   } catch (err) {
     if (err && err.code === "certs_unavailable") {
+      logger.error({ event: "formbar_certs_unavailable", source: "completeFormbarLogin" }, "Formbar certs unavailable");
       res.status(503).send("Formbar login is temporarily unavailable.");
       return;
     }
+    logger.warn({ event: "auth_failed", provider: "formbar", reason: "token_invalid" }, "Formbar login failed");
     res.status(400).send("Invalid Formbar token.");
     return;
   }
@@ -771,6 +832,12 @@ async function completeFormbarLogin(req, res, token) {
   if (Number.isInteger(linkId) && linkId > 0) {
     const result = await linkFormbarToAccount(linkId, userId);
     if (!result.ok) {
+      logger.warn({
+        event: "account_link_conflict",
+        provider: "formbar",
+        accountId: linkId,
+        error: result.error,
+      }, "Formbar link conflict");
       req.session.notice = linkMergeNotice(result.error, "Formbar");
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
@@ -778,6 +845,13 @@ async function completeFormbarLogin(req, res, token) {
     await upsertAccount(userId, name);
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
+    logger.info({
+      event: result.merged ? "account_merged" : "account_linked",
+      provider: "formbar",
+      accountId: (linked || result.account).id,
+      formbarId: userId,
+      merged: Boolean(result.merged),
+    }, result.merged ? "accounts merged via Formbar" : "Formbar linked");
     req.session.notice = result.merged
       ? "Accounts merged. Formbar is linked."
       : "Formbar account linked.";
@@ -787,6 +861,12 @@ async function completeFormbarLogin(req, res, token) {
 
   const account = await upsertAccount(userId, name);
   setAccountSession(req.session, account);
+  logger.info({
+    event: "auth_login",
+    provider: "formbar",
+    userId: account && account.id,
+    formbarId: userId,
+  }, "Formbar login ok");
   req.session.save(() => res.redirect("/"));
 }
 
@@ -849,11 +929,13 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
   const nextPath = req.session.discordOAuthNext || successRedirect;
   delete req.session.discordOAuthNext;
   if (!state || !expected || state !== expected) {
+    logger.warn({ event: "auth_failed", provider: "discord", reason: "state_mismatch" }, "Discord OAuth state mismatch");
     req.session.notice = "Discord login expired. Try again.";
     req.session.save(() => res.redirect("/login"));
     return;
   }
   if (req.query.error) {
+    logger.warn({ event: "auth_failed", provider: "discord", reason: "cancelled" }, "Discord login cancelled");
     req.session.notice = "Discord login was cancelled.";
     req.session.save(() => res.redirect("/login"));
     return;
@@ -866,7 +948,12 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
   let user;
   try {
     user = await fetchDiscordUserFromCode(code, redirectUri || discordCallbackUrl(req));
-  } catch {
+  } catch (err) {
+    logger.warn({
+      event: "auth_failed",
+      provider: "discord",
+      reason: err && err.message ? String(err.message).slice(0, 80) : "oauth_failed",
+    }, "Discord login failed");
     req.session.notice = "Discord login failed. Try again.";
     req.session.save(() => res.redirect("/login"));
     return;
@@ -878,6 +965,12 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     req.session.linkAccountId = null;
     const result = await linkDiscordToAccount(linkId, user.id);
     if (!result.ok) {
+      logger.warn({
+        event: "account_link_conflict",
+        provider: "discord",
+        accountId: linkId,
+        error: result.error,
+      }, "Discord link conflict");
       req.session.notice = linkMergeNotice(result.error, "Discord");
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
@@ -885,6 +978,13 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     await upsertDiscordAccount(user.id, name);
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
+    logger.info({
+      event: result.merged ? "account_merged" : "account_linked",
+      provider: "discord",
+      accountId: (linked || result.account).id,
+      discordId: user.id,
+      merged: Boolean(result.merged),
+    }, result.merged ? "accounts merged via Discord" : "Discord linked");
     req.session.notice = result.merged
       ? "Accounts merged. Discord is linked."
       : "Discord account linked.";
@@ -898,6 +998,12 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     return;
   }
   setAccountSession(req.session, account);
+  logger.info({
+    event: "auth_login",
+    provider: "discord",
+    userId: account.id,
+    discordId: user.id,
+  }, "Discord login ok");
   const dest = typeof nextPath === "string" && nextPath.startsWith("/") ? nextPath : "/";
   req.session.save(() => res.redirect(dest === "/login" ? "/" : dest));
 }
@@ -978,20 +1084,35 @@ app.post("/login", async (req, res, next) => {
       }));
     };
     if (!rateLimit(`login-ip:${clientIp(req)}`, { max: LIMITS.login * 2, windowMs: LIMITS.loginWindow })) {
+      logRateLimited(req, "login-ip");
       renderFail("Too many login attempts. Try again later.");
       return;
     }
     if (!rateLimit(`login:${clientIp(req)}:${email}`, { max: LIMITS.login, windowMs: LIMITS.loginWindow })) {
+      logRateLimited(req, "login");
       renderFail("Too many login attempts. Try again later.");
       return;
     }
     const account = await getAccountByEmail(email);
     if (!account || !account.password_hash) {
+      logger.warn({
+        event: "auth_failed",
+        provider: "local",
+        reason: "invalid_credentials",
+        ip: clientIp(req),
+      }, "local login failed");
       renderFail("Invalid email or password.");
       return;
     }
     const ok = await verifyPassword(password, account.password_hash);
     if (!ok) {
+      logger.warn({
+        event: "auth_failed",
+        provider: "local",
+        reason: "invalid_credentials",
+        ip: clientIp(req),
+        accountId: account.id,
+      }, "local login failed");
       renderFail("Invalid email or password.");
       return;
     }
@@ -999,6 +1120,7 @@ app.post("/login", async (req, res, next) => {
       ? "Verify your email to unlock account features. Until then you can play like a guest."
       : undefined;
     await establishAccountSession(req, account, notice);
+    logger.info({ event: "auth_login", provider: "local", userId: account.id }, "local login ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1048,6 +1170,7 @@ app.post("/signup", async (req, res, next) => {
       }));
     };
     if (!rateLimit(`signup:${clientIp(req)}`, { max: 10 })) {
+      logRateLimited(req, "signup");
       renderFail("Too many signups from this address. Try again later.");
       return;
     }
@@ -1088,20 +1211,31 @@ app.post("/signup", async (req, res, next) => {
       try {
         await issueVerifyEmail(account);
       } catch (err) {
-        console.error(err);
+        logger.error({
+          event: "mail_send_failed",
+          purpose: "verify",
+          accountId: account.id,
+          err: asErr(err),
+        }, "signup verify email failed");
         try {
           await deleteLocalAccount(account.id);
         } catch (cleanupErr) {
-          console.error(cleanupErr);
+          logger.error({
+            event: "auth_signup_cleanup_failed",
+            accountId: account.id,
+            err: asErr(cleanupErr),
+          }, "signup cleanup failed");
         }
         renderFail("Could not send verification email. Try again later.");
         return;
       }
+      logger.info({ event: "auth_signup", accountId: account.id, needVerify: true }, "signup pending verify");
       req.session.notice = `Check your email to verify your account.${nameNote}`;
       req.session.save(() => res.redirect("/login"));
       return;
     }
     await establishAccountSession(req, account, nameNote ? nameNote.trim() : undefined);
+    logger.info({ event: "auth_signup", accountId: account.id, needVerify: false }, "signup ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1121,6 +1255,7 @@ app.get("/verify", async (req, res, next) => {
     }
     const account = await consumeAuthToken("verify", hashToken(token));
     if (!account) {
+      logger.warn({ event: "auth_failed", provider: "local", reason: "verify_token_invalid" }, "verify token invalid");
       req.session.notice = "That verification link is invalid or expired.";
       req.session.save(() => res.redirect("/login"));
       return;
@@ -1128,6 +1263,7 @@ app.get("/verify", async (req, res, next) => {
     await setEmailVerified(account.id);
     const fresh = await getAccount(account.id);
     await establishAccountSession(req, fresh || account, "Email verified. You are logged in.");
+    logger.info({ event: "auth_verify", accountId: account.id }, "email verified");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1142,6 +1278,7 @@ app.post("/verify/resend", async (req, res, next) => {
     }
     const email = normalizeEmail(req.body && req.body.email);
     if (!rateLimit(`resend:${clientIp(req)}:${email}`, { max: 5 })) {
+      logRateLimited(req, "resend");
       req.session.notice = "If that account exists, a new email was sent.";
       req.session.save(() => res.redirect("/login"));
       return;
@@ -1151,7 +1288,12 @@ app.post("/verify/resend", async (req, res, next) => {
       try {
         await issueVerifyEmail(account);
       } catch (err) {
-        console.error(err);
+        logger.error({
+          event: "mail_send_failed",
+          purpose: "verify_resend",
+          accountId: account.id,
+          err: asErr(err),
+        }, "verify resend failed");
       }
     }
     req.session.notice = "If that account exists, a new email was sent.";
@@ -1197,7 +1339,12 @@ app.post("/forgot", async (req, res, next) => {
         try {
           await issueResetEmail(account);
         } catch (err) {
-          console.error(err);
+          logger.error({
+            event: "mail_send_failed",
+            purpose: "reset",
+            accountId: account.id,
+            err: asErr(err),
+          }, "reset email failed");
         }
       }
     }
@@ -1250,6 +1397,7 @@ app.post("/reset", async (req, res, next) => {
     }
     const account = await consumeAuthToken("reset", hashToken(token));
     if (!account) {
+      logger.warn({ event: "auth_failed", provider: "local", reason: "reset_token_invalid" }, "reset token invalid");
       req.session.notice = "That reset link is invalid or expired.";
       req.session.save(() => res.redirect("/forgot"));
       return;
@@ -1257,6 +1405,7 @@ app.post("/reset", async (req, res, next) => {
     await setAccountPassword(account.id, await hashPassword(password));
     const fresh = await getAccount(account.id);
     await establishAccountSession(req, fresh || account, "Password updated.");
+    logger.info({ event: "auth_reset", accountId: account.id }, "password reset ok");
     req.session.save(() => res.redirect("/"));
   } catch (err) {
     next(err);
@@ -1264,6 +1413,8 @@ app.post("/reset", async (req, res, next) => {
 });
 
 app.get("/logout", (req, res) => {
+  const accountId = req.session && req.session.accountId;
+  logger.info({ event: "auth_logout", accountId: accountId || undefined }, "logout");
   req.session.destroy(() => res.redirect("/"));
 });
 
@@ -1351,10 +1502,7 @@ app.get("/scores", async (req, res, next) => {
 
 app.get("/admin", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     const data = await adminData(req);
     req.session.save(() => res.render("admin", data));
   } catch (err) {
@@ -1552,12 +1700,23 @@ app.post("/profile/link/local", async (req, res, next) => {
         return;
       }
       setAccountSession(req.session, merged.account);
+      logger.info({
+        event: "account_merged",
+        survivorId: viewer.id,
+        donorId: other.id,
+        provider: "email",
+      }, "accounts merged via email link");
       if (needsEmailVerification(merged.account) && mailReady()) {
         try {
           await issueVerifyEmail(merged.account);
           req.session.notice = "Accounts merged. Check your email to verify.";
         } catch (err) {
-          console.error(err);
+          logger.error({
+            event: "mail_send_failed",
+            purpose: "verify",
+            accountId: merged.account.id,
+            err: asErr(err),
+          }, "merge verify email failed");
           req.session.notice = "Accounts merged.";
         }
       } else {
@@ -1584,7 +1743,12 @@ app.post("/profile/link/local", async (req, res, next) => {
         await issueVerifyEmail(fresh);
         req.session.notice = "Check your email to verify the new address.";
       } catch (err) {
-        console.error(err);
+        logger.error({
+          event: "mail_send_failed",
+          purpose: "verify",
+          accountId: viewer.id,
+          err: asErr(err),
+        }, "link-local verify email failed");
         req.session.notice = "Email saved, but verification could not be sent.";
       }
     } else {
@@ -1610,11 +1774,18 @@ app.post("/tickets", async (req, res, next) => {
       return;
     }
     if (!rateLimit(`tickets:${account.id}`, { max: LIMITS.ticket, windowMs: 60 * 1000 })) {
+      logRateLimited(req, "tickets", { accountId: account.id });
       req.session.notice = "Too many ticket purchases. Try again in a minute.";
       req.session.save(() => res.redirect(back));
       return;
     }
     if (!tryLockTicketPurchase(account.id)) {
+      logger.warn({
+        event: "ticket_purchase",
+        status: "rejected",
+        reason: "in_progress",
+        accountId: account.id,
+      }, "ticket purchase already in progress");
       req.session.notice = "A ticket purchase is already in progress.";
       req.session.save(() => res.redirect(back));
       return;
@@ -1628,10 +1799,25 @@ app.post("/tickets", async (req, res, next) => {
         digipogs: pack.cost,
       });
       if (!purchaseId) {
+        logger.warn({
+          event: "ticket_purchase",
+          status: "rejected",
+          reason: "pending",
+          accountId: account.id,
+        }, "ticket purchase already pending");
         req.session.notice = "A ticket purchase is already pending and was not retried.";
         req.session.save(() => res.redirect(back));
         return;
       }
+      logger.info({
+        event: "ticket_purchase",
+        status: "started",
+        purchaseId,
+        accountId: account.id,
+        formbarId: account.formbar_id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+      }, "ticket purchase started");
       const transfer = await payPool(formbarSocket, {
         userId: account.formbar_id,
         poolId: POOL_ID,
@@ -1640,17 +1826,39 @@ app.post("/tickets", async (req, res, next) => {
         reason: `${pack.size} game tickets`,
       });
       if (transfer.ambiguous) {
+        logger.error({
+          event: "ticket_purchase_ambiguous",
+          purchaseId,
+          accountId: account.id,
+          formbarId: account.formbar_id,
+          digipogs: pack.cost,
+          tickets: pack.size,
+        }, "ticket purchase ambiguous");
         req.session.notice = AMBIGUOUS_TRANSFER;
         req.session.save(() => res.redirect(back));
         return;
       }
       if (!transfer.success) {
         await failTicketPurchase(purchaseId);
+        logger.warn({
+          event: "ticket_purchase",
+          status: "failed",
+          purchaseId,
+          accountId: account.id,
+        }, "ticket purchase failed");
         req.session.notice = transfer.message || "Payment failed.";
         req.session.save(() => res.redirect(back));
         return;
       }
       await completeTicketPurchase(purchaseId, account.id, pack.size);
+      logger.info({
+        event: "ticket_purchase",
+        status: "completed",
+        purchaseId,
+        accountId: account.id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+      }, "ticket purchase completed");
       req.session.notice = `Added ${pack.size} tickets.`;
       req.session.save(() => res.redirect(back));
     } finally {
@@ -1731,10 +1939,7 @@ app.post("/suggestions", async (req, res, next) => {
 
 app.get("/admin/suggestions", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     const viewer = await pageViewer(req);
     const notice = takeNotice(req);
     const suggestions = await listSuggestions({ archived: false });
@@ -1754,10 +1959,7 @@ app.get("/admin/suggestions", async (req, res, next) => {
 
 app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     if (!adminLimited(req)) {
       req.session.notice = "Too many admin actions. Try again in a minute.";
       req.session.save(() => res.redirect("/admin/suggestions"));
@@ -1770,6 +1972,12 @@ app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
       return;
     }
     await archiveSuggestion(suggestionId);
+    logger.info({
+      event: "admin_action",
+      action: "suggestion_archive",
+      adminUserId: req.session.accountId,
+      targetId: suggestionId,
+    }, "suggestion archived");
     req.session.notice = "Suggestion archived.";
     req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
@@ -1779,10 +1987,7 @@ app.post("/admin/suggestions/:id/archive", async (req, res, next) => {
 
 app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     if (!adminLimited(req)) {
       req.session.notice = "Too many admin actions. Try again in a minute.";
       req.session.save(() => res.redirect("/admin/suggestions"));
@@ -1826,6 +2031,14 @@ app.post("/admin/suggestions/:id/archive-reward", async (req, res, next) => {
       return;
     }
     await completeSuggestionReward(suggestion.id);
+    logger.info({
+      event: "admin_action",
+      action: "suggestion_reward",
+      adminUserId: req.session.accountId,
+      targetId: suggestion.id,
+      amount,
+      formbarId: suggestion.formbar_id,
+    }, "suggestion rewarded");
     req.session.notice = `Archived and sent ${amount} digipogs to ${suggestion.name}.`;
     req.session.save(() => res.redirect("/admin/suggestions"));
   } catch (err) {
@@ -1877,10 +2090,7 @@ async function renderWikiView(req, res, slugParam) {
 
 app.get("/admin/wiki", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     const viewer = await pageViewer(req);
     const notice = takeNotice(req);
     const revisions = (await listOpenWikiRevisions()).map((item) => ({
@@ -1904,11 +2114,21 @@ app.get("/admin/wiki", async (req, res, next) => {
 
 app.post("/admin/wiki/:id/confirm", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session) || !adminLimited(req)) {
+    if (!requireAdminOrDeny(req, res)) return;
+    if (!adminLimited(req)) {
       res.redirect("/");
       return;
     }
-    const ok = await confirmWikiRevision(routeId(req.params.id));
+    const revisionId = routeId(req.params.id);
+    const ok = await confirmWikiRevision(revisionId);
+    if (ok) {
+      logger.info({
+        event: "admin_action",
+        action: "wiki_confirm",
+        adminUserId: req.session.accountId,
+        targetId: revisionId,
+      }, "wiki revision confirmed");
+    }
     req.session.notice = ok ? "Revision confirmed." : "Revision not found.";
     req.session.save(() => res.redirect("/admin/wiki"));
   } catch (err) {
@@ -1918,16 +2138,30 @@ app.post("/admin/wiki/:id/confirm", async (req, res, next) => {
 
 app.post("/admin/wiki/:id/undo", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session) || !adminLimited(req)) {
+    if (!requireAdminOrDeny(req, res)) return;
+    if (!adminLimited(req)) {
       res.redirect("/");
       return;
     }
-    const result = await undoWikiRevision(routeId(req.params.id));
+    const revisionId = routeId(req.params.id);
+    const result = await undoWikiRevision(revisionId);
     if (!result.ok) {
       req.session.notice = result.error || "Could not undo.";
     } else if (result.deleted) {
+      logger.info({
+        event: "admin_action",
+        action: "wiki_undo_delete",
+        adminUserId: req.session.accountId,
+        targetId: revisionId,
+      }, "wiki page deleted via undo");
       req.session.notice = "Page deleted.";
     } else {
+      logger.info({
+        event: "admin_action",
+        action: "wiki_undo",
+        adminUserId: req.session.accountId,
+        targetId: revisionId,
+      }, "wiki revision undone");
       req.session.notice = "Revision undone.";
     }
     req.session.save(() => res.redirect("/admin/wiki"));
@@ -1938,10 +2172,7 @@ app.post("/admin/wiki/:id/undo", async (req, res, next) => {
 
 app.post("/admin/wiki/:id/reward", async (req, res, next) => {
   try {
-    if (!isAdmin(req.session)) {
-      res.redirect("/");
-      return;
-    }
+    if (!requireAdminOrDeny(req, res)) return;
     if (!adminLimited(req)) {
       req.session.notice = "Too many admin actions. Try again in a minute.";
       req.session.save(() => res.redirect("/admin/wiki"));
@@ -1993,6 +2224,14 @@ app.post("/admin/wiki/:id/reward", async (req, res, next) => {
       return;
     }
     await completeWikiReward(revision.id);
+    logger.info({
+      event: "admin_action",
+      action: "wiki_reward",
+      adminUserId: req.session.accountId,
+      targetId: revision.id,
+      amount,
+      formbarId: revision.formbar_id,
+    }, "wiki revision rewarded");
     req.session.notice = `Sent ${amount} digipogs to ${revision.name}.`;
     req.session.save(() => res.redirect("/admin/wiki"));
   } catch (err) {
@@ -2209,6 +2448,12 @@ app.post("/rules/:slug/delete", async (req, res, next) => {
     }
     const slug = wikiSlug(req.params.slug);
     if (!isAdmin(req.session)) {
+      logger.warn({
+        event: "authz_denied",
+        path: req.path,
+        ip: clientIp(req),
+        accountId: req.session && req.session.accountId,
+      }, "wiki delete denied");
       req.session.notice = "Only admins can delete wiki pages.";
       req.session.save(() => res.redirect(`/rules/${slug}/edit`));
       return;
@@ -2224,6 +2469,12 @@ app.post("/rules/:slug/delete", async (req, res, next) => {
       req.session.save(() => res.redirect(`/rules/${slug}/edit`));
       return;
     }
+    logger.info({
+      event: "admin_action",
+      action: "wiki_page_deleted",
+      adminUserId: req.session.accountId,
+      slug,
+    }, "wiki page deleted");
     req.session.notice = "Page deleted.";
     req.session.save(() => res.redirect("/rules"));
   } catch (err) {
@@ -2265,6 +2516,11 @@ app.get("/play", async (req, res, next) => {
 
 app.use("/api/v1", (req, res, next) => {
   if (req.query && (req.query.token || req.query.access_token || req.query.session)) {
+    logger.warn({
+      event: "api_token_in_query_rejected",
+      path: req.path,
+      ip: clientIp(req),
+    }, "API token in query rejected");
     res.status(400).json({ error: "bad_request" });
     return;
   }
@@ -2521,10 +2777,18 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
       return;
     }
     if (!rateLimit(`tickets:${account.id}`, { max: LIMITS.ticket, windowMs: 60 * 1000 })) {
+      logRateLimited(req, "tickets", { accountId: account.id });
       res.status(429).json({ error: "rate_limited" });
       return;
     }
     if (!tryLockTicketPurchase(account.id)) {
+      logger.warn({
+        event: "ticket_purchase",
+        status: "rejected",
+        reason: "in_progress",
+        accountId: account.id,
+        source: "api",
+      }, "ticket purchase already in progress");
       res.status(409).json({ error: "purchase_in_progress" });
       return;
     }
@@ -2537,9 +2801,26 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
         digipogs: pack.cost,
       });
       if (!purchaseId) {
+        logger.warn({
+          event: "ticket_purchase",
+          status: "rejected",
+          reason: "pending",
+          accountId: account.id,
+          source: "api",
+        }, "ticket purchase already pending");
         res.status(409).json({ error: "purchase_pending" });
         return;
       }
+      logger.info({
+        event: "ticket_purchase",
+        status: "started",
+        purchaseId,
+        accountId: account.id,
+        formbarId: account.formbar_id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+        source: "api",
+      }, "ticket purchase started");
       const transfer = await payPool(formbarSocket, {
         userId: account.formbar_id,
         poolId: POOL_ID,
@@ -2548,11 +2829,27 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
         reason: `${pack.size} game tickets`,
       });
       if (transfer.ambiguous) {
+        logger.error({
+          event: "ticket_purchase_ambiguous",
+          purchaseId,
+          accountId: account.id,
+          formbarId: account.formbar_id,
+          digipogs: pack.cost,
+          tickets: pack.size,
+          source: "api",
+        }, "ticket purchase ambiguous");
         res.status(502).json({ error: "payment_ambiguous", message: AMBIGUOUS_TRANSFER });
         return;
       }
       if (!transfer.success) {
         await failTicketPurchase(purchaseId);
+        logger.warn({
+          event: "ticket_purchase",
+          status: "failed",
+          purchaseId,
+          accountId: account.id,
+          source: "api",
+        }, "ticket purchase failed");
         res.status(400).json({
           error: "payment_failed",
           message: transfer.message || "Payment failed.",
@@ -2560,6 +2857,15 @@ app.post("/api/v1/tickets", requireApiSession, async (req, res, next) => {
         return;
       }
       await completeTicketPurchase(purchaseId, account.id, pack.size);
+      logger.info({
+        event: "ticket_purchase",
+        status: "completed",
+        purchaseId,
+        accountId: account.id,
+        tickets: pack.size,
+        digipogs: pack.cost,
+        source: "api",
+      }, "ticket purchase completed");
       const updated = await getAccount(account.id);
       const player = await playerFromSession(req.session, { createGuest: false });
       const busy = player ? matchmaker.isBusy(player.id) : false;
@@ -2636,13 +2942,22 @@ app.use((req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  const raw = Number(err && (err.status || err.statusCode)) || 500;
+  const status = raw >= 400 && raw < 600 ? raw : 500;
+  const level = status >= 500 ? "error" : "warn";
+  logger[level]({
+    event: "http_error",
+    err: status >= 500 ? asErr(err) : undefined,
+    errMessage: err && err.message,
+    status,
+    method: req.method,
+    path: req.path,
+    ip: clientIp(req),
+  }, status >= 500 ? "HTTP server error" : "HTTP client error");
   if (res.headersSent) {
     next(err);
     return;
   }
-  const raw = Number(err && (err.status || err.statusCode)) || 500;
-  const status = raw >= 400 && raw < 600 ? raw : 500;
   if (String(req.path || "").startsWith("/api/")) {
     const code = status === 403 ? "forbidden"
       : status === 404 ? "not_found"
@@ -2652,7 +2967,13 @@ app.use((err, req, res, next) => {
     return;
   }
   const message = status < 500 && err && err.message ? err.message : undefined;
-  renderError(req, res, { status, message }).catch(() => {
+  renderError(req, res, { status, message }).catch((renderErr) => {
+    logger.error({
+      event: "http_error_render_failed",
+      err: asErr(renderErr),
+      status,
+      path: req.path,
+    }, "error page render failed");
     if (!res.headersSent) res.status(status).send("Something went wrong");
   });
 });
@@ -2674,7 +2995,15 @@ function capUserSockets(socket) {
   list.push(socket);
   while (list.length > max) {
     const old = list.shift();
-    if (old && old !== socket && old.connected) old.disconnect(true);
+    if (old && old !== socket && old.connected) {
+      logger.info({
+        event: "socket_capped",
+        userId: user.id,
+        socketId: old.id,
+        newSocketId: socket.id,
+      }, "capped older socket");
+      old.disconnect(true);
+    }
   }
   socket.on("disconnect", () => {
     const current = socketsByUser.get(user.id);
@@ -2694,6 +3023,17 @@ io.use((socket, next) => {
     nodeEnv: process.env.NODE_ENV,
     hasAuthToken,
   })) {
+    let originHost;
+    try {
+      originHost = origin ? new URL(origin).host : undefined;
+    } catch {
+      originHost = undefined;
+    }
+    logger.warn({
+      event: "origin_rejected",
+      socketId: socket.id,
+      originHost,
+    }, "socket origin rejected");
     next(new Error("origin not allowed"));
     return;
   }
@@ -2706,6 +3046,11 @@ io.use((socket, next) => {
     const sid = token.trim();
     loadStoredSession(sid).then((data) => {
       if (!data) {
+        logger.warn({
+          event: "socket_auth_failed",
+          reason: "no_session",
+          socketId: socket.id,
+        }, "socket auth failed");
         next(new Error("no session"));
         return;
       }
@@ -2721,11 +3066,21 @@ io.use((socket, next) => {
 io.use((socket, next) => {
   const sess = socket.request.session;
   if (!sess) {
+    logger.warn({
+      event: "socket_auth_failed",
+      reason: "no_session",
+      socketId: socket.id,
+    }, "socket auth failed");
     next(new Error("no session"));
     return;
   }
   playerFromSession(sess, { createGuest: false }).then((user) => {
     if (!user) {
+      logger.warn({
+        event: "socket_auth_failed",
+        reason: "no_player",
+        socketId: socket.id,
+      }, "socket auth failed");
       next(new Error("no player"));
       return;
     }
@@ -2735,8 +3090,18 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
+  const user = socket.data.user;
+  const slog = childLogger({
+    component: "socket",
+    socketId: socket.id,
+    userId: user && user.id,
+  });
+  slog.info({ event: "socket_connected" }, "socket connected");
   matchmaker.connect(socket);
   capUserSockets(socket);
+  socket.on("error", (err) => {
+    slog.error({ event: "socket_error", err: asErr(err) }, "socket error");
+  });
   socket.on("command", (cmd) => matchmaker.command(socket, cmd));
   socket.on("chat", (payload) => matchmaker.chat(socket, payload));
   socket.on("pause", () => matchmaker.pause(socket));
@@ -2763,7 +3128,10 @@ io.on("connection", (socket) => {
   });
   socket.on("concede", () => matchmaker.concede(socket));
   socket.on("leave", () => matchmaker.leave(socket));
-  socket.on("disconnect", () => matchmaker.disconnect(socket));
+  socket.on("disconnect", (reason) => {
+    slog.info({ event: "socket_disconnected", reason }, "socket disconnected");
+    matchmaker.disconnect(socket);
+  });
 });
 
 export { app, httpServer, io, matchmaker, PORT, THIS_URL };
@@ -2778,6 +3146,29 @@ export function listen(port = PORT) {
   });
 }
 
+let shuttingDown = false;
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ event: "shutdown", signal }, "shutting down");
+  try {
+    io.close();
+  } catch {
+    // ignore
+  }
+  await new Promise((resolve) => {
+    httpServer.close(() => resolve());
+    setTimeout(resolve, 5000).unref?.();
+  });
+  try {
+    disconnectFormbar();
+  } catch {
+    // ignore
+  }
+  process.exit(0);
+}
+
 // PM2 loads via ProcessContainer, so argv[1] is not this file; use pm_exec_path instead.
 const thisFile = fileURLToPath(import.meta.url);
 const entryPaths = [process.argv[1], process.env.pm_id != null ? process.env.pm_exec_path : null]
@@ -2785,12 +3176,29 @@ const entryPaths = [process.argv[1], process.env.pm_id != null ? process.env.pm_
   .map((p) => path.resolve(p));
 const isMain = entryPaths.some((entry) => entry === thisFile);
 if (isMain) {
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ event: "uncaught_exception", err: asErr(err) }, "uncaught exception");
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ event: "unhandled_rejection", err: asErr(reason) }, "unhandled rejection");
+  });
+  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
+  process.on("SIGINT", () => { shutdown("SIGINT"); });
+
   if (process.env.NODE_ENV === "production" && process.env.DEBUG_RANGES === "1") {
-    console.warn("DEBUG_RANGES is set but ignored in production.");
+    logger.warn({ event: "config_debug_ranges_ignored" }, "DEBUG_RANGES is set but ignored in production.");
   }
   await listen(PORT);
-  console.log(`Men Of The Line listening on ${THIS_URL}`);
+  logger.info({
+    event: "server_started",
+    port: PORT,
+    url: THIS_URL,
+    workers: workerCount(),
+  }, `Men Of The Line listening on ${THIS_URL}`);
   if (debugRangesEnabled()) {
-    console.log("Debug ranges: forward weapon range, collision boxes, restore, fort, and keep bands");
+    logger.info({
+      event: "debug_ranges_enabled",
+    }, "debug ranges overlays enabled");
   }
 }

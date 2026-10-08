@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { Filter } from "glin-profanity";
+import { logger } from "./logger.js";
 
 const scryptAsync = promisify(scrypt);
 
@@ -95,17 +96,17 @@ export function warnAuthConfig() {
   if (bootWarned) return;
   bootWarned = true;
   if (!anyLoginEnabled()) {
-    console.warn("Auth: LOCAL_ACCOUNTS, FORMBAR_LOGIN, and DISCORD_LOGIN are all off; login is disabled.");
+    logger.warn({ event: "auth_config_warn", reason: "login_disabled" }, "all login providers are off");
   }
   if (discordLoginEnabled()) {
     const hasId = Boolean(String(process.env.DISCORD_CLIENT_ID || "").trim());
     const hasSecret = Boolean(String(process.env.DISCORD_CLIENT_SECRET || "").trim());
     if ((!hasId || !hasSecret) && process.env.DISCORD_OAUTH_MOCK !== "1") {
-      console.warn("Auth: DISCORD_LOGIN is on but DISCORD_CLIENT_ID/DISCORD_CLIENT_SECRET are incomplete.");
+      logger.warn({ event: "auth_config_warn", reason: "discord_incomplete" }, "DISCORD_LOGIN incomplete");
     }
   }
   if (localAccountsEnabled() && authEmailEnabled() && !smtpConfigured()) {
-    console.warn("Auth: AUTH_EMAIL is on but SMTP_HOST/SMTP_FROM are incomplete; verify/forgot will fail.");
+    logger.warn({ event: "auth_config_warn", reason: "smtp_incomplete" }, "AUTH_EMAIL on but SMTP incomplete");
   }
 }
 

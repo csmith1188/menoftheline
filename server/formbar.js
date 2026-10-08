@@ -1,4 +1,5 @@
 import { io } from "socket.io-client";
+import { logger } from "./logger.js";
 
 let socket = null;
 
@@ -12,14 +13,22 @@ let socket = null;
 const transferChains = new WeakMap();
 
 export function connectFormbar(authUrl, apiKey) {
-  if (process.env.SKIP_FORMBAR === "1") return null;
+  if (process.env.SKIP_FORMBAR === "1") {
+    logger.info({ event: "formbar_skipped" }, "SKIP_FORMBAR=1; Digipog socket disabled");
+    return null;
+  }
   if (socket) return socket;
   socket = io(String(authUrl || "").replace(/\/$/, ""), {
     extraHeaders: { api: apiKey || "" },
   });
-  socket.on("connect", () => console.log("Connected to Formbar"));
+  socket.on("connect", () => {
+    logger.info({ event: "formbar_connected" }, "connected to Formbar");
+  });
   socket.on("connect_error", (err) => {
-    console.warn("Formbar socket error:", err.message);
+    logger.warn({
+      event: "formbar_connect_error",
+      errMessage: err && err.message,
+    }, "Formbar socket error");
   });
   return socket;
 }
@@ -145,7 +154,7 @@ export async function payPool(socketClient, { userId, poolId, amount, pin, reaso
     return { success: false, ambiguous: false, message: "Pool id is not configured." };
   }
 
-  return transferDigipogs(socketClient, {
+  const result = await transferDigipogs(socketClient, {
     from: fromId,
     to: toId,
     amount: Number(amount),
@@ -153,6 +162,17 @@ export async function payPool(socketClient, { userId, poolId, amount, pin, reaso
     reason: reason || "Game tickets",
     pool: toId,
   });
+  const level = result.ambiguous ? "error" : result.success ? "info" : "warn";
+  logger[level]({
+    event: "transfer_result",
+    direction: "pay",
+    success: result.success,
+    ambiguous: result.ambiguous,
+    fromId,
+    toId,
+    amount: Number(amount),
+  }, result.ambiguous ? "Digipog pay ambiguous" : result.success ? "Digipog pay ok" : "Digipog pay failed");
+  return result;
 }
 
 /**
@@ -198,6 +218,14 @@ export async function rewardFromPool(_socketClient, { userId, amount, reason }) 
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      logger.warn({
+        event: "reward_transfer",
+        success: false,
+        ambiguous: false,
+        toId,
+        amount: digipogs,
+        httpStatus: response.status,
+      }, "Digipog reward failed");
       return {
         success: false,
         ambiguous: false,
@@ -207,6 +235,13 @@ export async function rewardFromPool(_socketClient, { userId, amount, reason }) 
       };
     }
     if (!payload) {
+      logger.error({
+        event: "reward_transfer",
+        success: false,
+        ambiguous: true,
+        toId,
+        amount: digipogs,
+      }, "Digipog reward ambiguous");
       return {
         success: false,
         ambiguous: true,
@@ -214,12 +249,27 @@ export async function rewardFromPool(_socketClient, { userId, amount, reason }) 
       };
     }
     if (payload.success === false) {
-      return {
+      const failed = {
         success: false,
         ambiguous: false,
         message: payload.message || payload.error || "Transfer failed.",
       };
+      logger.warn({
+        event: "reward_transfer",
+        success: false,
+        ambiguous: false,
+        toId,
+        amount: digipogs,
+      }, "Digipog reward failed");
+      return failed;
     }
+    logger.info({
+      event: "reward_transfer",
+      success: true,
+      ambiguous: false,
+      toId,
+      amount: digipogs,
+    }, "Digipog reward ok");
     return {
       success: true,
       ambiguous: false,
@@ -229,6 +279,14 @@ export async function rewardFromPool(_socketClient, { userId, amount, reason }) 
         "",
     };
   } catch (err) {
+    logger.error({
+      event: "reward_transfer",
+      success: false,
+      ambiguous: true,
+      toId,
+      amount: digipogs,
+      errMessage: err && err.message,
+    }, "Digipog reward ambiguous");
     return {
       success: false,
       ambiguous: true,

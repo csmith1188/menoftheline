@@ -1,6 +1,7 @@
 import fs from "fs";
 import nodemailer from "nodemailer";
 import { authEmailEnabled, smtpConfigured } from "./auth.js";
+import { asErr, logger } from "./logger.js";
 
 /** Captured messages when set (tests). */
 let capture = null;
@@ -63,12 +64,16 @@ export async function sendMail({ to, subject, text, html }) {
   try {
     return await getTransporter().sendMail(message);
   } catch (err) {
-    const detail = [
-      err && err.message,
-      err && err.code,
-      err && err.response,
-    ].filter(Boolean).join(" | ");
-    console.error(`SMTP send failed to=${to}: ${detail}`);
+    const domain = String(to || "").includes("@")
+      ? String(to).split("@").pop()
+      : undefined;
+    logger.error({
+      event: "mail_send_failed",
+      err: asErr(err),
+      errCode: err && err.code,
+      responseCode: err && err.responseCode,
+      toDomain: domain,
+    }, "SMTP send failed");
     throw err;
   }
 }

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { asErr, logger } from "./logger.js";
 
 const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "news.json");
 
@@ -13,7 +14,9 @@ export function loadNews() {
       .slice()
       .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   } catch (err) {
-    if (err && err.code !== "ENOENT") console.error(err);
+    if (err && err.code !== "ENOENT") {
+      logger.error({ event: "news_load_failed", err: asErr(err) }, "failed to load news.json");
+    }
     return [];
   }
 }

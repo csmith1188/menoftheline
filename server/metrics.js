@@ -1,4 +1,5 @@
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
+import { logger } from "./logger.js";
 
 /** Rolling samples. Oldest values drop once the cap is hit. */
 function makeSamples(cap = 240) {
@@ -181,13 +182,22 @@ function logLine() {
   windowSqlite = 0;
   if (loopDelay) samples.loop.push(loopDelay.percentile(99) / 1e6);
   const row = report();
-  console.log(
-    `metrics rooms=${row.rooms} sockets=${row.sockets} rssMb=${row.rssMb} cpu=${row.cpuPercent}`
-    + ` loopP99=${row.eventLoopDelayMs.p99} aggP95=${row.aggregateTickMs.p95}`
-    + ` simP95=${row.simMs.p95} snapP95=${row.broadcastMs.p95} snapBytesP95=${row.snapshotBytes.p95}`
-    + ` cmdPerSec=${row.commandsPerSec} sqlitePerSec=${row.sqliteWritesPerSec}`
-    + ` backlog=${row.socketBacklog} overrunMs=${row.overrunMs}`,
-  );
+  logger.info({
+    event: "metrics_sample",
+    rooms: row.rooms,
+    sockets: row.sockets,
+    rssMb: row.rssMb,
+    cpuPercent: row.cpuPercent,
+    loopP99: row.eventLoopDelayMs && row.eventLoopDelayMs.p99,
+    aggP95: row.aggregateTickMs && row.aggregateTickMs.p95,
+    simP95: row.simMs && row.simMs.p95,
+    snapP95: row.broadcastMs && row.broadcastMs.p95,
+    snapBytesP95: row.snapshotBytes && row.snapshotBytes.p95,
+    cmdPerSec: row.commandsPerSec,
+    sqlitePerSec: row.sqliteWritesPerSec,
+    backlog: row.socketBacklog,
+    overrunMs: row.overrunMs,
+  }, "metrics sample");
 }
 
 export function startMetrics(opts = {}) {

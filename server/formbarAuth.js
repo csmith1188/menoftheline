@@ -6,6 +6,7 @@
  * to jwt.decode(). A failed fetch or a failed verify rejects the login.
  */
 import jwt from "jsonwebtoken";
+import { logger } from "./logger.js";
 
 const CACHE_MS = 60 * 60 * 1000;
 const PEM_RE = /-----BEGIN [A-Z0-9 ]+-----[\s\S]+?-----END [A-Z0-9 ]+-----/;
@@ -115,7 +116,11 @@ export async function authenticateFormbarToken(token, authUrl, options = {}) {
   if (!pem) {
     try {
       pem = await loadFormbarPublicKey(authUrl, options);
-    } catch {
+    } catch (loadErr) {
+      logger.error({
+        event: "formbar_certs_unavailable",
+        errMessage: loadErr && loadErr.message,
+      }, "Formbar certificate unavailable");
       const err = new Error("Formbar certificate is unavailable.");
       err.code = "certs_unavailable";
       throw err;
@@ -124,12 +129,25 @@ export async function authenticateFormbarToken(token, authUrl, options = {}) {
   try {
     return identityFromPayload(verifyFormbarToken(token, pem));
   } catch (err) {
-    if (err.code === "invalid_token") throw err;
+    if (err.code === "invalid_token") {
+      logger.warn({ event: "formbar_token_invalid", reason: "invalid_token" }, "Formbar token invalid");
+      throw err;
+    }
     if (injected) throw err;
-    if (err && (err.name === "TokenExpiredError" || err.name === "NotBeforeError")) throw err;
+    if (err && (err.name === "TokenExpiredError" || err.name === "NotBeforeError")) {
+      logger.warn({
+        event: "formbar_token_invalid",
+        reason: err.name === "TokenExpiredError" ? "expired" : "not_before",
+      }, "Formbar token invalid");
+      throw err;
+    }
     try {
       pem = await loadFormbarPublicKey(authUrl, { ...options, force: true });
-    } catch {
+    } catch (loadErr) {
+      logger.error({
+        event: "formbar_certs_unavailable",
+        errMessage: loadErr && loadErr.message,
+      }, "Formbar certificate unavailable");
       const unavailable = new Error("Formbar certificate is unavailable.");
       unavailable.code = "certs_unavailable";
       throw unavailable;

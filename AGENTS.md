@@ -16,10 +16,11 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run debug` | Same server with `DEBUG_RANGES=1` overlays |
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
 | `npm run sim-bench` | One crowded match: step and snapshot times |
+| `npm run mail-test` | SMTP diagnose + optional test send (`--to`, `--verify-only`, `--force`) |
 | `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 | `npm run export-graphics` | Transparent PNGs of lanes/keeps/towns/terrain/units → `public/img/` |
 
-Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). In-match chat: `MATCH_CHAT` (default on).
+Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). In-match chat: `MATCH_CHAT` (default on). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
 
 ## Layout (start here)
 
@@ -33,6 +34,7 @@ server/
   csrf.js              Session CSRF tokens for browser POST forms
   hardening.js         Session secret, cookie, origin, and security headers
   formbarAuth.js       Formbar RS256 JWT verification via AUTH_URL/certs
+  logger.js            Central Pino logger (child bindings for matchId/userId/socketId)
   chat.js              Match chat sanitize, rate limit, MATCH_CHAT flag re-export
   settingsWrite.js     Debounced tooltip / BGM preference writes
   sim.js               GameSim + Unit classes + combat/economy rules (large)
@@ -88,6 +90,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 
 | If you need to… | Open first | Then usually |
 |-----------------|------------|--------------|
+| Add / change server logging | `server/logger.js`, `docs/logging.md` | Child loggers in `room.js` / `matchmaking.js` / `app.js`; never log secrets |
 | Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
 | Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
 | Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `shared/map/` (lane catalog), `shared/terrain.js`, `public/js/board.js` (HUD Cover), `wikidocs/map.md` |

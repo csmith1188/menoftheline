@@ -28,10 +28,14 @@ import {
   recordMatchResult,
   refundTicket,
 } from "./db.js";
+import { asErr, child as childLogger, createSampler, safeLog } from "./logger.js";
 import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
 import { applyTrainingRules } from "./training.js";
 import { TrainingBotController } from "./trainingBot.js";
+
+const invalidActionSample = createSampler(50);
+const DEBUG_CMD_TYPES = new Set(["buy", "bank", "targeting", "townProduce", "upgrade", "order"]);
 
 export const TICK_MS = 50;
 export const STEP_DT = 0.05;
@@ -84,6 +88,7 @@ export class GameRoom {
     this.paid = mode === "ranked" || mode === "listed";
     this.id = crypto.randomUUID();
     this.roomName = `game:${this.id}`;
+    this.log = childLogger({ matchId: this.id, mode });
     this.sim = new GameSim();
     this.status = "waiting";
     this.countdownEnds = null;
@@ -146,6 +151,7 @@ export class GameRoom {
     if (options.matchOptions) {
       this.applyMatchOptions(options.matchOptions);
     }
+    safeLog(this.log, "info", { event: "match_created" }, "match created");
   }
 
   /** Per-lane bot strategy defaults from the active map. */
@@ -249,6 +255,13 @@ export class GameRoom {
       previous.data.replaced = true;
       previous.emit("replaced");
       previous.disconnect(true);
+      safeLog(this.log, "info", {
+        event: "player_replaced",
+        userId: seat.userId,
+        seat: key,
+        socketId: socket.id,
+        oldSocketId: previous.id,
+      }, "player tab replaced");
     }
     const midMatchReconnect = (tabReplace || rejoining)
       && this.status === "playing"
@@ -259,8 +272,27 @@ export class GameRoom {
     }
     if (tabReplace || rejoining) {
       this.systemChat(`${name} reconnected`);
+      safeLog(this.log, "info", {
+        event: "player_reconnected",
+        userId: seat.userId,
+        seat: key,
+        socketId: socket.id,
+      }, "player reconnected");
     } else if (!otherAlreadyWaiting) {
       this.systemChat(`${name} joined`);
+      safeLog(this.log, "info", {
+        event: "player_joined",
+        userId: seat.userId,
+        seat: key,
+        socketId: socket.id,
+      }, "player joined");
+    } else {
+      safeLog(this.log, "info", {
+        event: "player_joined",
+        userId: seat.userId,
+        seat: key,
+        socketId: socket.id,
+      }, "player joined");
     }
     this.clearDisconnectForSeat(seat);
     this.pushLobby();
@@ -282,12 +314,22 @@ export class GameRoom {
     if (seat.reconnectAt.length < max) return false;
     this.forceConcedeSeat(seat, {
       chatLine: `${seat.name || "Player"} forfeited (reconnect spam)`,
+      reason: "reconnect_spam",
+      spamCount: seat.reconnectAt.length,
+      spamMax: max,
+      spamWindowMs: windowMs,
     });
     return true;
   }
 
   /** Opponent wins; shared by concede, disconnect timeout, reconnect spam. */
-  forceConcedeSeat(seat, { chatLine } = {}) {
+  forceConcedeSeat(seat, {
+    chatLine,
+    reason = "concede",
+    spamCount,
+    spamMax,
+    spamWindowMs,
+  } = {}) {
     if (this.status !== "playing" || this.sim.winner || this.closing) return false;
     if (!seat || !seat.userId) return false;
     this.resetPauseState();
@@ -296,6 +338,19 @@ export class GameRoom {
     this.sim.sounds = [];
     seat.queue = [];
     if (chatLine) this.systemChat(chatLine);
+    const level = reason === "reconnect_spam" ? "warn" : "info";
+    safeLog(this.log, level, {
+      event: reason === "reconnect_spam" ? "reconnect_spam_forfeit"
+        : reason === "disconnect" ? "disconnect_forfeit"
+          : "player_conceded",
+      userId: seat.userId,
+      seat: seat.key,
+      winnerSide: this.sim.winner,
+      reason,
+      count: spamCount,
+      max: spamMax,
+      windowMs: spamWindowMs,
+    }, "seat force-conceded");
     this.pushLobby();
     this.broadcastState({ volatile: false });
     return true;
@@ -331,17 +386,28 @@ export class GameRoom {
     seat.queue = [];
     if (this.mode === "training") {
       seat.bot = new TrainingBotController(seat.sideId);
+      if (typeof seat.bot.setLog === "function") seat.bot.setLog(this.log);
       return;
     }
     seat.bot = new BotController(seat.sideId, {
       difficulty: this.botDifficulty,
       strategy: { ...this.botStrategy },
     });
+    seat.bot.setLog(this.log);
   }
 
   /** Mid-match training controls. Bot games only. */
   botSettings(socket, payload) {
-    if (!allowSocketEvent(socket, "botSettings")) return;
+    if (!allowSocketEvent(socket, "botSettings")) {
+      safeLog(this.log, "warn", {
+        event: "invalid_action",
+        reason: "rate_limited",
+        action: "botSettings",
+        socketId: socket.id,
+        userId: socket.data && socket.data.user && socket.data.user.id,
+      }, "botSettings rate limited");
+      return;
+    }
     if (this.mode !== "bot") return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.bot) return;
@@ -372,6 +438,13 @@ export class GameRoom {
       }
     }
 
+    safeLog(this.log, "info", {
+      event: "bot_settings",
+      userId: seat.userId,
+      difficulty: this.botDifficulty,
+      speed: this.speedScale,
+      strategy: this.botStrategy,
+    }, "bot settings updated");
     this.pushLobby();
   }
 
@@ -421,7 +494,13 @@ export class GameRoom {
     if (this.paid && !this.charged) {
       const ids = [this.seat.a.accountId, this.seat.b.accountId]
         .filter((id) => Number.isInteger(id) && id > 0);
-      if (ids.length < 2) return false;
+      if (ids.length < 2) {
+        safeLog(this.log, "warn", {
+          event: "match_countdown_failed",
+          reason: "missing_accounts",
+        }, "countdown charge missing accounts");
+        return false;
+      }
       const done = [];
       for (let i = 0; i < ids.length; i += 1) {
         const ok = await chargeHeld(ids[i]);
@@ -429,9 +508,18 @@ export class GameRoom {
           for (let r = 0; r < done.length; r += 1) {
             await refundTicket(done[r]);
           }
+          safeLog(this.log, "warn", {
+            event: "match_countdown_failed",
+            reason: "ticket",
+            accountId: ids[i],
+          }, "countdown ticket charge failed");
           return false;
         }
         done.push(ids[i]);
+        safeLog(this.log, "info", {
+          event: "ticket_charged",
+          accountId: ids[i],
+        }, "ticket charged for match");
       }
       this.charged = true;
     }
@@ -441,6 +529,10 @@ export class GameRoom {
         await refundTicket(this.seat.b.accountId);
         this.charged = false;
       }
+      safeLog(this.log, "warn", {
+        event: "match_countdown_failed",
+        reason: "race",
+      }, "countdown aborted after charge");
       return false;
     }
     this.status = "countdown";
@@ -452,6 +544,13 @@ export class GameRoom {
     }
     const wait = this.countdownDurationMs();
     this.countdownEnds = Date.now() + wait;
+    safeLog(this.log, "info", {
+      event: "match_countdown",
+      waitMs: wait,
+      charged: this.charged,
+      userIdA: this.seat.a.userId,
+      userIdB: this.seat.b.userId,
+    }, "match countdown started");
     this.pushLobby();
     this.broadcastState();
     this.countdownTimer = setTimeout(() => this.beginPlay(), wait);
@@ -478,6 +577,13 @@ export class GameRoom {
     this.countdownTimer = null;
     this.status = "playing";
     this.countdownEnds = null;
+    safeLog(this.log, "info", {
+      event: "match_started",
+      userIdA: this.seat.a.userId,
+      userIdB: this.seat.b.userId,
+      botA: Boolean(this.seat.a.bot),
+      botB: Boolean(this.seat.b.bot),
+    }, "match started");
     this.pushLobby();
     this.stateAccumMs = 0;
     this.playSnapshotSent = false;
@@ -590,6 +696,12 @@ export class GameRoom {
     const wait = RECONNECT_WAIT_MS;
     this.reconnectWaitEnds = Date.now() + wait;
     this.systemChat(`Waiting for ${seat.name || "Player"} to reconnect`);
+    safeLog(this.log, "info", {
+      event: "player_reconnect_wait",
+      userId: seat.userId,
+      seat: seat.key,
+      waitMs: wait,
+    }, "waiting for reconnect");
     this.pushLobby();
     this.broadcastState({ volatile: false });
     this.reconnectWaitTimer = setTimeout(() => {
@@ -608,6 +720,7 @@ export class GameRoom {
     }
     this.forceConcedeSeat(seat, {
       chatLine: `${seat.name || "Player"} forfeited (disconnected)`,
+      reason: "disconnect",
     });
   }
 
@@ -624,6 +737,7 @@ export class GameRoom {
     this.clearUnpauseVotes();
     this.cancelUnpauseCountdown();
     this.systemChat("Match paused");
+    safeLog(this.log, "info", { event: "match_paused" }, "match paused");
     this.pushLobby();
     this.broadcastState({ volatile: false });
   }
@@ -637,6 +751,7 @@ export class GameRoom {
     this.clearPauseVotes();
     this.pauseAlertSeat = null;
     this.systemChat("Match resumed");
+    safeLog(this.log, "info", { event: "match_resumed" }, "match resumed");
     this.pushLobby();
     this.broadcastState({ volatile: false });
   }
@@ -815,6 +930,15 @@ export class GameRoom {
     const clean = sanitizeCommand(cmd);
     if (!clean || !allowCommand(socket, clean)) {
       noteCommand(false);
+      if (invalidActionSample()) {
+        safeLog(this.log, "warn", {
+          event: "invalid_action",
+          reason: clean ? "rate_limited" : "malformed",
+          type: clean ? clean.type : (cmd && typeof cmd === "object" ? cmd.type : undefined),
+          userId: seat.userId,
+          socketId: socket.id,
+        }, "invalid or rate-limited command");
+      }
       return;
     }
     if (this.mode === "training" && clean.type === "buy" && clean.lane !== "bottom") {
@@ -823,10 +947,31 @@ export class GameRoom {
     }
     if (seat.queue.length >= 30) {
       noteCommand(false);
+      if (invalidActionSample()) {
+        safeLog(this.log, "warn", {
+          event: "invalid_action",
+          reason: "queue_full",
+          userId: seat.userId,
+          socketId: socket.id,
+          queueLen: seat.queue.length,
+        }, "command queue full");
+      }
       return;
     }
     seat.queue.push(clean);
     noteCommand(true);
+    if (DEBUG_CMD_TYPES.has(clean.type)) {
+      safeLog(this.log, "debug", {
+        event: "player_command",
+        userId: seat.userId,
+        socketId: socket.id,
+        type: clean.type,
+        unit: clean.unit,
+        lane: clean.lane,
+        action: clean.action,
+        troopId: clean.troopId,
+      }, "command queued");
+    }
   }
 
   nextChatId() {
@@ -896,8 +1041,22 @@ export class GameRoom {
     if (!seat || seat.bot || !seat.userId || !seat.accountId) return;
     const raw = payload && typeof payload === "object" ? payload.text : payload;
     const text = sanitizeChatText(raw);
-    if (!text) return;
-    if (!allowChat(seat)) return;
+    if (!text) {
+      safeLog(this.log, "debug", {
+        event: "chat_rejected",
+        reason: "empty_or_profane",
+        userId: seat.userId,
+      }, "chat rejected");
+      return;
+    }
+    if (!allowChat(seat)) {
+      safeLog(this.log, "warn", {
+        event: "chat_rate_limited",
+        userId: seat.userId,
+        seat: seat.key,
+      }, "chat rate limited");
+      return;
+    }
     const msg = {
       id: this.nextChatId(),
       kind: "user",
@@ -912,7 +1071,7 @@ export class GameRoom {
   concede(socket) {
     const seat = this.seatBySocket(socket);
     if (!seat) return;
-    this.forceConcedeSeat(seat);
+    this.forceConcedeSeat(seat, { reason: "concede" });
   }
 
   leave(socket) {
@@ -921,11 +1080,23 @@ export class GameRoom {
     if (!seat) return;
     if (this.status === "playing" && !this.sim.winner) return;
     if (this.sim.winner) {
+      safeLog(this.log, "info", {
+        event: "player_left",
+        userId: seat.userId,
+        seat: seat.key,
+        phase: "post_win",
+      }, "player left after win");
       this.sendHome(socket);
       return;
     }
     this.matchmaker.abandonSeat(this, seat, { goHome: true }).catch((err) => {
-      console.error(err);
+      safeLog(this.log, "error", {
+        event: "match_error",
+        err: asErr(err),
+        userId: seat.userId,
+        seat: seat.key,
+        action: "abandon_leave",
+      }, "abandonSeat failed on leave");
     });
   }
 
@@ -935,13 +1106,26 @@ export class GameRoom {
     if (!seat || seat.socket !== socket) return;
     if (this.status === "waiting" || this.status === "countdown") {
       this.matchmaker.abandonSeat(this, seat, { goHome: false }).catch((err) => {
-        console.error(err);
+        safeLog(this.log, "error", {
+          event: "match_error",
+          err: asErr(err),
+          userId: seat.userId,
+          seat: seat.key,
+          action: "abandon_disconnect",
+        }, "abandonSeat failed on disconnect");
       });
       return;
     }
     const name = seat.name || "Player";
     seat.socket = null;
     this.systemChat(`${name} disconnected`);
+    safeLog(this.log, "info", {
+      event: "player_disconnected",
+      userId: seat.userId,
+      seat: seat.key,
+      socketId: socket.id,
+      status: this.status,
+    }, "player disconnected");
     if (this.connectedSockets().length === 0) {
       this.clearDisconnectTimers();
       this.destroy();
@@ -958,6 +1142,12 @@ export class GameRoom {
     if (this.reconnectWaitSeat === seat.key) return;
     this.clearDisconnectGrace();
     this.disconnectGraceSeat = seat.key;
+    safeLog(this.log, "info", {
+      event: "player_disconnect_grace",
+      userId: seat.userId,
+      seat: seat.key,
+      graceMs: DISCONNECT_GRACE_MS,
+    }, "disconnect grace started");
     this.disconnectGraceTimer = setTimeout(() => {
       this.disconnectGraceTimer = null;
       this.disconnectGraceSeat = null;
@@ -1150,8 +1340,20 @@ export class GameRoom {
     if (this.recorded || !this.sim.winner || this.status !== "playing") return;
     this.recorded = true;
     const winner = this.sim.winner;
+    const winReason = this.sim.winReason || "capital";
     const a = this.seat.a;
     const b = this.seat.b;
+    const endedAt = Date.now();
+    safeLog(this.log, "info", {
+      event: "match_ended",
+      winnerSide: winner,
+      winReason,
+      durationMs: endedAt - this.createdAt,
+      accountIdA: a.accountId,
+      accountIdB: b.accountId,
+      userIdA: a.userId,
+      userIdB: b.userId,
+    }, "match ended");
     let mmrAAfter = null;
     let mmrBAfter = null;
     let ranked = null;
@@ -1174,7 +1376,11 @@ export class GameRoom {
         ];
       }
     } catch (err) {
-      console.error(err);
+      safeLog(this.log, "error", {
+        event: "match_record_failed",
+        err: asErr(err),
+        phase: "mmr",
+      }, "MMR calculation failed");
       ranked = null;
     }
     recordMatchResult({
@@ -1196,13 +1402,25 @@ export class GameRoom {
         mmrAAfter,
         mmrBAfter,
         createdAt: this.createdAt,
-        endedAt: Date.now(),
+        endedAt,
       },
-    }).catch((err) => console.error(err));
+    }).catch((err) => {
+      safeLog(this.log, "error", {
+        event: "match_record_failed",
+        err: asErr(err),
+        phase: "persist",
+      }, "match result persist failed");
+    });
   }
 
   destroy() {
     if (this.status === "dead") return;
+    const hadWinner = Boolean(this.sim && this.sim.winner);
+    safeLog(this.log, "info", {
+      event: "match_cleanup",
+      hadWinner,
+      aliveMs: Date.now() - this.createdAt,
+    }, "match cleanup");
     this.status = "dead";
     this.cancelCountdown();
     this.resetPauseState();

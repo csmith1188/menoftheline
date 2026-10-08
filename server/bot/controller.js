@@ -1,4 +1,5 @@
 import { CONFIG } from "../../shared/config.js";
+import { safeLog, logger } from "../logger.js";
 import { assessBattlefield, nextPosture } from "./assess.js";
 import { bindCommands } from "./commands.js";
 import { attachEconomyFacts, decideEconomy } from "./economy.js";
@@ -63,6 +64,11 @@ export class BotController {
     this.strategy[lane] = mode;
   }
 
+  /** Optional match child logger set by GameRoom when seating a bot. */
+  setLog(log) {
+    this.log = log || null;
+  }
+
   act(sim) {
     if (!sim || sim.winner) return;
     const profile = botProfile(this.difficulty);
@@ -70,10 +76,25 @@ export class BotController {
     this.nextThinkAt = sim.elapsed + profile.thinkInterval;
     this.commands.prune(sim);
 
+    const prevBuy = this.buyLane;
+    const prevPosture = { ...this.lanePosture };
     const snapshot = assessBattlefield(sim, this.sideId, profile);
     attachEconomyFacts(sim, snapshot);
     this.applyLaneState(snapshot, profile);
     decideEconomy(this, sim, snapshot, profile);
+
+    const postureChanged = prevPosture.top !== this.lanePosture.top
+      || prevPosture.bottom !== this.lanePosture.bottom;
+    if (postureChanged || this.buyLane !== prevBuy) {
+      safeLog(this.log || logger, "debug", {
+        event: "bot_decision",
+        sideId: this.sideId,
+        difficulty: this.difficulty,
+        buyLane: this.buyLane,
+        posture: this.lanePosture,
+        postureChanged,
+      }, "bot decision");
+    }
 
     const decisions = decideIntents(this, snapshot, profile);
     this.issue(sim, snapshot, decisions);

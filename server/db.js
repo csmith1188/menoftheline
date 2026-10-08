@@ -7,8 +7,17 @@ import {
   sanitizeDisplayName,
   validateDisplayName,
 } from "./auth.js";
+import { asErr, logger } from "./logger.js";
 import { metricsEnabled, noteSqliteBusy, noteSqliteWrite } from "./metrics.js";
 import { ownerBase, pickLeastLoaded, workerCount } from "./owners.js";
+
+function logRollbackFailed(op, rollbackErr) {
+  logger.error({
+    event: "db_rollback_failed",
+    op,
+    err: asErr(rollbackErr),
+  }, "SQLite rollback failed");
+}
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const dataPath = process.env.DATA_DIR
@@ -243,6 +252,7 @@ export async function initDb() {
     await run("ALTER TABLE users ADD COLUMN bgm_volume INTEGER NOT NULL DEFAULT 50");
   }
   await seedWikiHome();
+  logger.info({ event: "db_ready", dbFile: path.basename(dbFile) }, "database ready");
 }
 
 const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, name, mmr, tickets, held, wins, losses, tooltips, bgm_volume, created_at, updated_at`;
@@ -604,7 +614,11 @@ export async function deleteLocalAccount(accountId) {
       await execRun("COMMIT");
       return result.changes > 0;
     } catch (err) {
-      try { await execRun("ROLLBACK"); } catch { /* ignore */ }
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("deleteLocalAccount", rollbackErr);
+      }
       throw err;
     }
   });
@@ -808,7 +822,7 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
       try {
         await execRun("ROLLBACK");
       } catch (rollbackErr) {
-        console.error(rollbackErr);
+        logRollbackFailed("mergeAccounts", rollbackErr);
       }
       if (err && err.code === "SQLITE_CONSTRAINT") {
         return { ok: false, error: "conflict" };
@@ -989,8 +1003,8 @@ export async function completeTicketPurchase(purchaseId, accountId, tickets) {
     } catch (err) {
       try {
         await execRun("ROLLBACK");
-      } catch {
-        // The original error is the one to surface.
+      } catch (rollbackErr) {
+        logRollbackFailed("completeTicketPurchase", rollbackErr);
       }
       throw err;
     }
@@ -1021,8 +1035,8 @@ export async function addTickets(accountId, tickets, digipogs, formbarId) {
     } catch (err) {
       try {
         await execRun("ROLLBACK");
-      } catch {
-        // Keep the original failure.
+      } catch (rollbackErr) {
+        logRollbackFailed("addTickets", rollbackErr);
       }
       throw err;
     }
@@ -1106,7 +1120,7 @@ export async function assignOwner(userId, mode) {
       try {
         await execRun("ROLLBACK");
       } catch (rollbackErr) {
-        console.error(rollbackErr);
+        logRollbackFailed("assignOwner", rollbackErr);
       }
       throw err;
     }
@@ -1172,7 +1186,7 @@ export async function recordMatchResult({ ranked, game }) {
       try {
         await execRun("ROLLBACK");
       } catch (rollbackErr) {
-        console.error(rollbackErr);
+        logRollbackFailed("recordMatchResult", rollbackErr);
       }
       throw err;
     }

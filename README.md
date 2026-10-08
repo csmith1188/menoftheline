@@ -52,6 +52,9 @@ Edit `.env` if needed. For local play, the defaults are usually enough:
 | `THIS_URL` | Public URL of this app (e.g. `http://localhost:3000`) |
 | `AUTH_URL` | Formbar auth host (optional for guest/bot play) |
 | `API_KEY` / `POOL_ID` / `POOL_PIN` | Formbar payments/rewards (optional) |
+| `LOG_LEVEL` | Pino level (`info` default; use `debug` for gameplay diagnostics) |
+
+Server logging (Pino, PM2 paths, searching by `matchId`/`userId`): see [docs/logging.md](docs/logging.md).
 
 SQLite data is stored under `data/` (created at runtime; ignored by git except `data/news.json`).
 

@@ -6,6 +6,7 @@ import { publicKeyB64, signFormbar } from "./formbarToken.js";
 process.env.BOT_COUNTDOWN_MS = "50";
 process.env.COUNTDOWN_MS = "50";
 process.env.SKIP_FORMBAR = "1";
+process.env.FORMBAR_LOGIN = "1";
 process.env.FORMBAR_PUBLIC_KEY_B64 = publicKeyB64;
 
 const { listen, httpServer, io } = await import("../app.js");

@@ -25,3 +25,9 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - ~~Site Services -> Client API (play without ever visiting site)~~ (Formbar login, tickets, ranked/listed/join, lobbies)
 - Load wiki from MDs, not database? How will it diff?
 - Wiki Categories
+
+- Admin account
+- don't fill formbar id's for guest / non-formbar users
+- ticket transaction tracking
+- player report
+- demo recorder/playback

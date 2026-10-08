@@ -1,5 +1,6 @@
 import { clearOwner, ensureHold, holdTicket, ownerForUser, refundTicket, releaseHold } from "./db.js";
 import { allowSocketEvent } from "./commandLimit.js";
+import { asErr, child as childLogger, safeLog } from "./logger.js";
 import { workerCount, workerIndex } from "./owners.js";
 import { pickRankedPair } from "./rating.js";
 import { GameRoom, TICK_MS } from "./room.js";
@@ -8,6 +9,10 @@ import { MatchTicker } from "./ticker.js";
 function numberEnv(name, fallback) {
   const n = Number(process.env[name]);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function safeLogRoom(room, level, obj, msg) {
+  safeLog(room && room.log ? room.log : childLogger({ component: "matchmaking" }), level, obj, msg);
 }
 
 function searchText(mode) {
@@ -23,6 +28,7 @@ function searchText(mode) {
 export class Matchmaker {
   constructor(io) {
     this.io = io;
+    this.log = childLogger({ component: "matchmaking" });
     this.rooms = new Map();
     this.casual = [];
     this.training = [];
@@ -38,8 +44,12 @@ export class Matchmaker {
     this.queueMaxAgeMs = numberEnv("QUEUE_MAX_AGE_MS", 10 * 60 * 1000);
     this.pairing = false;
     this.timer = setInterval(() => {
-      this.expireQueues().catch((err) => console.error(err));
-      this.pairRanked().catch((err) => console.error(err));
+      this.expireQueues().catch((err) => {
+        this.log.error({ event: "matchmaking_failed", err: asErr(err), phase: "expire" }, "expireQueues failed");
+      });
+      this.pairRanked().catch((err) => {
+        this.log.error({ event: "matchmaking_failed", err: asErr(err), phase: "pair_ranked" }, "pairRanked failed");
+      });
     }, 1000);
     if (this.timer.unref) this.timer.unref();
   }
@@ -95,8 +105,16 @@ export class Matchmaker {
     const b = room.seat && room.seat.b && room.seat.b.userId;
     if (a && this.userRoom.get(a) === room) this.userRoom.delete(a);
     if (b && this.userRoom.get(b) === room) this.userRoom.delete(b);
-    if (a) clearOwner(a).catch((err) => console.error(err));
-    if (b) clearOwner(b).catch((err) => console.error(err));
+    if (a) {
+      clearOwner(a).catch((err) => {
+        this.log.error({ event: "matchmaking_failed", err: asErr(err), userId: a, phase: "clear_owner" }, "clearOwner failed");
+      });
+    }
+    if (b) {
+      clearOwner(b).catch((err) => {
+        this.log.error({ event: "matchmaking_failed", err: asErr(err), userId: b, phase: "clear_owner" }, "clearOwner failed");
+      });
+    }
   }
 
   clearPlaySession(socket) {
@@ -174,7 +192,13 @@ export class Matchmaker {
     session.intent = null;
     session.save(() => {});
     this.startIntent(socket, intent).catch((err) => {
-      console.error(err);
+      this.log.error({
+        event: "mm_intent_failed",
+        err: asErr(err),
+        userId: user.id,
+        mode: intent && intent.mode,
+        socketId: socket.id,
+      }, "startIntent failed");
       this.failHome(socket, "Could not start that game.");
     }).finally(() => {
       this.claimed.delete(user.id);
@@ -185,6 +209,12 @@ export class Matchmaker {
     if (workerCount() > 1) {
       const assigned = await ownerForUser(socket.data.user.id);
       if (assigned != null && assigned !== workerIndex()) {
+        this.log.warn({
+          event: "mm_wrong_owner",
+          userId: socket.data.user.id,
+          assigned,
+          workerIndex: workerIndex(),
+        }, "match on another worker");
         this.failHome(socket, "That match is on another server.");
         return;
       }
@@ -258,6 +288,12 @@ export class Matchmaker {
       mode: "casual",
     };
     this.enqueue(this.casual, entry);
+    this.log.info({
+      event: "queue_joined",
+      mode: "casual",
+      userId: user.id,
+      socketId: socket.id,
+    }, "joined casual queue");
     this.markSearchSession(socket, "casual");
     this.emitSearchLobby(entry);
     await this.pairCasual();
@@ -276,6 +312,12 @@ export class Matchmaker {
       mode: "training",
     };
     this.enqueue(this.training, entry);
+    this.log.info({
+      event: "queue_joined",
+      mode: "training",
+      userId: user.id,
+      socketId: socket.id,
+    }, "joined training queue");
     this.markSearchSession(socket, "training");
     this.emitSearchLobby(entry);
     await this.pairTraining();
@@ -284,14 +326,32 @@ export class Matchmaker {
   async startListed(socket, matchOptions = null) {
     const user = socket.data.user;
     if (!user.accountId) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "login",
+        userId: user.id,
+        mode: "listed",
+      }, "listed lobby requires login");
       this.failHome(socket, "Log in to create a lobby.");
       return;
     }
     const held = await holdTicket(user.accountId);
     if (!held) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "ticket",
+        userId: user.id,
+        accountId: user.accountId,
+        mode: "listed",
+      }, "listed lobby needs ticket");
       this.failHome(socket, "You need a free ticket.");
       return;
     }
+    this.log.debug({
+      event: "ticket_hold",
+      accountId: user.accountId,
+      mode: "listed",
+    }, "ticket held");
     if (socket.data.left || !socket.connected) {
       await releaseHold(user.accountId);
       return;
@@ -306,14 +366,32 @@ export class Matchmaker {
   async startRanked(socket) {
     const user = socket.data.user;
     if (!user.accountId) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "login",
+        userId: user.id,
+        mode: "ranked",
+      }, "ranked requires login");
       this.failHome(socket, "Log in to play ranked.");
       return;
     }
     const held = await holdTicket(user.accountId);
     if (!held) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "ticket",
+        userId: user.id,
+        accountId: user.accountId,
+        mode: "ranked",
+      }, "ranked needs ticket");
       this.failHome(socket, "You need a free ticket.");
       return;
     }
+    this.log.debug({
+      event: "ticket_hold",
+      accountId: user.accountId,
+      mode: "ranked",
+    }, "ticket held");
     if (socket.data.left || !socket.connected) {
       await releaseHold(user.accountId);
       return;
@@ -329,6 +407,13 @@ export class Matchmaker {
       mode: "ranked",
     };
     this.enqueue(this.ranked, entry);
+    this.log.info({
+      event: "queue_joined",
+      mode: "ranked",
+      userId: user.id,
+      mmr: user.mmr,
+      socketId: socket.id,
+    }, "joined ranked queue");
     this.markSearchSession(socket, "ranked");
     this.emitSearchLobby(entry);
     await this.pairRanked();
@@ -346,6 +431,12 @@ export class Matchmaker {
     const room = this.openLobby(roomId);
     const user = socket.data.user;
     if (!room) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "lobby_closed",
+        userId: user.id,
+        roomId,
+      }, "lobby no longer open");
       this.failHome(socket, "That game is no longer open.");
       return;
     }
@@ -354,11 +445,24 @@ export class Matchmaker {
       return;
     }
     if (!user.accountId) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "login",
+        userId: user.id,
+        matchId: room.id,
+      }, "join requires login");
       this.failHome(socket, "Log in to join a game.");
       return;
     }
     const held = await holdTicket(user.accountId);
     if (!held) {
+      this.log.info({
+        event: "lobby_join_failed",
+        reason: "ticket",
+        userId: user.id,
+        accountId: user.accountId,
+        matchId: room.id,
+      }, "join needs ticket");
       this.failHome(socket, "You need a free ticket.");
       return;
     }
@@ -402,8 +506,22 @@ export class Matchmaker {
     this.rooms.set(room.id, room);
     this.place(room, "a", a);
     this.place(room, "b", b);
+    this.log.info({
+      event: "mm_paired",
+      matchId: room.id,
+      mode,
+      userIdA: a.userId,
+      userIdB: b.userId,
+    }, "players paired");
     const ok = await room.startCountdown();
     if (ok) return;
+    this.log.warn({
+      event: "mm_pair_failed",
+      matchId: room.id,
+      mode,
+      userIdA: a.userId,
+      userIdB: b.userId,
+    }, "paired match failed to start");
     for (const entry of [a, b]) {
       if (entry.accountId) await releaseHold(entry.accountId);
       if (entry.socket) this.failHome(entry.socket, "Could not start that match.");
@@ -461,6 +579,12 @@ export class Matchmaker {
       const stale = lists[i].filter((entry) => now - entry.joinedAt >= maxAge);
       for (let s = 0; s < stale.length; s += 1) {
         const entry = stale[s];
+        this.log.info({
+          event: "queue_expired",
+          mode: entry.mode,
+          userId: entry.userId,
+          ageMs: now - entry.joinedAt,
+        }, "queue search timed out");
         await this.removeQueued(entry);
         if (entry.socket) this.failHome(entry.socket, "Search timed out.");
       }
@@ -470,6 +594,10 @@ export class Matchmaker {
       const room = rooms[i];
       if (room.mode !== "listed" || room.status !== "waiting" || room.closing) continue;
       if (now - room.createdAt < maxAge) continue;
+      safeLogRoom(room, "info", {
+        event: "match_lobby_expired",
+        ageMs: now - room.createdAt,
+      }, "listed lobby expired");
       await this.abandonSeat(room, room.seat.a, { goHome: true });
     }
   }
@@ -484,7 +612,16 @@ export class Matchmaker {
   }
 
   leave(socket) {
-    if (!allowSocketEvent(socket, "leave")) return;
+    if (!allowSocketEvent(socket, "leave")) {
+      this.log.warn({
+        event: "invalid_action",
+        reason: "rate_limited",
+        action: "leave",
+        socketId: socket.id,
+        userId: socket.data && socket.data.user && socket.data.user.id,
+      }, "leave rate limited");
+      return;
+    }
     socket.data.left = true;
     const user = socket.data.user;
     const room = (socket.data.gameId && this.rooms.get(socket.data.gameId))
@@ -495,8 +632,19 @@ export class Matchmaker {
     }
     const queued = user && this.findQueued(user.id);
     if (queued && (!queued.socket || queued.socket === socket)) {
+      this.log.info({
+        event: "queue_left",
+        mode: queued.mode,
+        userId: user.id,
+      }, "left queue");
       this.removeQueued(queued).then(() => socket.emit("go-home")).catch((err) => {
-        console.error(err);
+        this.log.error({
+          event: "matchmaking_failed",
+          err: asErr(err),
+          userId: user.id,
+          mode: queued.mode,
+          phase: "leave_queue",
+        }, "removeQueued failed on leave");
         socket.emit("go-home");
       });
       return;
@@ -540,7 +688,16 @@ export class Matchmaker {
   }
 
   concede(socket) {
-    if (!allowSocketEvent(socket, "concede")) return;
+    if (!allowSocketEvent(socket, "concede")) {
+      this.log.warn({
+        event: "invalid_action",
+        reason: "rate_limited",
+        action: "concede",
+        socketId: socket.id,
+        userId: socket.data && socket.data.user && socket.data.user.id,
+      }, "concede rate limited");
+      return;
+    }
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.concede(socket);
   }
@@ -555,7 +712,21 @@ export class Matchmaker {
     const user = socket.data.user;
     const queued = user && this.findQueued(user.id);
     if (queued && queued.socket === socket) {
-      this.removeQueued(queued).catch((err) => console.error(err));
+      this.log.info({
+        event: "queue_disconnect",
+        mode: queued.mode,
+        userId: user.id,
+        socketId: socket.id,
+      }, "disconnected while queued");
+      this.removeQueued(queued).catch((err) => {
+        this.log.error({
+          event: "matchmaking_failed",
+          err: asErr(err),
+          userId: user.id,
+          mode: queued.mode,
+          phase: "disconnect_queue",
+        }, "removeQueued failed on disconnect");
+      });
     }
   }
 
@@ -634,6 +805,13 @@ export class Matchmaker {
     room.closing = true;
     const wasCountdown = room.status === "countdown";
     const mode = room.mode;
+    safeLogRoom(room, "info", {
+      event: "match_abandoned",
+      seat: seat.key,
+      userId: seat.userId,
+      wasCountdown,
+      goHome: Boolean(goHome),
+    }, "seat abandoned before play");
     const other = seat.key === "a" ? room.seat.b : room.seat.a;
     const otherSnap = {
       userId: other.userId,
@@ -649,6 +827,12 @@ export class Matchmaker {
     if (wasCountdown && room.charged) {
       await refundTicket(room.seat.a.accountId);
       await refundTicket(room.seat.b.accountId);
+      safeLogRoom(room, "info", {
+        event: "ticket_refunded",
+        accountIdA: room.seat.a.accountId,
+        accountIdB: room.seat.b.accountId,
+        reason: "abandon_countdown",
+      }, "tickets refunded after abandon");
       room.charged = false;
     } else if (room.status === "waiting" && room.paid) {
       await releaseHold(seat.accountId);
@@ -692,6 +876,12 @@ export class Matchmaker {
         joinedAt: Date.now(),
         mode,
       };
+      this.log.info({
+        event: "queue_joined",
+        mode,
+        userId: entry.userId,
+        reason: "partner_requeued",
+      }, "partner requeued after abandon");
       if (mode === "ranked") {
         const held = await holdTicket(entry.accountId);
         if (!held) {
@@ -747,6 +937,10 @@ export class Matchmaker {
     }
     room.closing = false;
     if (host.socket) room.remember(host.socket);
+    safeLogRoom(room, "info", {
+      event: "match_lobby_reset",
+      hostUserId: host.userId,
+    }, "listed lobby reset after abandon");
     room.pushLobby();
     room.broadcastState();
   }

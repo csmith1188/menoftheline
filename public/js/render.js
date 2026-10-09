@@ -71,9 +71,12 @@ function drawSmokePuffs(ctx, puffs) {
     const t = Math.min(1, puff.age / puff.life);
     const fade = (1 - t) * (1 - t);
     const r = puff.r0 + (puff.r1 - puff.r0) * t;
+    const rgb = puff.rgb || [210, 205, 195];
+    // Default 5*fade matches prior muzzle smoke (clamped by the browser).
+    const a0 = puff.alpha0 != null ? puff.alpha0 : 5;
     ctx.beginPath();
     ctx.arc(puff.x, puff.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(210, 205, 195, ${5 * fade})`;
+    ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a0 * fade})`;
     ctx.fill();
   }
 }

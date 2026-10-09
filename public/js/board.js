@@ -1752,6 +1752,43 @@ function spawnGunSmoke(board, x, y, shotSize, color) {
   }
 }
 
+/** Keep impact flash: gunshot-style puffs mixed black / yellow / orange. */
+const KEEP_HIT_PUFF_RGB = [
+  [22, 18, 14],
+  [255, 196, 36],
+  [255, 108, 18],
+];
+
+function spawnKeepHitSmoke(board, x, y) {
+  if (!board.smokePuffs) board.smokePuffs = [];
+  const count = 7;
+  const keepR = CONFIG.capitalRadius || 18;
+  const base = Math.max(6, keepR * 0.42);
+  // Random impact point inside the keep disc (uniform by area).
+  const hitAng = Math.random() * Math.PI * 2;
+  const hitR = keepR * Math.sqrt(Math.random());
+  const ox = x + Math.cos(hitAng) * hitR;
+  const oy = y + Math.sin(hitAng) * hitR;
+  for (let i = 0; i < count; i += 1) {
+    const ang = Math.random() * Math.PI * 2;
+    const spit = 3 + Math.random() * base * 0.75;
+    // Cycle black/yellow/orange with a small random offset so bursts mix.
+    const tint = KEEP_HIT_PUFF_RGB[(i + ((Math.random() * 3) | 0)) % KEEP_HIT_PUFF_RGB.length];
+    board.smokePuffs.push({
+      x: ox + Math.cos(ang) * spit * 0.4,
+      y: oy + Math.sin(ang) * spit * 0.4,
+      vx: Math.cos(ang) * (12 + Math.random() * 24),
+      vy: Math.sin(ang) * (12 + Math.random() * 24) - 16,
+      r0: base * (0.28 + Math.random() * 0.28),
+      r1: base * (1.35 + Math.random() * 1.15),
+      age: 0,
+      life: 0.24 + Math.random() * 0.26,
+      rgb: tint,
+      alpha0: 0.95,
+    });
+  }
+}
+
 /**
  * Snapshot only announces new hit numbers (by id). Rise/fade runs locally
  * every frame in presentTroopMotion so they are not locked to STATE_MS.
@@ -1767,6 +1804,9 @@ function syncSplats(board, splatSnap, mx, prevElapsed, elapsed) {
   ) {
     board.splats.length = 0;
     board._splatSeen.clear();
+    if (board.smokePuffs) board.smokePuffs.length = 0;
+    board._smokeReady = false;
+    board._keepFxReady = false;
   }
   for (let i = 0; i < splatSnap.length; i += 1) {
     const src = splatSnap[i];
@@ -2056,6 +2096,19 @@ export function applySnapshot(board, snap, seat, controlSide) {
   syncCheckpoints(board, snap.checkpoints, mx, viewOwner);
   syncProjectiles(board, snap.projectiles || [], mx);
   syncSplats(board, snap.splats || [], mx, prevElapsed, elapsed);
+  // Keep-hit puffs from authoritative keep sounds (skip first sync / rematch).
+  const soundSnap = snap.sounds || [];
+  if (board._keepFxReady) {
+    for (let i = 0; i < soundSnap.length; i += 1) {
+      const sound = soundSnap[i];
+      if (!sound || sound.type !== "keep" || !sound.sideId) continue;
+      const attackerView = viewOwner(sound.sideId);
+      const target = attackerView === "player" ? board.enemy : board.player;
+      if (!target || !target.capital) continue;
+      spawnKeepHitSmoke(board, target.capital.x, target.capital.y);
+    }
+  }
+  board._keepFxReady = true;
   board.mapId = snap.mapId || snap.terrain && snap.terrain.mapId || CONFIG.defaultMapId;
   const rawFeatures = (snap.terrain && snap.terrain.features) || [];
   if (!board.terrainFeatures || board.terrainFeatures.length !== rawFeatures.length) {
@@ -2099,8 +2152,10 @@ export function applySnapshot(board, snap, seat, controlSide) {
     if (!next) board.drag = null;
     else board.drag.troop = next;
   }
-  return (snap.sounds || []).map((sound) => {
-    if (sound.type !== "shoot" && sound.type !== "melee") return sound;
+  return soundSnap.map((sound) => {
+    if (sound.type !== "shoot" && sound.type !== "melee" && sound.type !== "keep") {
+      return sound;
+    }
     if (!sound.sideId) return sound;
     return { ...sound, sideId: viewOwner(sound.sideId) || sound.sideId };
   });

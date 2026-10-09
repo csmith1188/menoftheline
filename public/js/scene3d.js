@@ -949,8 +949,13 @@ export function createScene(canvas) {
       mesh.visible = true;
       mesh.position.set(puff.x, 16, puff.y);
       mesh.scale.setScalar(Math.max(0.5, r));
-      mesh.material.opacity = Math.min(1, 0.9 * fade);
-      mesh.material.color.set(t < 0.35 ? "#f2efe6" : "#6a655c");
+      const a0 = puff.alpha0 != null ? puff.alpha0 : 0.9;
+      mesh.material.opacity = Math.min(1, a0 * fade);
+      if (puff.rgb) {
+        mesh.material.color.setRGB(puff.rgb[0] / 255, puff.rgb[1] / 255, puff.rgb[2] / 255);
+      } else {
+        mesh.material.color.set(t < 0.35 ? "#f2efe6" : "#6a655c");
+      }
     }
   }
 

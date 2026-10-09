@@ -1,4 +1,5 @@
 # Bugs (Will fix first)
+- Mobile match report flickering images
 
 # Feature (Will add to game)
 - 3d should always zoom in to fill screen with map
@@ -11,6 +12,10 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - Fog in lanes in 3d
 - Units also cost men from initial pool?
 - Game mode to play by programming each unit and keep's orders
+
+- Sort metrics by bot, casual, training, ranked
+- Earn ranks by MMR brankets
+- Vocab update
 
 - Towns produce food/men/horses/steel? strategic capturing of towns?
 

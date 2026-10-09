@@ -103,18 +103,6 @@ export function isDevLocalHost(hostname) {
 }
 
 /**
- * Browser sockets must send an Origin that matches THIS_URL.
- *
- * Extra allowance for loopback / private LAN Origins when:
- * - NODE_ENV is development or test, or
- * - THIS_URL itself is loopback/private (local play with phones on Wi‑Fi
- *   while THIS_URL stays http://localhost:PORT — works even if NODE_ENV
- *   was never set in .env).
- *
- * A missing Origin is a non-browser client and is allowed only when the
- * native API token is present on the handshake.
- */
-/**
  * If the request Host is not THIS_URL's host, return an absolute redirect URL
  * to the canonical host (same path + query). Skips loopback / private THIS_URL
  * and missing Host. Used so www vs apex do not split lane.sid cookies.
@@ -141,24 +129,54 @@ export function canonicalRedirectLocation(thisUrl, req) {
   return `${expected.origin}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** www.example.com ↔ example.com for the same site (cookie/host split). */
+export function apexSiblingHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  if (!host || isDevLocalHost(host)) return null;
+  if (host.startsWith("www.")) return host.slice(4);
+  if (host.includes(".")) return `www.${host}`;
+  return null;
+}
+
+/**
+ * Browser sockets must send an Origin that matches THIS_URL (or its www/apex sibling).
+ *
+ * Extra allowance for loopback / private LAN Origins when:
+ * - NODE_ENV is development or test, or
+ * - THIS_URL itself is loopback/private (local play with phones on Wi‑Fi
+ *   while THIS_URL stays http://localhost:PORT — works even if NODE_ENV
+ *   was never set in .env).
+ *
+ * A missing Origin is a non-browser client and is allowed only when the
+ * native API token is present on the handshake.
+ */
 export function originAllowed(origin, { thisUrl, nodeEnv, hasAuthToken } = {}) {
   const value = typeof origin === "string" ? origin.trim() : "";
   if (!value) return Boolean(hasAuthToken);
   let expected = "";
   let thisHost = "";
+  let thisProto = "https:";
   try {
     const expectedUrl = new URL(thisUrl);
     expected = expectedUrl.origin;
     thisHost = expectedUrl.hostname;
+    thisProto = expectedUrl.protocol;
   } catch {
     expected = "";
   }
   if (expected && value === expected) return true;
   let originHost = "";
+  let originOrigin = "";
   try {
-    originHost = new URL(value).hostname;
+    const originUrl = new URL(value);
+    originHost = originUrl.hostname;
+    originOrigin = originUrl.origin;
   } catch {
     return false;
+  }
+  const sibling = apexSiblingHost(thisHost);
+  if (sibling && originHost.toLowerCase() === sibling && originOrigin === `${thisProto}//${sibling}`) {
+    return true;
   }
   const relaxLocal = nodeEnv === "development"
     || nodeEnv === "test"

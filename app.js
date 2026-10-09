@@ -3201,6 +3201,8 @@ io.use((socket, next) => {
       event: "origin_rejected",
       socketId: socket.id,
       originHost,
+      origin: origin ? String(origin).slice(0, 120) : undefined,
+      thisUrl: THIS_URL,
     }, "socket origin rejected");
     next(new Error("origin not allowed"));
     return;

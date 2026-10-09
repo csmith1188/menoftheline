@@ -86,6 +86,22 @@ test("origin checks follow THIS_URL and native tokens", () => {
   assert.equal(originAllowed("http://192.168.1.20:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), true);
   assert.equal(originAllowed("http://10.0.0.5:3000", { thisUrl, nodeEnv: "test", hasAuthToken: false }), true);
   assert.equal(originAllowed("http://192.168.1.20:3000", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
+  assert.equal(
+    originAllowed("https://menoftheline.com", {
+      thisUrl: "https://www.menoftheline.com",
+      nodeEnv: "production",
+      hasAuthToken: false,
+    }),
+    true,
+  );
+  assert.equal(
+    originAllowed("https://www.menoftheline.com", {
+      thisUrl: "https://menoftheline.com",
+      nodeEnv: "production",
+      hasAuthToken: false,
+    }),
+    true,
+  );
   assert.equal(originAllowed("http://8.8.8.8:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), false);
   // Local THIS_URL + phone on LAN works even when NODE_ENV is unset/production.
   assert.equal(originAllowed("http://192.168.1.20:3000", {

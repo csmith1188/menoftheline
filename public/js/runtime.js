@@ -205,11 +205,13 @@ export function connectSocket(extra = {}) {
     if (token) auth.token = token;
   }
   const opts = {
-    // Polling first: nginx/CDN often breaks the WS upgrade while HTTP long-poll works.
-    // Socket.IO then upgrades to websocket when the proxy allows it.
-    transports: ["polling", "websocket"],
     ...extra,
     auth: { ...auth, ...(extra.auth || {}) },
+    // Polling only until nginx WebSocket upgrade is reliable. A failed wss
+    // upgrade was leaving the play page on "Could not connect" even though
+    // Engine.IO polling works. Re-enable websocket after proxy is fixed.
+    transports: ["polling"],
+    upgrade: false,
   };
   const base = serverUrl();
   if (base) return window.io(base, opts);

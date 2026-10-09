@@ -52,7 +52,8 @@ server {
 
   location /js/ {
     alias /var/www/menoftheline/public/js/;
-    expires 1h;
+    # ESM imports (runtime.js) are not cache-busted by ?v= on the entry script.
+    add_header Cache-Control "no-cache";
     etag on;
   }
 

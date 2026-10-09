@@ -24,7 +24,7 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run desktop:dev` / `desktop:build` | Electron shell (see `docs/packaging.md`) |
 | `npm run android:dev` / `ios:dev` | Capacitor sync + open IDE |
 
-Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. In-match chat: `MATCH_CHAT` (default on). `NO_FREE=1` makes Play vs bot and Random unranked cost a ticket (training stays free). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
+Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. In-match chat: `MATCH_CHAT` (default on). `NO_FREE=1` makes Play vs bot and Random unranked cost a ticket (training stays free). HTTPS `THIS_URL` auto-enables Express trust proxy so Secure `lane.sid` cookies work behind Nginx (`TRUST_PROXY`). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
 
 ## Layout (start here)
 

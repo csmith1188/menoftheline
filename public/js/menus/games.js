@@ -44,7 +44,7 @@ function render(me, queues) {
   const freeTip = noFree
     ? (!privileged
       ? "Log in with a free ticket to play vs bot or random unranked."
-      : "A free ticket is required for Play vs bot and Random unranked.")
+      : "A ticket is required for Play vs bot and Random unranked.")
     : "";
 
   let html = `<section><h2>Play</h2><div class="stack">`;
@@ -79,8 +79,8 @@ function render(me, queues) {
 
   if (privileged) {
     const tip = noFree
-      ? "A free ticket is required for a lobby, join, ranked, bot, or random unranked."
-      : "A free ticket is required for a lobby, a specific join, or ranked search.";
+      ? "A ticket is required for a lobby, join, ranked, bot, or random unranked."
+      : "A ticket is required for a lobby, a specific join, or ranked search.";
     const rankedOk = canTicket && !rejoin;
     if (rankedOk) {
       html += `

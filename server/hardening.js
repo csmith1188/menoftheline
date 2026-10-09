@@ -64,12 +64,23 @@ export function positiveEnv(env, name, fallback) {
 }
 
 /**
- * Direct connections use the socket address so a client cannot spoof
- * X-Forwarded-For. Set TRUST_PROXY=1 only when Node sits behind the
- * existing Nginx proxy (one trusted hop). Express then fills req.ip.
+ * When THIS_URL is https, Node almost always sits behind a TLS terminator
+ * (Nginx). express-session will not emit Secure lane.sid cookies unless
+ * Express trusts X-Forwarded-Proto — otherwise login never sets a session.
+ * TRUST_PROXY=1 forces the same for http test proxies.
  */
-export function requestClientIp(req, env = process.env) {
-  if (env.TRUST_PROXY === "1") return req.ip || "unknown";
+export function shouldTrustProxy(thisUrl, env = process.env) {
+  if (env.TRUST_PROXY === "1" || env.TRUST_PROXY === "true") return true;
+  return httpsDeployment(thisUrl);
+}
+
+/**
+ * Direct connections use the socket address so a client cannot spoof
+ * X-Forwarded-For. When shouldTrustProxy is on, Express fills req.ip from
+ * the first trusted hop (set trust proxy to 1 in app.js).
+ */
+export function requestClientIp(req, env = process.env, thisUrl = env.THIS_URL) {
+  if (shouldTrustProxy(thisUrl, env)) return req.ip || "unknown";
   const addr = req.socket && req.socket.remoteAddress;
   return addr || "unknown";
 }

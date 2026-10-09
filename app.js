@@ -120,11 +120,13 @@ import {
   assertSessionSecret,
   canonicalRedirectLocation,
   debugRangesEnabled,
+  httpsDeployment,
   originAllowed,
   positiveEnv,
   requestClientIp,
   securityHeadersMiddleware,
   sessionCookieOptions,
+  shouldTrustProxy,
 } from "./server/hardening.js";
 import {
   PREFS_BGM_DEFAULT,
@@ -195,7 +197,18 @@ warnAuthConfig();
 
 const app = express();
 const httpServer = createServer(app);
-if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
+// Secure lane.sid (https THIS_URL) is skipped by express-session unless the
+// request is considered secure — behind Nginx that needs trust proxy +
+// X-Forwarded-Proto. Without this, Formbar/local login never writes lane.sid.
+if (shouldTrustProxy(THIS_URL)) {
+  app.set("trust proxy", 1);
+  if (process.env.TRUST_PROXY !== "1" && httpsDeployment(THIS_URL)) {
+    logger.info({
+      event: "trust_proxy_auto",
+      thisUrl: THIS_URL,
+    }, "trust proxy enabled for https THIS_URL (Secure session cookies)");
+  }
+}
 // Prefer WebSocket; long-polling at 20 Hz state kills mobile Safari latency.
 // Browser Origins must match THIS_URL. A missing Origin is allowed here and
 // checked again in io.use, where native clients present auth.token.
@@ -533,43 +546,16 @@ function setAccountSession(sess, account) {
   sess.sessionEpoch = Number(account.session_epoch || 0);
 }
 
-function regenerateSession(req, keepKeys = []) {
-  const prev = req.session || {};
-  const notice = prev.notice;
-  const kept = {};
-  for (const key of keepKeys) {
-    if (prev[key] !== undefined) kept[key] = prev[key];
-  }
+function regenerateSession(req) {
+  const notice = req.session && req.session.notice;
   return new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) reject(err);
       else {
         if (notice) req.session.notice = notice;
-        Object.assign(req.session, kept);
         resolve();
       }
     });
-  });
-}
-
-/**
- * Rotate lane.sid on this same-site hop, then send the browser to Formbar.
- * The OAuth return reuses that sid (no regenerate) so a 302 home works — browsers
- * often drop a new Set-Cookie on the cross-site token callback redirect.
- */
-async function beginFormbarOAuth(req, res, next) {
-  if (!formbarLoginEnabled()) {
-    res.status(404).send("Formbar login is disabled.");
-    return;
-  }
-  await regenerateSession(req, ["linkAccountId"]);
-  const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-  req.session.save((err) => {
-    if (err) {
-      next(err);
-      return;
-    }
-    res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
   });
 }
 
@@ -991,9 +977,7 @@ async function completeFormbarLogin(req, res, token) {
   const nameCheck = validateDisplayName(identity.rawName);
   const name = nameCheck.ok ? nameCheck.name : `Player ${identity.id}`;
   const userId = identity.id;
-  // Do not regenerate here: a new Set-Cookie on this cross-site return is often
-  // ignored on the following 302. Session was rotated in beginFormbarOAuth.
-  req.session.linkAccountId = null;
+  await regenerateSession(req);
 
   if (Number.isInteger(linkId) && linkId > 0) {
     const result = await linkFormbarToAccount(linkId, userId);
@@ -1203,7 +1187,12 @@ app.get("/login", async (req, res, next) => {
       return;
     }
     if (req.query.formbar === "1") {
-      await beginFormbarOAuth(req, res, next);
+      if (!formbarLoginEnabled()) {
+        res.status(404).send("Formbar login is disabled.");
+        return;
+      }
+      const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
+      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
       return;
     }
     if (req.query.discord === "1") {
@@ -2002,15 +1991,9 @@ app.post("/profile/link/formbar", async (req, res, next) => {
       req.session.save(() => res.redirect(`/profile/${viewer.id}`));
       return;
     }
-    // Keep the existing lane.sid (already logged in). Regenerating here would
-    // drop accountId until the OAuth return; callback also must not rotate.
     req.session.linkAccountId = viewer.id;
     const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-    req.session.save((err) => {
-      if (err) {
-        next(err);
-        return;
-      }
+    req.session.save(() => {
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
     });
   } catch (err) {

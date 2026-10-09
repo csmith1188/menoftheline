@@ -18,6 +18,7 @@ function spawnServer(env) {
     LOCAL_ACCOUNTS: "1",
     FORMBAR_LOGIN: "1",
     AUTH_EMAIL: "0",
+    NO_FREE: "0",
     NODE_ENV: "test",
     SESSION_SECRET: "test-security-http-secret",
     FORMBAR_PUBLIC_KEY_B64: publicKeyB64,
@@ -184,29 +185,42 @@ test("metrics stay hidden without admin or METRICS_TOKEN", async (t) => {
   assert.equal(body.enabled, true);
 });
 
-test("Formbar OAuth start rotates the session; token callback keeps it", async (t) => {
+test("https THIS_URL sets Secure lane.sid when X-Forwarded-Proto is https", async (t) => {
+  const server = spawnServer({
+    THIS_URL: "https://127.0.0.1",
+    TRUST_PROXY: "0",
+    CANONICAL_HOST_REDIRECT: "0",
+  });
+  t.after(() => stopServer(server));
+  await server.ready;
+  const res = await fetch(`${server.base}/login`, {
+    headers: { "x-forwarded-proto": "https" },
+    redirect: "manual",
+  });
+  assert.equal(res.status, 200);
+  const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+  const lane = setCookie.find((line) => String(line).startsWith("lane.sid="));
+  assert.ok(lane, `expected lane.sid Set-Cookie, got: ${JSON.stringify(setCookie)}`);
+  assert.match(String(lane), /Secure/i);
+  assert.match(String(lane), /HttpOnly/i);
+});
+
+test("a signed Formbar login rotates the session and an unsigned token does not", async (t) => {
   const server = spawnServer({});
   t.after(() => stopServer(server));
   await server.ready;
   const first = await fetch(`${server.base}/login`, { redirect: "manual" });
   const before = cookieFrom(first);
   assert.ok(before);
-  const start = await fetch(`${server.base}/login?formbar=1`, {
+  const token = signFormbar({ id: 606060, displayName: "Signed Ace" }, undefined, { expiresIn: "1h" });
+  const login = await fetch(`${server.base}/login?token=${encodeURIComponent(token)}`, {
     headers: { cookie: before },
     redirect: "manual",
   });
-  assert.equal(start.status, 302);
-  const mid = cookieFrom(start);
-  assert.ok(mid);
-  assert.notEqual(mid, before);
-  const token = signFormbar({ id: 606060, displayName: "Signed Ace" }, undefined, { expiresIn: "1h" });
-  const login = await fetch(`${server.base}/login?token=${encodeURIComponent(token)}`, {
-    headers: { cookie: mid },
-    redirect: "manual",
-  });
   assert.equal(login.status, 302);
-  assert.equal(login.headers.get("location"), "/");
-  const after = cookieFrom(login) || mid;
+  const after = cookieFrom(login);
+  assert.ok(after);
+  assert.notEqual(after, before);
   const home = await fetch(`${server.base}/`, { headers: { cookie: after }, redirect: "manual" });
   assert.match(await home.text(), /Signed Ace/);
   const bad = await fetch(`${server.base}/login?token=${encodeURIComponent(unsignedFormbar({ id: 1, displayName: "Nope" }))}`, {

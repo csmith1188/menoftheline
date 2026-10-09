@@ -22,6 +22,7 @@ function startServer(env) {
       LOCAL_ACCOUNTS: "1",
       FORMBAR_LOGIN: "1",
       AUTH_EMAIL: "1",
+      NO_FREE: "0",
       SMTP_HOST: "localhost",
       SMTP_FROM: "motl@example.com",
       AUTH_MAIL_CAPTURE_PATH: mailPath,
@@ -353,8 +354,6 @@ test("Formbar login sets account session; Digipog buy needs formbar; paid play u
   await server.ready;
 
   const formJar = cookieJar();
-  // Same-site start rotates lane.sid; token callback reuses it (no bounce page).
-  await fetchSession(server.base, "/login?formbar=1", formJar);
   const token = signFormbar({ id: 424242, displayName: "Formbar Ace" }, undefined, { expiresIn: "1h" });
   const oauth = await fetchSession(server.base, `/login?token=${encodeURIComponent(token)}`, formJar);
   assert.equal(oauth.status, 302);

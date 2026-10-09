@@ -10,6 +10,7 @@ import {
   debugRangesEnabled,
   isDevLocalHost,
   originAllowed,
+  shouldTrustProxy,
 } from "../server/hardening.js";
 import { ensureCsrf } from "../server/csrf.js";
 import { sanitizeCommand, allowSocketEvent } from "../server/commandLimit.js";
@@ -30,6 +31,14 @@ process.env.NODE_ENV = "test";
 const db = await import("../server/db.js");
 const { renderWikiBody, safeWikiUrl } = await import("../server/wiki-render.js");
 const { Matchmaker } = await import("../server/matchmaking.js");
+
+test("shouldTrustProxy follows https THIS_URL so Secure lane.sid can be set", () => {
+  assert.equal(shouldTrustProxy("https://play.example.com", { TRUST_PROXY: "0" }), true);
+  assert.equal(shouldTrustProxy("https://play.example.com", {}), true);
+  assert.equal(shouldTrustProxy("http://localhost:3000", { TRUST_PROXY: "0" }), false);
+  assert.equal(shouldTrustProxy("http://localhost:3000", {}), false);
+  assert.equal(shouldTrustProxy("http://localhost:3000", { TRUST_PROXY: "1" }), true);
+});
 
 test("canonical host redirect maps apex to THIS_URL host", () => {
   const thisUrl = "https://www.menoftheline.com";

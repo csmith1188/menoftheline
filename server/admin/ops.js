@@ -14,6 +14,7 @@ import {
   discordLoginEnabled,
   formbarLoginEnabled,
   localAccountsEnabled,
+  noFreePlayEnabled,
 } from "../auth.js";
 import { mailReady } from "../mail.js";
 import { metricsEnabled } from "../metrics.js";
@@ -97,6 +98,7 @@ export async function configHealth() {
     formbarLogin: formbarLoginEnabled(),
     discordLogin: discordLoginEnabled(),
     authEmail: authEmailEnabled(),
+    noFree: noFreePlayEnabled(),
     mailReady: mailReady(),
     metrics: metricsEnabled(),
     maintenanceMessage: map.maintenance_message || "",

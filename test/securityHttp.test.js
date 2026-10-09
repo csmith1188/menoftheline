@@ -184,24 +184,29 @@ test("metrics stay hidden without admin or METRICS_TOKEN", async (t) => {
   assert.equal(body.enabled, true);
 });
 
-test("a signed Formbar login rotates the session and an unsigned token does not", async (t) => {
+test("Formbar OAuth start rotates the session; token callback keeps it", async (t) => {
   const server = spawnServer({});
   t.after(() => stopServer(server));
   await server.ready;
   const first = await fetch(`${server.base}/login`, { redirect: "manual" });
   const before = cookieFrom(first);
   assert.ok(before);
-  const token = signFormbar({ id: 606060, displayName: "Signed Ace" }, undefined, { expiresIn: "1h" });
-  const login = await fetch(`${server.base}/login?token=${encodeURIComponent(token)}`, {
+  const start = await fetch(`${server.base}/login?formbar=1`, {
     headers: { cookie: before },
     redirect: "manual",
   });
-  // Cross-site OAuth returns use a 200 bounce so Set-Cookie applies before /.
-  assert.equal(login.status, 200);
-  assert.match(await login.clone().text(), /Signing in/);
-  const after = cookieFrom(login);
-  assert.ok(after);
-  assert.notEqual(after, before);
+  assert.equal(start.status, 302);
+  const mid = cookieFrom(start);
+  assert.ok(mid);
+  assert.notEqual(mid, before);
+  const token = signFormbar({ id: 606060, displayName: "Signed Ace" }, undefined, { expiresIn: "1h" });
+  const login = await fetch(`${server.base}/login?token=${encodeURIComponent(token)}`, {
+    headers: { cookie: mid },
+    redirect: "manual",
+  });
+  assert.equal(login.status, 302);
+  assert.equal(login.headers.get("location"), "/");
+  const after = cookieFrom(login) || mid;
   const home = await fetch(`${server.base}/`, { headers: { cookie: after }, redirect: "manual" });
   assert.match(await home.text(), /Signed Ace/);
   const bad = await fetch(`${server.base}/login?token=${encodeURIComponent(unsignedFormbar({ id: 1, displayName: "Nope" }))}`, {

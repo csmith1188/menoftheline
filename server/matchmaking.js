@@ -7,6 +7,7 @@ import {
   refundTicket,
   releaseHold,
 } from "./db.js";
+import { modeRequiresTicket, noFreePlayEnabled } from "./auth.js";
 import { allowSocketEvent } from "./commandLimit.js";
 import { asErr, child as childLogger, safeLog } from "./logger.js";
 import { workerCount, workerIndex } from "./owners.js";
@@ -265,6 +266,34 @@ export class Matchmaker {
   }
 
   async startBot(socket, options = {}) {
+    const user = socket.data.user;
+    if (modeRequiresTicket("bot")) {
+      if (!user.accountId) {
+        this.failHome(socket, "Log in to play.");
+        return;
+      }
+      const held = await holdTicket(user.accountId);
+      if (!held) {
+        this.log.info({
+          event: "lobby_join_failed",
+          reason: "ticket",
+          userId: user.id,
+          accountId: user.accountId,
+          mode: "bot",
+        }, "bot needs ticket");
+        this.failHome(socket, "You need a free ticket.");
+        return;
+      }
+      this.log.debug({
+        event: "ticket_hold",
+        accountId: user.accountId,
+        mode: "bot",
+      }, "ticket held");
+      if (socket.data.left || !socket.connected) {
+        await releaseHold(user.accountId);
+        return;
+      }
+    }
     const room = new GameRoom(this, this.io, "bot");
     if (options.view === "3d") {
       room.view3d = true;
@@ -272,7 +301,13 @@ export class Matchmaker {
     this.rooms.set(room.id, room);
     room.seatHuman("a", socket);
     room.seatBot("b");
-    await room.startCountdown();
+    const ok = await room.startCountdown();
+    if (ok) return;
+    if (modeRequiresTicket("bot") && user.accountId) {
+      await releaseHold(user.accountId);
+    }
+    room.destroy();
+    this.failHome(socket, modeRequiresTicket("bot") ? "You need a free ticket." : "Could not start that game.");
   }
 
   async startTrainBot(socket) {
@@ -285,6 +320,33 @@ export class Matchmaker {
 
   async startCasual(socket) {
     const user = socket.data.user;
+    if (modeRequiresTicket("casual")) {
+      if (!user.accountId) {
+        this.failHome(socket, "Log in to play.");
+        return;
+      }
+      const held = await holdTicket(user.accountId);
+      if (!held) {
+        this.log.info({
+          event: "lobby_join_failed",
+          reason: "ticket",
+          userId: user.id,
+          accountId: user.accountId,
+          mode: "casual",
+        }, "casual needs ticket");
+        this.failHome(socket, "You need a free ticket.");
+        return;
+      }
+      this.log.debug({
+        event: "ticket_hold",
+        accountId: user.accountId,
+        mode: "casual",
+      }, "ticket held");
+      if (socket.data.left || !socket.connected) {
+        await releaseHold(user.accountId);
+        return;
+      }
+    }
     const entry = {
       userId: user.id,
       name: user.name,
@@ -646,7 +708,9 @@ export class Matchmaker {
     this.training = this.training.filter((item) => item !== entry);
     this.ranked = this.ranked.filter((item) => item !== entry);
     this.forgetQueue(entry);
-    if (entry.mode === "ranked") await releaseHold(entry.accountId);
+    if (entry.mode === "ranked" || (entry.mode === "casual" && noFreePlayEnabled())) {
+      await releaseHold(entry.accountId);
+    }
     if (entry.socket) this.clearPlaySession(entry.socket);
   }
 
@@ -952,6 +1016,13 @@ export class Matchmaker {
         this.emitSearchLobby(entry);
         await this.pairTraining();
         return;
+      }
+      if (modeRequiresTicket("casual")) {
+        const held = await holdTicket(entry.accountId);
+        if (!held) {
+          this.failHome(entry.socket, "You need a free ticket.");
+          return;
+        }
       }
       this.enqueue(this.casual, entry);
       this.markSearchSession(entry.socket, mode);

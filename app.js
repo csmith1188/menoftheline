@@ -81,8 +81,10 @@ import {
   isValidEmail,
   localAccountsEnabled,
   matchChatEnabled,
+  modeRequiresTicket,
   needsEmailVerification,
   newAuthToken,
+  noFreePlayEnabled,
   normalizeEmail,
   passwordError,
   rateLimit,
@@ -260,7 +262,7 @@ const LIMITS = {
 };
 
 const GUEST_PLAY_MODES = new Set(["bot", "trainBot", "casual", "trainCasual"]);
-const PAID_PLAY_MODES = new Set(["listed", "ranked", "join"]);
+const ALWAYS_TICKET_MODES = new Set(["listed", "ranked", "join"]);
 
 /** Attach store-backed save helpers so API/socket token sessions match cookie sessions. */
 function wrapStoredSession(sid, data) {
@@ -478,45 +480,6 @@ function safeNext(value) {
   return text;
 }
 
-function escapeHtmlAttr(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/</g, "&lt;");
-}
-
-/**
- * After a cross-site OAuth return, browsers often follow a 302 Location without
- * the new Set-Cookie (session regenerate). A 200 + same-site navigation applies
- * lane.sid before the next document request.
- */
-function oauthLoginBounce(res, dest = "/") {
-  const path = safeNext(dest);
-  const href = escapeHtmlAttr(path);
-  res.status(200).type("html").send(
-    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`
-    + `<meta http-equiv="refresh" content="0;url=${href}">`
-    + `<title>Signing in…</title></head><body>`
-    + `<p>Signing in… <a href="${href}">Continue</a>.</p>`
-    + `<script>location.replace(${JSON.stringify(path)});</script>`
-    + `</body></html>`,
-  );
-}
-
-function saveSessionAndBounce(req, res, dest = "/") {
-  return new Promise((resolve, reject) => {
-    req.session.save((err) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      oauthLoginBounce(res, dest);
-      resolve();
-    });
-  });
-}
-
 /** Public base URL for OAuth callbacks (Host / forwarded headers, else THIS_URL). */
 function publicBase(req) {
   const host = String(req.get("x-forwarded-host") || req.get("host") || "")
@@ -570,16 +533,43 @@ function setAccountSession(sess, account) {
   sess.sessionEpoch = Number(account.session_epoch || 0);
 }
 
-function regenerateSession(req) {
-  const notice = req.session && req.session.notice;
+function regenerateSession(req, keepKeys = []) {
+  const prev = req.session || {};
+  const notice = prev.notice;
+  const kept = {};
+  for (const key of keepKeys) {
+    if (prev[key] !== undefined) kept[key] = prev[key];
+  }
   return new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) reject(err);
       else {
         if (notice) req.session.notice = notice;
+        Object.assign(req.session, kept);
         resolve();
       }
     });
+  });
+}
+
+/**
+ * Rotate lane.sid on this same-site hop, then send the browser to Formbar.
+ * The OAuth return reuses that sid (no regenerate) so a 302 home works — browsers
+ * often drop a new Set-Cookie on the cross-site token callback redirect.
+ */
+async function beginFormbarOAuth(req, res, next) {
+  if (!formbarLoginEnabled()) {
+    res.status(404).send("Formbar login is disabled.");
+    return;
+  }
+  await regenerateSession(req, ["linkAccountId"]);
+  const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
+  req.session.save((err) => {
+    if (err) {
+      next(err);
+      return;
+    }
+    res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
   });
 }
 
@@ -804,13 +794,13 @@ const matchmaker = new Matchmaker(io);
  */
 async function preparePlayIntent(sess, intent) {
   const mode = intent && intent.mode;
-  const paid = PAID_PLAY_MODES.has(mode);
-  if (!GUEST_PLAY_MODES.has(mode) && !paid) {
+  const paid = modeRequiresTicket(mode);
+  if (!GUEST_PLAY_MODES.has(mode) && !ALWAYS_TICKET_MODES.has(mode)) {
     return { error: "bad_mode", status: 400 };
   }
   const account = await resolveSessionAccount(sess);
   const privileged = accountEmailVerified(account);
-  if (paid && (!privileged || !sess.formbarId)) {
+  if (paid && !privileged) {
     return { error: "login_required", status: 403 };
   }
   const player = await playerFromSession(sess, { createGuest: !paid });
@@ -1001,7 +991,9 @@ async function completeFormbarLogin(req, res, token) {
   const nameCheck = validateDisplayName(identity.rawName);
   const name = nameCheck.ok ? nameCheck.name : `Player ${identity.id}`;
   const userId = identity.id;
-  await regenerateSession(req);
+  // Do not regenerate here: a new Set-Cookie on this cross-site return is often
+  // ignored on the following 302. Session was rotated in beginFormbarOAuth.
+  req.session.linkAccountId = null;
 
   if (Number.isInteger(linkId) && linkId > 0) {
     const result = await linkFormbarToAccount(linkId, userId);
@@ -1013,7 +1005,7 @@ async function completeFormbarLogin(req, res, token) {
         error: result.error,
       }, "Formbar link conflict");
       req.session.notice = linkMergeNotice(result.error, "Formbar");
-      await saveSessionAndBounce(req, res, `/profile/${linkId}`);
+      req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
     }
     await upsertAccount(userId, name);
@@ -1029,14 +1021,14 @@ async function completeFormbarLogin(req, res, token) {
     req.session.notice = result.merged
       ? "Accounts merged. Formbar is linked."
       : "Formbar account linked.";
-    await saveSessionAndBounce(req, res, `/profile/${(linked || result.account).id}`);
+    req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
     return;
   }
 
   const account = await upsertAccount(userId, name);
   if (account && isAccountBanned(account)) {
     req.session.notice = "This account is banned.";
-    await saveSessionAndBounce(req, res, "/login");
+    req.session.save(() => res.redirect("/login"));
     return;
   }
   setAccountSession(req.session, account);
@@ -1053,7 +1045,7 @@ async function completeFormbarLogin(req, res, token) {
     userId: account && account.id,
     formbarId: userId,
   }, "Formbar login ok");
-  await saveSessionAndBounce(req, res, "/");
+  req.session.save(() => res.redirect("/"));
 }
 
 function discordCallbackUrl(req) {
@@ -1211,12 +1203,7 @@ app.get("/login", async (req, res, next) => {
       return;
     }
     if (req.query.formbar === "1") {
-      if (!formbarLoginEnabled()) {
-        res.status(404).send("Formbar login is disabled.");
-        return;
-      }
-      const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      await beginFormbarOAuth(req, res, next);
       return;
     }
     if (req.query.discord === "1") {
@@ -2015,9 +2002,15 @@ app.post("/profile/link/formbar", async (req, res, next) => {
       req.session.save(() => res.redirect(`/profile/${viewer.id}`));
       return;
     }
+    // Keep the existing lane.sid (already logged in). Regenerating here would
+    // drop accountId until the OAuth return; callback also must not rotate.
     req.session.linkAccountId = viewer.id;
     const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-    req.session.save(() => {
+    req.session.save((err) => {
+      if (err) {
+        next(err);
+        return;
+      }
       res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
     });
   } catch (err) {
@@ -2383,7 +2376,7 @@ async function renderWikiView(req, res, slugParam) {
 
 async function startPlay(req, res, next, intent) {
   try {
-    const paid = intent.mode === "listed" || intent.mode === "ranked" || intent.mode === "join";
+    const paid = modeRequiresTicket(intent.mode);
     const playMax = intent.mode === "listed" ? LIMITS.lobby : LIMITS.play;
     if (!rateLimit(`play:${clientIp(req)}`, { max: playMax, windowMs: 60 * 1000 })) {
       req.session.notice = "Too many game requests. Try again in a minute.";
@@ -2941,6 +2934,7 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
       busy,
       account: privileged ? accountPublic(account) : null,
       canTicket: Boolean(privileged && account.tickets > account.held && !busy),
+      noFree: noFreePlayEnabled(),
       pack: { size: pack.size, cost: pack.cost },
     });
   } catch (err) {
@@ -3104,7 +3098,7 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
     if (rejectIfClientOutdated(req, res)) return;
     const body = req.body || {};
     const mode = body.mode;
-    const paid = PAID_PLAY_MODES.has(mode);
+    const paid = modeRequiresTicket(mode);
     const playMax = mode === "listed" ? LIMITS.lobby : LIMITS.play;
     if (!rateLimit(`play:${clientIp(req)}`, { max: playMax, windowMs: 60 * 1000 })) {
       res.status(429).json({ error: "rate_limited" });

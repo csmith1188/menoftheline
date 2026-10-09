@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { CONFIG } from "../shared/config.js";
+import { matchModeChargesTickets } from "./auth.js";
 import { allowCommand, allowSocketEvent, sanitizeCommand } from "./commandLimit.js";
 import { debugRangesEnabled } from "./hardening.js";
 import {
@@ -93,7 +94,7 @@ export class GameRoom {
     this.matchmaker = matchmaker;
     this.io = io;
     this.mode = mode;
-    this.paid = mode === "ranked" || mode === "listed";
+    this.paid = matchModeChargesTickets(mode);
     this.id = crypto.randomUUID();
     this.roomName = `game:${this.id}`;
     this.log = childLogger({ matchId: this.id, mode });
@@ -563,12 +564,17 @@ export class GameRoom {
   async startCountdown() {
     if (this.status !== "waiting" || this.closing) return false;
     if (this.paid && !this.charged) {
-      const ids = [this.seat.a.accountId, this.seat.b.accountId]
-        .filter((id) => Number.isInteger(id) && id > 0);
-      if (ids.length < 2) {
+      // Humans with accounts only (bot seats have no accountId).
+      const ids = [this.seat.a, this.seat.b]
+        .filter((seat) => seat && !seat.bot && Number.isInteger(seat.accountId) && seat.accountId > 0)
+        .map((seat) => seat.accountId);
+      const need = this.mode === "bot" ? 1 : 2;
+      if (ids.length < need) {
         safeLog(this.log, "warn", {
           event: "match_countdown_failed",
           reason: "missing_accounts",
+          need,
+          have: ids.length,
         }, "countdown charge missing accounts");
         return false;
       }

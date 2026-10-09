@@ -82,6 +82,32 @@ export function matchChatEnabled() {
   return envFlag("MATCH_CHAT", true);
 }
 
+/**
+ * When on, "Play vs bot" and "Random unranked" require a ticket (login + hold/charge).
+ * Training modes stay free. Default off.
+ */
+export function noFreePlayEnabled() {
+  return envFlag("NO_FREE", false);
+}
+
+/** Modes that always need a ticket (lobby / ranked / join). */
+const ALWAYS_TICKET_MODES = new Set(["listed", "ranked", "join"]);
+
+/** Extra modes that need a ticket only when NO_FREE=1. */
+const NO_FREE_TICKET_MODES = new Set(["bot", "casual"]);
+
+/** True when starting this play mode must have a free ticket (and a logged-in account). */
+export function modeRequiresTicket(mode) {
+  if (ALWAYS_TICKET_MODES.has(mode)) return true;
+  return noFreePlayEnabled() && NO_FREE_TICKET_MODES.has(mode);
+}
+
+/** True when GameRoom should hold/charge tickets for this match mode. */
+export function matchModeChargesTickets(mode) {
+  if (mode === "ranked" || mode === "listed") return true;
+  return noFreePlayEnabled() && (mode === "bot" || mode === "casual");
+}
+
 export function smtpConfigured() {
   return Boolean(
     String(process.env.SMTP_HOST || "").trim()

@@ -6,6 +6,9 @@ import {
   isProfaneName,
   isValidEmail,
   isValidPassword,
+  matchModeChargesTickets,
+  modeRequiresTicket,
+  noFreePlayEnabled,
   passwordError,
   validateDisplayName,
   validateSignupFields,
@@ -105,4 +108,30 @@ test("signup fields validate name email and password together", () => {
   });
   assert.equal(badPass.ok, false);
   assert.match(badPass.error, /8 characters/i);
+});
+
+test("NO_FREE gates bot and casual ticket requirements", () => {
+  const prev = process.env.NO_FREE;
+  try {
+    process.env.NO_FREE = "0";
+    assert.equal(noFreePlayEnabled(), false);
+    assert.equal(modeRequiresTicket("bot"), false);
+    assert.equal(modeRequiresTicket("casual"), false);
+    assert.equal(modeRequiresTicket("trainBot"), false);
+    assert.equal(modeRequiresTicket("ranked"), true);
+    assert.equal(matchModeChargesTickets("bot"), false);
+
+    process.env.NO_FREE = "1";
+    assert.equal(noFreePlayEnabled(), true);
+    assert.equal(modeRequiresTicket("bot"), true);
+    assert.equal(modeRequiresTicket("casual"), true);
+    assert.equal(modeRequiresTicket("trainBot"), false);
+    assert.equal(modeRequiresTicket("trainCasual"), false);
+    assert.equal(matchModeChargesTickets("bot"), true);
+    assert.equal(matchModeChargesTickets("casual"), true);
+    assert.equal(matchModeChargesTickets("training"), false);
+  } finally {
+    if (prev == null) delete process.env.NO_FREE;
+    else process.env.NO_FREE = prev;
+  }
 });

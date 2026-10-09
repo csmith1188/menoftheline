@@ -35,16 +35,24 @@ function render(me, queues) {
   if (!root) return;
   const rejoin = Boolean(me && me.busy);
   const canTicket = Boolean(me && me.canTicket);
+  const noFree = Boolean(me && me.noFree);
   const waiting = (queues && queues.waiting) || { unranked: 0, ranked: 0 };
   const lobbies = (queues && queues.lobbies) || [];
   const privileged = Boolean(me && me.account);
   const disabled = rejoin ? "disabled" : null;
+  const freePlayOk = !noFree || (canTicket && !rejoin);
+  const freeTip = noFree
+    ? (!privileged
+      ? "Log in with a free ticket to play vs bot or random unranked."
+      : "A free ticket is required for Play vs bot and Random unranked.")
+    : "";
 
   let html = `<section><h2>Play</h2><div class="stack">`;
   if (rejoin) {
     html += `<a class="action" href="${playPath(false)}">Rejoin match</a>`;
   }
-  html += `
+  if (freePlayOk) {
+    html += `
     <div class="play-split play-thirds">
       ${cell({ "data-play": "bot", "data-view": "2d", disabled }, "Play vs bot")}
       ${cell({ "data-play": "trainBot", "data-view": "2d", disabled }, "Train vs bot")}
@@ -55,9 +63,24 @@ function render(me, queues) {
       ${cell({ "data-play": "trainCasual", "data-view": "2d", disabled }, "Train vs random")}
       ${cell({ "data-play": "casual", "data-view": "3d", disabled, title: "Random unranked in 3D", "aria-label": "Random unranked in 3D" }, "3D")}
     </div>`;
+  } else {
+    html += `
+    <div class="play-split play-thirds">
+      <span class="has-tip" title="${escapeAttr(freeTip)}"><button type="button" disabled>Play vs bot</button></span>
+      ${cell({ "data-play": "trainBot", "data-view": "2d", disabled }, "Train vs bot")}
+      <span class="has-tip" title="${escapeAttr(freeTip)}"><button type="button" disabled aria-label="Play vs bot in 3D">3D</button></span>
+    </div>
+    <div class="play-split play-thirds">
+      <span class="has-tip" title="${escapeAttr(freeTip)}"><button type="button" disabled>Random unranked</button></span>
+      ${cell({ "data-play": "trainCasual", "data-view": "2d", disabled }, "Train vs random")}
+      <span class="has-tip" title="${escapeAttr(freeTip)}"><button type="button" disabled aria-label="Random unranked in 3D">3D</button></span>
+    </div>`;
+  }
 
   if (privileged) {
-    const tip = "A free ticket is required for a lobby, a specific join, or ranked search.";
+    const tip = noFree
+      ? "A free ticket is required for a lobby, join, ranked, bot, or random unranked."
+      : "A free ticket is required for a lobby, a specific join, or ranked search.";
     const rankedOk = canTicket && !rejoin;
     if (rankedOk) {
       html += `

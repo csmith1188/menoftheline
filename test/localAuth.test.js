@@ -353,13 +353,11 @@ test("Formbar login sets account session; Digipog buy needs formbar; paid play u
   await server.ready;
 
   const formJar = cookieJar();
-  // Prime a pre-OAuth lane.sid (real browsers have one from /login) so regenerate
-  // issues a new Set-Cookie on the Formbar return — covered by the 200 bounce.
-  await fetchSession(server.base, "/login", formJar);
+  // Same-site start rotates lane.sid; token callback reuses it (no bounce page).
+  await fetchSession(server.base, "/login?formbar=1", formJar);
   const token = signFormbar({ id: 424242, displayName: "Formbar Ace" }, undefined, { expiresIn: "1h" });
   const oauth = await fetchSession(server.base, `/login?token=${encodeURIComponent(token)}`, formJar);
-  assert.equal(oauth.status, 200);
-  assert.match(await oauth.text(), /location\.replace\("\/"\)|url=\//);
+  assert.equal(oauth.status, 302);
   const unsigned = await fetchSession(
     server.base,
     `/login?token=${encodeURIComponent(unsignedFormbar({ id: 1, displayName: "Nope" }))}`,
@@ -562,7 +560,7 @@ test("linking Formbar then Discord merges into one account with all providers", 
   ]);
 
   const linkedForm = await linkFormbarViaToken(server.base, localJar, 610001, "Form Only");
-  assert.equal(linkedForm.status, 200);
+  assert.equal(linkedForm.status, 302);
   let row = await getAccountRow(server.dataDir, "email = ?", ["mergelocal@example.com"]);
   assert.equal(row.formbar_id, 610001);
   assert.equal(row.tickets, 4);
@@ -848,4 +846,80 @@ test("local link with password merges Discord from the other account", async (t)
   assert.match(html, /hasdiscord@example\.com/);
   assert.match(html, /900100202/);
   assert.match(html, /Accounts merged/);
+});
+
+test("NO_FREE=1 requires a ticket for bot and casual API play", async (t) => {
+  const server = startServer({ AUTH_EMAIL: "0", NO_FREE: "1", FORMBAR_LOGIN: "0" });
+  t.after(() => stopServer(server));
+  await server.ready;
+
+  const guest = await fetch(`${server.base}/api/v1/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "Guest Free" }),
+  });
+  assert.equal(guest.status, 200);
+  const guestBody = await guest.json();
+  const guestBot = await fetch(`${server.base}/api/v1/play`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      authorization: `Bearer ${guestBody.token}`,
+    },
+    body: JSON.stringify({ mode: "bot" }),
+  });
+  assert.equal(guestBot.status, 403);
+  assert.equal((await guestBot.json()).error, "login_required");
+
+  const jar = cookieJar();
+  await fetchSession(server.base, "/signup", jar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      name: "Paid Player",
+      email: "nofree@example.com",
+      password: "password123",
+    }),
+  });
+  const mePage = await fetchSession(server.base, "/api/v1/me", jar);
+  assert.equal(mePage.status, 200);
+  const me = await mePage.json();
+  assert.equal(me.noFree, true);
+  assert.equal(me.canTicket, false);
+
+  const noTicket = await fetchSession(server.base, "/api/v1/play", jar, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ mode: "bot" }),
+  });
+  assert.equal(noTicket.status, 403);
+  assert.equal((await noTicket.json()).error, "no_ticket");
+
+  await runSql(server.dataDir, "UPDATE accounts SET tickets = 2 WHERE email = ?", ["nofree@example.com"]);
+  const withTicket = await fetchSession(server.base, "/api/v1/play", jar, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ mode: "bot" }),
+  });
+  assert.equal(withTicket.status, 200);
+  assert.equal((await withTicket.json()).mode, "bot");
+
+  const trainJar = cookieJar();
+  await fetchSession(server.base, "/signup", trainJar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      name: "Train Still Free",
+      email: "trainfree@example.com",
+      password: "password123",
+    }),
+  });
+  const train = await fetchSession(server.base, "/api/v1/play", trainJar, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ mode: "trainBot" }),
+  });
+  assert.equal(train.status, 200);
+  assert.equal((await train.json()).mode, "trainBot");
 });

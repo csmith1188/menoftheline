@@ -478,6 +478,45 @@ function safeNext(value) {
   return text;
 }
 
+function escapeHtmlAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;");
+}
+
+/**
+ * After a cross-site OAuth return, browsers often follow a 302 Location without
+ * the new Set-Cookie (session regenerate). A 200 + same-site navigation applies
+ * lane.sid before the next document request.
+ */
+function oauthLoginBounce(res, dest = "/") {
+  const path = safeNext(dest);
+  const href = escapeHtmlAttr(path);
+  res.status(200).type("html").send(
+    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">`
+    + `<meta http-equiv="refresh" content="0;url=${href}">`
+    + `<title>Signing in…</title></head><body>`
+    + `<p>Signing in… <a href="${href}">Continue</a>.</p>`
+    + `<script>location.replace(${JSON.stringify(path)});</script>`
+    + `</body></html>`,
+  );
+}
+
+function saveSessionAndBounce(req, res, dest = "/") {
+  return new Promise((resolve, reject) => {
+    req.session.save((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      oauthLoginBounce(res, dest);
+      resolve();
+    });
+  });
+}
+
 /** Public base URL for OAuth callbacks (Host / forwarded headers, else THIS_URL). */
 function publicBase(req) {
   const host = String(req.get("x-forwarded-host") || req.get("host") || "")
@@ -974,7 +1013,7 @@ async function completeFormbarLogin(req, res, token) {
         error: result.error,
       }, "Formbar link conflict");
       req.session.notice = linkMergeNotice(result.error, "Formbar");
-      req.session.save(() => res.redirect(`/profile/${linkId}`));
+      await saveSessionAndBounce(req, res, `/profile/${linkId}`);
       return;
     }
     await upsertAccount(userId, name);
@@ -990,14 +1029,14 @@ async function completeFormbarLogin(req, res, token) {
     req.session.notice = result.merged
       ? "Accounts merged. Formbar is linked."
       : "Formbar account linked.";
-    req.session.save(() => res.redirect(`/profile/${(linked || result.account).id}`));
+    await saveSessionAndBounce(req, res, `/profile/${(linked || result.account).id}`);
     return;
   }
 
   const account = await upsertAccount(userId, name);
   if (account && isAccountBanned(account)) {
     req.session.notice = "This account is banned.";
-    req.session.save(() => res.redirect("/login"));
+    await saveSessionAndBounce(req, res, "/login");
     return;
   }
   setAccountSession(req.session, account);
@@ -1014,7 +1053,7 @@ async function completeFormbarLogin(req, res, token) {
     userId: account && account.id,
     formbarId: userId,
   }, "Formbar login ok");
-  req.session.save(() => res.redirect("/"));
+  await saveSessionAndBounce(req, res, "/");
 }
 
 function discordCallbackUrl(req) {

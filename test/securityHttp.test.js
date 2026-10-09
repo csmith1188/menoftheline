@@ -196,7 +196,9 @@ test("a signed Formbar login rotates the session and an unsigned token does not"
     headers: { cookie: before },
     redirect: "manual",
   });
-  assert.equal(login.status, 302);
+  // Cross-site OAuth returns use a 200 bounce so Set-Cookie applies before /.
+  assert.equal(login.status, 200);
+  assert.match(await login.clone().text(), /Signing in/);
   const after = cookieFrom(login);
   assert.ok(after);
   assert.notEqual(after, before);

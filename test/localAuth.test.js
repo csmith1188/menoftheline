@@ -353,9 +353,13 @@ test("Formbar login sets account session; Digipog buy needs formbar; paid play u
   await server.ready;
 
   const formJar = cookieJar();
+  // Prime a pre-OAuth lane.sid (real browsers have one from /login) so regenerate
+  // issues a new Set-Cookie on the Formbar return — covered by the 200 bounce.
+  await fetchSession(server.base, "/login", formJar);
   const token = signFormbar({ id: 424242, displayName: "Formbar Ace" }, undefined, { expiresIn: "1h" });
   const oauth = await fetchSession(server.base, `/login?token=${encodeURIComponent(token)}`, formJar);
-  assert.equal(oauth.status, 302);
+  assert.equal(oauth.status, 200);
+  assert.match(await oauth.text(), /location\.replace\("\/"\)|url=\//);
   const unsigned = await fetchSession(
     server.base,
     `/login?token=${encodeURIComponent(unsignedFormbar({ id: 1, displayName: "Nope" }))}`,
@@ -558,7 +562,7 @@ test("linking Formbar then Discord merges into one account with all providers", 
   ]);
 
   const linkedForm = await linkFormbarViaToken(server.base, localJar, 610001, "Form Only");
-  assert.equal(linkedForm.status, 302);
+  assert.equal(linkedForm.status, 200);
   let row = await getAccountRow(server.dataDir, "email = ?", ["mergelocal@example.com"]);
   assert.equal(row.formbar_id, 610001);
   assert.equal(row.tickets, 4);

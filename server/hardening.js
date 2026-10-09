@@ -201,6 +201,8 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
   "img-src 'self' data: https:",
+  // Match BGM is prefetched into a blob URL so it never streams mid-match.
+  "media-src 'self' blob:",
   `connect-src 'self' ${PAYPAL_HOSTS}`,
   `frame-src 'self' ${PAYPAL_HOSTS}`,
   "child-src 'self' https://www.paypal.com https://www.sandbox.paypal.com",

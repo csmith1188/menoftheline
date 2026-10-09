@@ -177,7 +177,8 @@ function setBar(group, ratio) {
   fill.position.x = -11 * (1 - amount);
 }
 
-function orderColor(order, squared) {
+function orderColor(order, squared, broken) {
+  if (broken) return "#000000";
   if (order === "halt" && squared) return CONFIG.colors.reform;
   if (order === "halt") return CONFIG.colors.halt;
   if (order === "reform") return CONFIG.colors.reform;
@@ -471,6 +472,7 @@ export function createScene(canvas) {
   const debugGroup = new THREE.Group();
   world.add(debugGroup);
   const shots = [];
+  const smokeMeshes = [];
   const splats = [];
 
   const raycaster = new THREE.Raycaster();
@@ -683,7 +685,8 @@ export function createScene(canvas) {
     const color = troop.flash > 0
       ? "#fff4d2"
       : troop.side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
-    mesh.userData.mat.color.set(troop.broken ? "#8d97a3" : color);
+    // Keep team color when broken; the black outline carries the state.
+    mesh.userData.mat.color.set(color);
     mesh.userData.plate.visible = Boolean(variantBadgeFill(troop.variant || troop.type));
     const plateFill = variantBadgeFill(troop.variant || troop.type);
     if (plateFill) mesh.userData.plate.material.color.set(plateFill);
@@ -691,8 +694,9 @@ export function createScene(canvas) {
     const ordered = shown === "halt" || shown === "reform"
       || shown === "charge" || shown === "fallback"
       || shown === "retreat";
-    const shellScale = ordered ? 1.28 : 1.12;
-    const stroke = orderColor(shown, troop.squared);
+    // Broken: thicker shell so the black rim reads inward over the body.
+    const shellScale = troop.broken ? (ordered ? 1.48 : 1.36) : (ordered ? 1.28 : 1.12);
+    const stroke = orderColor(shown, troop.squared, troop.broken);
     const shells = mesh.userData.outlines;
     for (let i = 0; i < shells.length; i += 1) {
       shells[i].material.color.set(stroke);
@@ -823,6 +827,59 @@ export function createScene(canvas) {
     }
   }
 
+  function disposeShotMesh(mesh) {
+    world.remove(mesh);
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.material) mesh.material.dispose();
+    const trail = mesh.userData.trail;
+    if (trail) {
+      world.remove(trail);
+      if (trail.geometry) trail.geometry.dispose();
+      if (trail.material) trail.material.dispose();
+    }
+  }
+
+  function syncShotTrail(mesh, shot) {
+    const pts = shot.trail;
+    let trail = mesh.userData.trail;
+    if (!pts || pts.length < 2) {
+      if (trail) trail.visible = false;
+      return;
+    }
+    const color = shot.color || "#f3d27a";
+    if (!trail) {
+      const geo = new THREE.BufferGeometry();
+      const positions = new Float32Array(7 * 3);
+      geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      trail = new THREE.Line(
+        geo,
+        new THREE.LineBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+        }),
+      );
+      trail.frustumCulled = false;
+      world.add(trail);
+      mesh.userData.trail = trail;
+    }
+    trail.visible = true;
+    trail.material.color.set(color);
+    const attr = trail.geometry.getAttribute("position");
+    const max = Math.min(pts.length, attr.count);
+    for (let i = 0; i < max; i += 1) {
+      attr.setXYZ(i, pts[i].x, 14, pts[i].y);
+    }
+    // Repeat the tip so unused slots do not stretch back to origin.
+    const tip = pts[max - 1];
+    for (let i = max; i < attr.count; i += 1) {
+      attr.setXYZ(i, tip.x, 14, tip.y);
+    }
+    attr.needsUpdate = true;
+    trail.geometry.setDrawRange(0, max);
+  }
+
   function syncShots(board) {
     const byId = new Map();
     for (let i = 0; i < shots.length; i += 1) {
@@ -837,9 +894,10 @@ export function createScene(canvas) {
       const id = shot.id != null ? shot.id : i;
       live.add(id);
       let mesh = byId.get(id);
+      const size = Math.max(2, shot.size || 4);
       if (!mesh) {
         mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(4, 10, 8),
+          new THREE.SphereGeometry(1, 10, 8),
           new THREE.MeshBasicMaterial({ color: shot.color || "#f3d27a" }),
         );
         world.add(mesh);
@@ -847,16 +905,52 @@ export function createScene(canvas) {
       mesh.userData.shotId = id;
       mesh.visible = true;
       if (shot.color) mesh.material.color.set(shot.color);
+      mesh.scale.setScalar(size);
       mesh.position.set(shot.x, 14, shot.y);
+      syncShotTrail(mesh, shot);
       next.push(mesh);
     }
     for (let i = 0; i < shots.length; i += 1) {
       const mesh = shots[i];
       if (mesh.userData.shotId != null && live.has(mesh.userData.shotId)) continue;
-      world.remove(mesh);
+      disposeShotMesh(mesh);
     }
     shots.length = 0;
     for (let i = 0; i < next.length; i += 1) shots.push(next[i]);
+  }
+
+  function syncSmoke(board) {
+    const puffs = board.smokePuffs || [];
+    while (smokeMeshes.length < puffs.length) {
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 10, 8),
+        new THREE.MeshBasicMaterial({
+          color: "#f2efe6",
+          transparent: true,
+          opacity: 0.85,
+          depthWrite: false,
+        }),
+      );
+      mesh.renderOrder = 2;
+      world.add(mesh);
+      smokeMeshes.push(mesh);
+    }
+    for (let i = 0; i < smokeMeshes.length; i += 1) {
+      const mesh = smokeMeshes[i];
+      const puff = puffs[i];
+      if (!puff) {
+        mesh.visible = false;
+        continue;
+      }
+      const t = Math.min(1, puff.age / puff.life);
+      const fade = t < 0.55 ? 1 : (1 - (t - 0.55) / 0.45) ** 1.2;
+      const r = puff.r0 + (puff.r1 - puff.r0) * t;
+      mesh.visible = true;
+      mesh.position.set(puff.x, 16, puff.y);
+      mesh.scale.setScalar(Math.max(0.5, r));
+      mesh.material.opacity = Math.min(1, 0.9 * fade);
+      mesh.material.color.set(t < 0.35 ? "#f2efe6" : "#6a655c");
+    }
   }
 
   function syncSplats(board) {
@@ -1201,6 +1295,7 @@ export function createScene(canvas) {
     syncDebugRanges(board);
     syncUnits(board);
     syncShots(board);
+    syncSmoke(board);
     syncSplats(board);
     renderer.render(scene, camera);
     syncGestureHints(board);

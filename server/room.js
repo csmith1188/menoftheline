@@ -1466,12 +1466,16 @@ export class GameRoom {
     }
     if (!connected.length) {
       if (this.sim.winner) this.winnerSent = true;
+      // Nobody to hear them; drop so the buffer cannot grow unbounded.
+      this.sim.sounds = [];
       return;
     }
     const watch = metricsEnabled();
     const t0 = watch ? performance.now() : 0;
     const sampleBytes = shouldSampleBroadcastBytes();
-    const volatile = opts.volatile === true && !this.sim.winner && this.status === "playing";
+    // One-shot SFX must not ride volatile packets (those can be dropped).
+    let volatile = opts.volatile === true && !this.sim.winner && this.status === "playing";
+    if (volatile && this.sim.sounds.length > 0) volatile = false;
     const fogOn = this.sim.fogEnabled !== false;
     let payloadForBytes = null;
     if (!fogOn) {
@@ -1494,6 +1498,8 @@ export class GameRoom {
         this.emitState(connected[i].socket, snap, volatile);
       }
     }
+    // Drain after every seat has read the same pending list.
+    this.sim.sounds = [];
     if (this.sim.winner) this.winnerSent = true;
     if (watch) {
       let bytes = 0;

@@ -1636,6 +1636,25 @@ function stepSplats(board, dt) {
   list.length = write;
 }
 
+/** Age muzzle smoke for both 2D and 3D clients. */
+function stepSmokePuffs(board, dt) {
+  const puffs = board.smokePuffs;
+  if (!puffs || !puffs.length || !(dt > 0)) return;
+  let write = 0;
+  for (let i = 0; i < puffs.length; i += 1) {
+    const puff = puffs[i];
+    puff.age += dt;
+    if (puff.age >= puff.life) continue;
+    puff.x += puff.vx * dt;
+    puff.y += puff.vy * dt;
+    puff.vx *= Math.max(0, 1 - 2.4 * dt);
+    puff.vy *= Math.max(0, 1 - 2.4 * dt);
+    puffs[write] = puff;
+    write += 1;
+  }
+  puffs.length = write;
+}
+
 /** Glide troops and shells between the last two authoritative samples. */
 export function presentTroopMotion(board, now = performance.now()) {
   if (!board) return;
@@ -1645,6 +1664,7 @@ export function presentTroopMotion(board, now = performance.now()) {
     ? Math.min(0.05, Math.max(0, (now - prevAt) / 1000))
     : 0;
   stepSplats(board, fxDt);
+  stepSmokePuffs(board, fxDt);
   const alpha = lerpAlpha(now, board.motionAt || now, board.motionGapMs || 0);
   const sides = [board.player, board.enemy];
   for (let s = 0; s < sides.length; s += 1) {

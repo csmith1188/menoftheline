@@ -778,7 +778,12 @@ async function preparePlayIntent(sess, intent) {
   if (!player) {
     return { error: "unauthorized", status: 401 };
   }
+  const view = intent && intent.view === "3d" ? "3d" : null;
   if (matchmaker.isBusy(player.id)) {
+    if (view) {
+      sess.view3d = true;
+      await saveSession(sess);
+    }
     return { ok: true, rejoin: true };
   }
   if (paid) {
@@ -796,17 +801,21 @@ async function preparePlayIntent(sess, intent) {
       return { error: "lobby_closed", status: 404 };
     }
     if (room.seat.a.userId === player.id) {
+      if (view) {
+        sess.view3d = true;
+        await saveSession(sess);
+      }
       return { ok: true, rejoin: true };
     }
   }
   const matchOptions = mode === "listed"
     ? normalizeMatchOptions(intent.matchOptions || {})
     : null;
-  sess.view3d = null;
+  sess.view3d = view === "3d";
   sess.intent = {
     mode,
     roomId: intent.roomId || null,
-    view: null,
+    view,
     matchOptions,
   };
   await saveSession(sess);
@@ -2611,7 +2620,8 @@ app.get("/play", async (req, res, next) => {
     const room = matchmaker.roomForUser(player.id);
     const use3d = Boolean(req.session.view3d)
       || (intent && intent.view === "3d")
-      || (room && room.view3d);
+      || (room && room.view3d)
+      || (req.query && req.query.view === "3d");
     syncPrefsCookies(res, player, req);
     res.render(use3d ? "play3d" : "index", {
       debugRanges: debugRangesEnabled(),
@@ -3089,6 +3099,7 @@ app.post("/api/v1/play", requireApiSession, async (req, res, next) => {
     const result = await preparePlayIntent(req.session, {
       mode,
       roomId: body.roomId || null,
+      view: body.view === "3d" || body.view3d === true ? "3d" : null,
       matchOptions,
     });
     if (result.error) {

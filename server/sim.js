@@ -5194,7 +5194,9 @@ export class GameSim {
 
   /** Income for this step. False once the match already has a winner. */
   beginStep(dt) {
-    this.sounds = [];
+    // Sounds accumulate across steps until GameRoom broadcasts a snapshot;
+    // clearing here dropped every event between STATE_MS windows (and all but
+    // the last step at bot speed > 1).
     if (this.winner) return false;
     this.tick += 1;
     this.elapsed += dt;

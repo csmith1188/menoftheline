@@ -64,24 +64,6 @@ function drawProjectile(ctx, shot) {
   ctx.fill();
 }
 
-function stepSmokePuffs(board, dt) {
-  const puffs = board.smokePuffs;
-  if (!puffs || !puffs.length) return;
-  let write = 0;
-  for (let i = 0; i < puffs.length; i += 1) {
-    const puff = puffs[i];
-    puff.age += dt;
-    if (puff.age >= puff.life) continue;
-    puff.x += puff.vx * dt;
-    puff.y += puff.vy * dt;
-    puff.vx *= Math.max(0, 1 - 2.4 * dt);
-    puff.vy *= Math.max(0, 1 - 2.4 * dt);
-    puffs[write] = puff;
-    write += 1;
-  }
-  puffs.length = write;
-}
-
 function drawSmokePuffs(ctx, puffs) {
   if (!puffs || !puffs.length) return;
   for (let i = 0; i < puffs.length; i += 1) {
@@ -880,12 +862,6 @@ const boardMethods = {
     if (!this.player) return;
     this._frameInspectReady = false;
     this._frameInspect = null;
-    const now = performance.now();
-    const dt = this._smokeAt != null
-      ? Math.min(0.05, Math.max(0, (now - this._smokeAt) / 1000))
-      : 0;
-    this._smokeAt = now;
-    stepSmokePuffs(this, dt);
     this.presentLaneCenters();
     presentTroopMotion(this);
     if (this.refreshHoldSelect) this.refreshHoldSelect();

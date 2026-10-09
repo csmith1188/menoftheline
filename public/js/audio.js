@@ -1,7 +1,6 @@
 const SHOT_NOTES = {
   top: ["F#6", "E5", "C#6", "A5", "F#5"],
-  bottom: ["G#", "B4", "F#4"],
-
+  bottom: ["G#4", "B4", "F#4"],
 };
 
 const NOTE_FREQ = {

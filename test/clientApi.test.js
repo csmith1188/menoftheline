@@ -413,3 +413,51 @@ test("client API Formbar login unlocks ranked and listed lobbies", async (t) => 
   await onceEvent(joinerSocket, "lobby");
   await waitForPlaying(joinerSocket);
 });
+
+test("client API play with view=3d serves the 3D client", async () => {
+  const sessionRes = await fetch(`${base}/api/v1/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "3D Viewer" }),
+  });
+  assert.equal(sessionRes.status, 200);
+  const session = await sessionRes.json();
+  const jar = new Map();
+  for (const c of sessionRes.headers.getSetCookie?.() || []) {
+    const [pair] = c.split(";");
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+  }
+  const cookieHeader = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  assert.ok(cookieHeader, "expected lane.sid Set-Cookie from /api/v1/session");
+
+  const play2d = await fetch(`${base}/api/v1/play`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`,
+      accept: "application/json",
+      cookie: cookieHeader,
+    },
+    body: JSON.stringify({ mode: "bot" }),
+  });
+  assert.equal(play2d.status, 200);
+  const html2d = await (await fetch(`${base}/play`, { headers: { cookie: cookieHeader } })).text();
+  assert.match(html2d, /\/js\/main\.js/);
+  assert.doesNotMatch(html2d, /\/js\/main3d\.js/);
+
+  const play3d = await fetch(`${base}/api/v1/play`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`,
+      accept: "application/json",
+      cookie: cookieHeader,
+    },
+    body: JSON.stringify({ mode: "bot", view: "3d" }),
+  });
+  assert.equal(play3d.status, 200);
+  assert.equal((await play3d.json()).ok, true);
+  const html3d = await (await fetch(`${base}/play`, { headers: { cookie: cookieHeader } })).text();
+  assert.match(html3d, /\/js\/main3d\.js/);
+});

@@ -83,6 +83,41 @@ test("playing snapshots follow STATE_MS and final outcomes stay reliable", () =>
   clearInterval(mm.timer);
 });
 
+test("combat sounds accumulate across ticks and leave on a reliable snapshot", () => {
+  const mm = new Matchmaker({});
+  const room = new GameRoom(mm, {}, "casual");
+  const socket = fakeSocket("sfx");
+  room.seatHuman("a", socket);
+  room.status = "countdown";
+  room.beginPlay();
+  socket.events.length = 0;
+
+  // First wall tick: emit a sound but do not broadcast yet (STATE_MS = 100).
+  room.sim.emitSound({
+    type: "shoot",
+    lane: "bottom",
+    sublane: 0,
+    unitType: "troop",
+    sideId: "player",
+  });
+  room.tick();
+  assert.equal(states(socket).length, 0);
+  assert.equal(room.sim.sounds.length, 1);
+
+  // Second tick would have wiped beginStep-cleared sounds; keep them and ship.
+  room.sim.emitSound({ type: "melee", sideId: "player" });
+  room.tick();
+  const snap = states(socket).at(-1);
+  assert.ok(snap);
+  assert.equal(snap.volatile, false);
+  assert.equal(snap.payload.sounds.length, 2);
+  assert.equal(room.sim.sounds.length, 0);
+
+  room.destroy();
+  mm.ticker.stop();
+  clearInterval(mm.timer);
+});
+
 test("command burst accepts 30 orders and drops the rest and unknown types", () => {
   const mm = new Matchmaker({});
   const room = new GameRoom(mm, {}, "casual");

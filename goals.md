@@ -9,7 +9,7 @@
 - Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
 - Fog in lanes in 3d
-- ~~gun puffs~~ (2D; 3D later)
+- ~~gun puffs~~
 - Late game land?
 - ~~Add more game metrics~~ (`/admin/analytics`: modes, duration, tickets via ledger)
 - Game mode to play by programming each unit and keep's orders

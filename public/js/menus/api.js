@@ -42,6 +42,7 @@ export async function startPlay(mode, { view3d = false, roomId = null, matchOpti
   const body = { mode, protocol: PROTOCOL_VERSION };
   if (roomId) body.roomId = roomId;
   if (matchOptions) body.matchOptions = matchOptions;
+  if (view3d) body.view = "3d";
   const res = await apiFetch("/api/v1/play", { method: "POST", json: body });
   const data = await res.json().catch(() => ({}));
   if (res.status === 426 || data.error === "client_outdated") {

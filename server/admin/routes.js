@@ -32,7 +32,7 @@ import { report as metricsReport, ensureMetrics, metricsEnabled } from "../metri
 import { wikiLineDiff } from "../wiki-diff.js";
 import { requireAdmin, requireStaff } from "./auth.js";
 import { auditAdmin } from "./audit.js";
-import { buildAnalytics, barRows } from "./analytics.js";
+import { buildAnalytics, barRows, formatRate, formatUsd } from "./analytics.js";
 import { eventsToCsv, listAdminEvents, retainAdminEvents } from "./events.js";
 import {
   enrichActiveList,
@@ -486,14 +486,28 @@ export function createAdminRouter(deps) {
       if (!(await requireAdmin(req, res))) return;
       const range = String(req.query.range || "30d");
       const analytics = await buildAnalytics(range);
+      const dailyGames = (analytics.engagement?.daily || analytics.games.daily || []).map((d) => ({
+        day: d.day,
+        n: d.games,
+      }));
+      const dailyPlayers = (analytics.engagement?.daily || analytics.games.daily || []).map((d) => ({
+        day: d.day,
+        n: d.uniquePlayers,
+      }));
       const data = await baseLocals(req, {
         analytics,
         range,
+        formatRate,
+        formatUsd,
         charts: {
           gamesByMode: barRows(analytics.games.byMode, "n", "mode"),
           registrations: barRows(analytics.registrations, "n", "day"),
-          gamesPerDay: barRows(analytics.games.perDay, "n", "day"),
+          gamesPerDay: barRows(dailyGames, "n", "day"),
+          uniquePlayersPerDay: barRows(dailyPlayers, "n", "day"),
+          matchesPerPlayer: barRows(analytics.engagement?.matchesPerActive?.buckets || [], "n", "label"),
+          ticketSpend: barRows(analytics.economy?.spendByDay || [], "spent", "day"),
           mmr: barRows(analytics.mmrBuckets, "n", "bucket"),
+          platforms: barRows(analytics.platform?.actives || [], "n", "platform"),
         },
         adminSection: "analytics",
       });

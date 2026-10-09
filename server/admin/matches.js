@@ -9,6 +9,7 @@ import {
 } from "../db.js";
 import { parseStoredChat } from "../chat.js";
 import { logger } from "../logger.js";
+import { matchSummaryJson } from "../matchSummary.js";
 
 export function enrichActiveList(matchmaker) {
   const rows = [];
@@ -21,7 +22,8 @@ export function enrichActiveList(matchmaker) {
       mode: room.mode,
       status: room.status,
       createdAt: room.createdAt,
-      durationMs: Date.now() - room.createdAt,
+      startedAt: room.startedAt || null,
+      durationMs: Date.now() - (room.startedAt != null ? room.startedAt : room.createdAt),
       players: [
         {
           name: a.name || null,
@@ -148,9 +150,12 @@ export async function terminateMatch(matchmaker, matchId, {
         mmrAAfter: null,
         mmrBAfter: null,
         createdAt: room.createdAt,
+        startedAt: room.startedAt != null ? room.startedAt : room.createdAt,
         endedAt,
         winReason: "admin",
         outcome: "admin_cancel",
+        mapId: room.sim?.mapId || null,
+        summaryJson: room.sim ? matchSummaryJson(room.sim) : null,
         chatJson: typeof room.chatArchiveJson === "function"
           ? room.chatArchiveJson()
           : null,

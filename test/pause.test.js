@@ -335,7 +335,7 @@ test("reconnect wait timeout concedes for the disconnected player", async () => 
     setTimeout(resolve, DISCONNECT_GRACE_MS + RECONNECT_WAIT_MS + 40);
   });
   assert.equal(room.sim.winner, "enemy");
-  assert.equal(room.sim.winReason, "concede");
+  assert.equal(room.sim.winReason, "disconnect");
   assert.equal(room.reconnectWaitEnds, null);
 
   cleanup(mm, room);
@@ -349,7 +349,7 @@ test("reconnect spam force-concedes the spammer", () => {
     room.seatHuman("a", next);
   }
   assert.equal(room.sim.winner, "enemy");
-  assert.equal(room.sim.winReason, "concede");
+  assert.equal(room.sim.winReason, "reconnect_spam");
   assert.ok(room.seat.b.socket === b);
 
   cleanup(mm, room);

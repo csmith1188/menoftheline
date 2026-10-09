@@ -63,6 +63,23 @@ export function isShell() {
   return capacitorNative();
 }
 
+/** Client platform tag for analytics: web | electron | android | ios. */
+export function clientPlatform() {
+  if (typeof window === "undefined") return "web";
+  if (capacitorNative()) {
+    try {
+      const p = String(window.Capacitor?.getPlatform?.() || "").toLowerCase();
+      if (p === "ios") return "ios";
+      if (p === "android") return "android";
+    } catch {
+      /* ignore */
+    }
+    return "android";
+  }
+  if (window.MOTL_SHELL === true) return "electron";
+  return "web";
+}
+
 /** Remote API base for shells; empty on the website (same-origin relative URLs). */
 export function serverUrl() {
   if (!isShell()) return "";
@@ -197,6 +214,7 @@ export function connectSocket(extra = {}) {
   const auth = {
     protocol: PROTOCOL_VERSION,
     clientVersion: CLIENT_VERSION,
+    platform: clientPlatform(),
     ...extra.auth,
   };
   // Shells always send the session token (required for Origin bypass on the server).

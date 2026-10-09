@@ -27,6 +27,7 @@
           <div><dt>Wins</dt><dd><%= account.wins %></dd></div>
           <div><dt>Losses</dt><dd><%= account.losses %></dd></div>
           <div><dt>Ranked games</dt><dd><%= account.wins + account.losses %></dd></div>
+          <div><dt>Time played</dt><dd><%= formatPlayDuration(playStats.totalMs) %></dd></div>
           <% if (isOwner) { %>
             <div><dt>Tickets</dt><dd><%= account.tickets %></dd></div>
           <% } %>

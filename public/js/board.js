@@ -2000,6 +2000,9 @@ export function applySnapshot(board, snap, seat, controlSide) {
   board.motionAt = performance.now();
   board.winner = snap.winner ? viewOwner(snap.winner) : null;
   board.winReason = snap.winReason || null;
+  board.matchReview = snap.matchReview && typeof snap.matchReview === "object"
+    ? snap.matchReview
+    : null;
   board.status = snap.status;
   applyCountdownTiming(board, snap);
   const rawCenters = snap.laneCenters || {
@@ -2133,6 +2136,7 @@ export function createBoardState(canvas) {
     hover: null,
     winner: null,
     winReason: null,
+    matchReview: null,
     elapsed: 0,
     status: "waiting",
     countdownEnds: null,

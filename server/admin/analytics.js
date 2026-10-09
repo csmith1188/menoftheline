@@ -17,3 +17,14 @@ export function barRows(items, valueKey = "n", labelKey = "label") {
     pct: Math.round((r.value / max) * 100),
   }));
 }
+
+/** Format a rate 0–1 as percent string, or em dash when null/unmeasurable. */
+export function formatRate(rate) {
+  if (rate == null || !Number.isFinite(Number(rate))) return "—";
+  return `${(Number(rate) * 100).toFixed(1)}%`;
+}
+
+export function formatUsd(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  return `$${Number(n).toFixed(2)}`;
+}

@@ -33,6 +33,8 @@ import {
   initDb,
   linkDiscordToAccount,
   linkFormbarToAccount,
+  accountPlayStats,
+  formatPlayDuration,
   listAccountMmrHistory,
   listPaypalPurchasesForAccount,
   listWikiPages,
@@ -58,6 +60,7 @@ import {
   SUGGESTION_BODY_MAX,
   SUGGESTION_REPRO_MAX,
   isAccountBanned,
+  recordAccountPlatform,
   recordOpsSample,
   ticketPack,
   topAccounts,
@@ -405,6 +408,7 @@ app.locals.wikiBodyMax = WIKI_BODY_MAX;
 app.locals.maxOpenBugs = MAX_OPEN_BUGS;
 app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
 app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
+app.locals.formatPlayDuration = formatPlayDuration;
 app.use(securityHeadersMiddleware(THIS_URL));
 // Keep www vs apex on one host so lane.sid cookies and Socket.IO Origin match THIS_URL.
 app.use((req, res, next) => {
@@ -1886,11 +1890,15 @@ app.get("/profile/:id", async (req, res, next) => {
     const mmrHistory = account
       ? await listAccountMmrHistory(account.id, { page: mmrPage })
       : { rows: [], total: 0, page: 1, pageSize: 20 };
+    const playStats = account
+      ? await accountPlayStats(account.id)
+      : { games: 0, totalMs: 0 };
     const body = {
       account,
       viewer,
       isOwner,
       mmrHistory,
+      playStats,
       notice: takeNotice(req),
       canLinkFormbar: Boolean(
         isOwner && privileged
@@ -3321,8 +3329,13 @@ io.use((socket, next) => {
         return;
       }
       touchAccountSeen(user.accountId).catch(() => {});
+      const plat = socket.handshake.auth && socket.handshake.auth.platform;
+      if (plat) recordAccountPlatform(user.accountId, plat).catch(() => {});
     }
     socket.data.user = user;
+    socket.data.platform = socket.handshake.auth && socket.handshake.auth.platform
+      ? String(socket.handshake.auth.platform).toLowerCase()
+      : null;
     sess.save((err) => next(err));
   }).catch(next);
 });
@@ -3466,9 +3479,14 @@ if (isMain) {
   }
   setInterval(() => {
     const waiting = matchmaker.waitingCounts();
+    let socketsAuthed = 0;
+    for (const sock of io.of("/").sockets.values()) {
+      if (sock.data?.user?.accountId) socketsAuthed += 1;
+    }
     recordOpsSample({
       rooms: matchmaker.rooms.size,
       sockets: io.engine ? io.engine.clientsCount : 0,
+      socketsAuthed,
       queueCasual: matchmaker.casual.length,
       queueRanked: matchmaker.ranked.length,
       queueTraining: matchmaker.training.length,

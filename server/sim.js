@@ -3533,7 +3533,37 @@ class Unit {
       0,
       raw * (1 + (attackerSum || 0)) * this.incomingMultiplier(kind, attacker),
     ));
+    const wasAlive = this.hp > 0;
     this.hp -= hit;
+    if (hit > 0 && this.side) {
+      this.side.dmgTaken += hit;
+      if (this.type) {
+        this.side.dmgTakenByType[this.type] = (this.side.dmgTakenByType[this.type] || 0) + hit;
+      }
+      let dealSide = null;
+      let atkType = null;
+      if (attacker) {
+        if (attacker.side) {
+          dealSide = attacker.side;
+          atkType = attacker.type || null;
+        } else if (attacker.troops && attacker.upgrades) {
+          dealSide = attacker;
+          atkType = "keep";
+        }
+      }
+      if (dealSide) {
+        dealSide.dmgDealt += hit;
+        if (atkType) {
+          dealSide.dmgDealtByType[atkType] = (dealSide.dmgDealtByType[atkType] || 0) + hit;
+        }
+        if (wasAlive && this.hp <= 0) {
+          dealSide.kills += 1;
+          if (atkType) {
+            dealSide.killsByType[atkType] = (dealSide.killsByType[atkType] || 0) + 1;
+          }
+        }
+      }
+    }
     this.flash = 0.12;
     this.side.sim.spawnSplat(this.x, this.y, hit, kind);
     const fatigueGain = kind === "melee" ? CONFIG.fatigueOnMelee : CONFIG.fatigueOnShot;
@@ -4556,6 +4586,15 @@ class Side {
     this.banks = 0;
     this.troops = [];
     this.shotCooldown = 0;
+    /** Units bought this match by type (analytics; not pruned with dead troops). */
+    this.bought = {};
+    /** Cumulative combat stats for end-of-match summary. */
+    this.dmgDealt = 0;
+    this.dmgTaken = 0;
+    this.kills = 0;
+    this.dmgDealtByType = {};
+    this.dmgTakenByType = {};
+    this.killsByType = {};
     /** Per-lane fire priority (grand strategies disabled; always bastion). */
     this.targeting = { top: "bastion", bottom: "bastion" };
   }
@@ -4757,6 +4796,7 @@ class Side {
     this.land -= land;
     const troop = createUnit(nextId, this, lane, this.pickSublane(lane), type);
     this.troops.push(troop);
+    this.bought[type] = (this.bought[type] || 0) + 1;
     return troop;
   }
 

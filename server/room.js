@@ -39,6 +39,10 @@ import {
 import { asErr, child as childLogger, createSampler, safeLog } from "./logger.js";
 import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
+import {
+  buildMatchSummary,
+  outcomeFromWinReason,
+} from "./matchSummary.js";
 import { applyTrainingRules } from "./training.js";
 import { TrainingBotController } from "./trainingBot.js";
 
@@ -104,6 +108,10 @@ export class GameRoom {
     this.countdownTimer = null;
     this.tickTimer = null;
     this.createdAt = Date.now();
+    /** Wall-clock when sim play began (after lobby/countdown); used for duration stats. */
+    this.startedAt = null;
+    /** Cached end-of-match summary for client Match Review + DB persist. */
+    this.matchReview = null;
     this.charged = false;
     this.recorded = false;
     this.closing = false;
@@ -398,6 +406,7 @@ export class GameRoom {
         }
       }
       this.status = "playing";
+      if (this.startedAt == null) this.startedAt = Date.now();
       this.playSnapshotSent = true;
     } else {
       return false;
@@ -405,7 +414,10 @@ export class GameRoom {
     if (!seat || !seat.userId) return false;
     this.resetPauseState();
     this.sim.winner = seat.sideId === "player" ? "enemy" : "player";
-    this.sim.winReason = "concede";
+    const forfeitReason = reason === "disconnect" || reason === "reconnect_spam"
+      ? reason
+      : "concede";
+    this.sim.winReason = forfeitReason;
     this.sim.sounds = [];
     seat.queue = [];
     if (chatLine) this.systemChat(chatLine);
@@ -654,6 +666,7 @@ export class GameRoom {
     this.countdownTimer = null;
     this.status = "playing";
     this.countdownEnds = null;
+    if (this.startedAt == null) this.startedAt = Date.now();
     safeLog(this.log, "info", {
       event: "match_started",
       userIdA: this.seat.a.userId,
@@ -1419,6 +1432,12 @@ export class GameRoom {
       snap.you = null;
       snap.opponent = null;
     }
+    if (this.sim.winner) {
+      if (!this.matchReview) this.matchReview = buildMatchSummary(this.sim);
+      snap.matchReview = this.matchReview;
+    } else {
+      snap.matchReview = null;
+    }
     const pause = seat
       ? this.pausePublicFor(seat)
       : {
@@ -1532,11 +1551,19 @@ export class GameRoom {
     const a = this.seat.a;
     const b = this.seat.b;
     const endedAt = Date.now();
+    const startedAt = this.startedAt != null ? this.startedAt : this.createdAt;
+    if (!this.matchReview) this.matchReview = buildMatchSummary(this.sim);
+    let summaryJson = null;
+    try {
+      summaryJson = this.matchReview ? JSON.stringify(this.matchReview) : null;
+    } catch {
+      summaryJson = null;
+    }
     safeLog(this.log, "info", {
       event: "match_ended",
       winnerSide: winner,
       winReason,
-      durationMs: endedAt - this.createdAt,
+      durationMs: endedAt - startedAt,
       accountIdA: a.accountId,
       accountIdB: b.accountId,
       userIdA: a.userId,
@@ -1590,9 +1617,12 @@ export class GameRoom {
         mmrAAfter,
         mmrBAfter,
         createdAt: this.createdAt,
+        startedAt,
         endedAt,
         winReason,
-        outcome: winReason === "concede" ? "forfeit" : "completed",
+        outcome: outcomeFromWinReason(winReason),
+        mapId: this.sim.mapId || null,
+        summaryJson,
         chatJson: this.chatArchiveJson(),
       },
     }).catch((err) => {

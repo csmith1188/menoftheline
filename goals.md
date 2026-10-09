@@ -1,17 +1,12 @@
 # Bugs (Will fix first)
-- ~~damage numbers not smooth~~ (client-side rise/fade)
 - units are drawn sharply, but lanes are not
-- terrain footprints
+- terrain footprints darker
 - easy bot doesn't buy upgraded units
 
 # Feature (Will add to game)
-- mouseover unit stats. red dot one one selected. all empty dot when line
 - Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
 - Fog in lanes in 3d
-- ~~gun puffs~~
-- Late game land?
-- ~~Add more game metrics~~ (`/admin/analytics`: modes, duration, tickets via ledger)
 - Game mode to play by programming each unit and keep's orders
 - Wiki Categories
 
@@ -49,6 +44,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 
 # Site
 - revenue goals
+- Game over match stats
 - account deletion
 - delete your own bug reports
 - don't fill formbar id's for guest / non-formbar users

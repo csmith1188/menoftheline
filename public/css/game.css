@@ -223,6 +223,94 @@ li::marker {
   text-transform: none;
 }
 
+.match-review {
+  width: min(640px, 92vw);
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.65rem 0.85rem;
+  background: rgba(18, 24, 32, 0.92);
+  border: 1px solid color-mix(in srgb, #c9b27a 45%, transparent);
+  color: #e8dfc8;
+  font-size: 0.85rem;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.match-review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: #a89f88;
+}
+
+.match-review-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.match-review-side h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e6d4a8;
+  letter-spacing: 0.03em;
+}
+
+.match-review-side dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.2rem 0.65rem;
+}
+
+.match-review-side dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.match-review-side dl > div.wide {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.match-review-side dt {
+  margin: 0;
+  opacity: 0.7;
+  font-size: 0.78rem;
+}
+
+.match-review-side dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.match-review-side div.wide dd {
+  text-align: left;
+  line-height: 1.3;
+  color: #d2cbb8;
+}
+
+@media (max-width: 520px) {
+  .match-review-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .banner p {
+    font-size: 1.35rem;
+  }
+}
+
 .action {
   appearance: none;
   border: 1px solid var(--gold);

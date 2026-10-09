@@ -39,6 +39,7 @@ import {
   isShell,
   showOutdated,
 } from "./runtime.js";
+import { syncMatchReview, viewMatchReview } from "./matchReview.js";
 
 consumeAuthQuery();
 await ensureSession().catch(() => {});
@@ -58,6 +59,7 @@ const lobbyLeave = document.getElementById("lobby-leave");
 let lobbyLeaveArmed = false;
 const banner = document.getElementById("banner");
 const bannerText = document.getElementById("banner-text");
+const matchReviewEl = document.getElementById("match-review");
 const leave = document.getElementById("leave");
 const gear = document.getElementById("gear");
 const menu = document.getElementById("menu");
@@ -315,10 +317,36 @@ debugBots.addEventListener("click", () => {
   socket.emit("debugPlay", { botsEnabled: botsOff });
 });
 
+function mineSideId() {
+  if (controlSide === "player" || controlSide === "enemy") return controlSide;
+  return seat === "b" ? "enemy" : "player";
+}
+
 function bannerCopy() {
   const iWon = board.winner === "player";
   if (board.winReason === "concede") return iWon ? "Opponent conceded" : "You conceded";
+  if (board.winReason === "disconnect") {
+    return iWon ? "Opponent disconnected" : "You disconnected";
+  }
+  if (board.winReason === "reconnect_spam") {
+    return iWon ? "Opponent reconnect spam" : "Reconnect spam forfeit";
+  }
   return iWon ? "You win" : "Opponent wins";
+}
+
+function syncMatchReviewPanel(show) {
+  if (!matchReviewEl) return;
+  if (!show) {
+    syncMatchReview(matchReviewEl, { summary: null });
+    return;
+  }
+  const summary = viewMatchReview(board.matchReview, mineSideId());
+  syncMatchReview(matchReviewEl, {
+    summary,
+    elapsed: board.elapsed,
+    youName: meta.you?.name || "You",
+    oppName: meta.opponent?.name || "Opponent",
+  });
 }
 
 function sideLine(side) {
@@ -553,6 +581,7 @@ function syncChrome() {
   const showBanner = Boolean(board.winner);
   banner.classList.toggle("hidden", !showBanner);
   if (showBanner) bannerText.textContent = bannerCopy();
+  syncMatchReviewPanel(showBanner);
   menuYou.textContent = meta.you ? meta.you.name : "";
   oppName.textContent = meta.opponent ? meta.opponent.name : "";
   oppKind.textContent = meta.opponent ? (meta.opponent.kind === "bot" ? "Bot" : "Player") : "";
@@ -720,6 +749,7 @@ socket.on("replaced", () => {
   lobbyLeave.classList.remove("hidden");
   lobbyText.textContent = lobbyMessage;
   banner.classList.add("hidden");
+  syncMatchReviewPanel(false);
   menu.classList.add("hidden");
   rulesUi.close();
   unitInfoUi.close();
@@ -741,6 +771,7 @@ socket.on("disconnect", () => {
   lobbyLeave.classList.remove("hidden");
   lobbyText.textContent = lobbyMessage;
   banner.classList.add("hidden");
+  syncMatchReviewPanel(false);
   rulesUi.close();
   unitInfoUi.close();
   chatUi.close();

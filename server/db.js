@@ -7,6 +7,12 @@ import {
   sanitizeDisplayName,
   validateDisplayName,
 } from "./auth.js";
+import {
+  aggregateBalanceFromSummaries,
+  durationPercentiles,
+  funnelAndSegments,
+  matchesPerPlayerStats,
+} from "./analyticsMetrics.js";
 import { asErr, logger } from "./logger.js";
 import { metricsEnabled, noteSqliteBusy, noteSqliteWrite } from "./metrics.js";
 import { ownerBase, pickLeastLoaded, workerCount } from "./owners.js";
@@ -361,8 +367,20 @@ async function ensureAdminSchema() {
   if (!gameCols.some((col) => col.name === "chat_json")) {
     await run("ALTER TABLE games ADD COLUMN chat_json TEXT");
   }
+  if (!gameCols.some((col) => col.name === "started_at")) {
+    await run("ALTER TABLE games ADD COLUMN started_at INTEGER");
+  }
+  if (!gameCols.some((col) => col.name === "map_id")) {
+    await run("ALTER TABLE games ADD COLUMN map_id TEXT");
+  }
+  if (!gameCols.some((col) => col.name === "summary_json")) {
+    await run("ALTER TABLE games ADD COLUMN summary_json TEXT");
+  }
   await run("CREATE INDEX IF NOT EXISTS games_ended_at ON games (ended_at)");
   await run("CREATE INDEX IF NOT EXISTS games_mode_ended ON games (mode, ended_at)");
+  await run("CREATE INDEX IF NOT EXISTS games_map_ended ON games (map_id, ended_at)");
+  await run("CREATE INDEX IF NOT EXISTS games_outcome_ended ON games (outcome, ended_at)");
+  await run("CREATE INDEX IF NOT EXISTS games_win_reason_ended ON games (win_reason, ended_at)");
 
   await run(`CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -419,6 +437,11 @@ async function ensureAdminSchema() {
   )`);
   await run("CREATE INDEX IF NOT EXISTS login_events_created ON login_events (created_at)");
   await run("CREATE INDEX IF NOT EXISTS login_events_account ON login_events (account_id, created_at)");
+  const loginCols = await all("PRAGMA table_info(login_events)");
+  if (!loginCols.some((col) => col.name === "platform")) {
+    await run("ALTER TABLE login_events ADD COLUMN platform TEXT");
+  }
+  await run("CREATE INDEX IF NOT EXISTS login_events_platform ON login_events (platform, created_at)");
 
   await run(`CREATE TABLE IF NOT EXISTS ops_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -430,6 +453,10 @@ async function ensureAdminSchema() {
     created_at INTEGER NOT NULL
   )`);
   await run("CREATE INDEX IF NOT EXISTS ops_samples_created ON ops_samples (created_at)");
+  const opsCols = await all("PRAGMA table_info(ops_samples)");
+  if (!opsCols.some((col) => col.name === "sockets_authed")) {
+    await run("ALTER TABLE ops_samples ADD COLUMN sockets_authed INTEGER");
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS mm_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2173,8 +2200,9 @@ export async function recordMatchResult({ ranked, game }) {
           id, mode, player_a, player_b, name_a, name_b, formbar_a, formbar_b,
           account_a, account_b,
           winner_side, mmr_a_before, mmr_b_before, mmr_a_after, mmr_b_after,
-          created_at, ended_at, win_reason, outcome, chat_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_at, started_at, ended_at, win_reason, outcome, chat_json,
+          map_id, summary_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           game.id,
           game.mode,
@@ -2192,10 +2220,13 @@ export async function recordMatchResult({ ranked, game }) {
           game.mmrAAfter,
           game.mmrBAfter,
           game.createdAt,
+          game.startedAt ?? game.createdAt ?? null,
           game.endedAt,
           game.winReason || null,
-          game.outcome || (game.winReason === "concede" ? "forfeit" : "completed"),
+          game.outcome || defaultGameOutcome(game.winReason),
           game.chatJson ?? null,
+          game.mapId ?? null,
+          game.summaryJson ?? null,
         ],
       );
       await execRun("COMMIT");
@@ -2218,14 +2249,27 @@ export async function setRankedResult(accountId, mmr, won) {
   );
 }
 
+function defaultGameOutcome(winReason) {
+  if (winReason === "admin") return "admin_cancel";
+  if (
+    winReason === "concede"
+    || winReason === "disconnect"
+    || winReason === "reconnect_spam"
+  ) {
+    return "forfeit";
+  }
+  return "completed";
+}
+
 export async function insertGame(game) {
   await run(
     `INSERT INTO games (
       id, mode, player_a, player_b, name_a, name_b, formbar_a, formbar_b,
       account_a, account_b,
       winner_side, mmr_a_before, mmr_b_before, mmr_a_after, mmr_b_after,
-      created_at, ended_at, win_reason, outcome, chat_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      created_at, started_at, ended_at, win_reason, outcome, chat_json,
+      map_id, summary_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       game.id,
       game.mode,
@@ -2243,13 +2287,40 @@ export async function insertGame(game) {
       game.mmrAAfter,
       game.mmrBAfter,
       game.createdAt,
+      game.startedAt ?? game.createdAt ?? null,
       game.endedAt,
       game.winReason || null,
-      game.outcome || (game.winReason === "concede" ? "forfeit" : "completed"),
+      game.outcome || defaultGameOutcome(game.winReason),
       game.chatJson ?? null,
+      game.mapId ?? null,
+      game.summaryJson ?? null,
     ],
   );
 }
+
+/** Human-readable wall-clock play duration (ms → "3h 12m"). */
+export function formatPlayDuration(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  const totalMin = Math.floor(n / 60_000);
+  if (totalMin < 1) {
+    const sec = Math.floor(n / 1000);
+    return sec <= 0 ? "0m" : `${sec}s`;
+  }
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) {
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (hours > 0) {
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  return `${mins}m`;
+}
+
+/** SQL expression for match length (play start → end; falls back to room create). */
+const GAME_DURATION_SQL = "(ended_at - COALESCE(started_at, created_at))";
 
 /** Persist in-match gesture tooltip preference for a logged-in account. Guests use cookies. */
 export async function setPlayerTooltips(player, on) {
@@ -2567,11 +2638,12 @@ export async function adjustTicketsAdmin(accountId, delta, {
   });
 }
 
-export async function touchAccountLogin(accountId, provider = null) {
+export async function touchAccountLogin(accountId, provider = null, platform = null) {
   const id = Number(accountId);
   if (!Number.isInteger(id) || id <= 0) return;
   const now = Date.now();
   const day = new Date(now).toISOString().slice(0, 10);
+  const plat = platform != null ? String(platform).toLowerCase().trim() || null : null;
   await run(
     "UPDATE accounts SET last_login_at = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
     [now, now, now, id],
@@ -2581,8 +2653,8 @@ export async function touchAccountLogin(accountId, provider = null) {
     [id, day],
   );
   await run(
-    "INSERT INTO login_events (account_id, provider, ok, created_at) VALUES (?, ?, 1, ?)",
-    [id, provider, now],
+    "INSERT INTO login_events (account_id, provider, ok, created_at, platform) VALUES (?, ?, 1, ?, ?)",
+    [id, provider, now, plat],
   );
 }
 
@@ -2606,10 +2678,30 @@ export async function touchAccountSeen(accountId, debounceMs = 5 * 60 * 1000) {
   );
 }
 
-export async function recordLoginFailure(provider = null, accountId = null) {
+export async function recordLoginFailure(provider = null, accountId = null, platform = null) {
+  const plat = platform != null ? String(platform).toLowerCase().trim() || null : null;
   await run(
-    "INSERT INTO login_events (account_id, provider, ok, created_at) VALUES (?, ?, 0, ?)",
-    [accountId, provider, Date.now()],
+    "INSERT INTO login_events (account_id, provider, ok, created_at, platform) VALUES (?, ?, 0, ?, ?)",
+    [accountId, provider, Date.now(), plat],
+  );
+}
+
+const platformSightDebounce = new Map();
+
+/** Record a client platform sighting for an authenticated account (debounced). */
+export async function recordAccountPlatform(accountId, platform, debounceMs = 24 * 60 * 60 * 1000) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const plat = String(platform || "").toLowerCase().trim();
+  if (!plat || plat === "unknown") return;
+  const key = `${id}:${plat}`;
+  const now = Date.now();
+  const prev = platformSightDebounce.get(key) || 0;
+  if (now - prev < debounceMs) return;
+  platformSightDebounce.set(key, now);
+  await run(
+    "INSERT INTO login_events (account_id, provider, ok, created_at, platform) VALUES (?, ?, 1, ?, ?)",
+    [id, "session", now, plat],
   );
 }
 
@@ -2639,15 +2731,24 @@ export async function recordMmEvent({
 export async function recordOpsSample({
   rooms = 0,
   sockets = 0,
+  socketsAuthed = null,
   queueCasual = 0,
   queueRanked = 0,
   queueTraining = 0,
 } = {}) {
   await run(
     `INSERT INTO ops_samples (
-      rooms, sockets, queue_casual, queue_ranked, queue_training, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?)`,
-    [rooms, sockets, queueCasual, queueRanked, queueTraining, Date.now()],
+      rooms, sockets, sockets_authed, queue_casual, queue_ranked, queue_training, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      rooms,
+      sockets,
+      socketsAuthed != null ? Number(socketsAuthed) || 0 : null,
+      queueCasual,
+      queueRanked,
+      queueTraining,
+      Date.now(),
+    ],
   );
 }
 
@@ -2853,6 +2954,30 @@ export async function listAccountGames(accountId, { limit = 20 } = {}) {
   );
 }
 
+/** Total wall-clock play time across finished games for a profile. */
+export async function accountPlayStats(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return { games: 0, totalMs: 0 };
+  }
+  const row = await get(
+    `SELECT
+       COUNT(*) AS games,
+       COALESCE(SUM(CASE
+         WHEN ended_at > COALESCE(started_at, created_at)
+         THEN ${GAME_DURATION_SQL}
+         ELSE 0
+       END), 0) AS total_ms
+     FROM games
+     WHERE account_a = ? OR account_b = ?`,
+    [id, id],
+  );
+  return {
+    games: Number(row?.games) || 0,
+    totalMs: Number(row?.total_ms) || 0,
+  };
+}
+
 /** Paginated ranked MMR deltas for a profile (seat-centric rows). */
 export async function listAccountMmrHistory(accountId, { page = 1, pageSize = 20 } = {}) {
   const id = Number(accountId);
@@ -2984,7 +3109,7 @@ export async function analyticsSnapshot(range = "30d") {
 
   const gamesByMode = await all(
     `SELECT mode, COUNT(*) AS n,
-            AVG(ended_at - created_at) AS avg_ms
+            AVG(${GAME_DURATION_SQL}) AS avg_ms
      FROM games
      WHERE 1=1 ${endedClause}
      GROUP BY mode
@@ -2993,8 +3118,8 @@ export async function analyticsSnapshot(range = "30d") {
   );
 
   const durations = await all(
-    `SELECT (ended_at - created_at) AS ms FROM games
-     WHERE ended_at > created_at ${endedClause}
+    `SELECT ${GAME_DURATION_SQL} AS ms FROM games
+     WHERE ended_at > COALESCE(started_at, created_at) ${endedClause}
      ORDER BY ms`,
     sinceParams,
   );
@@ -3002,6 +3127,10 @@ export async function analyticsSnapshot(range = "30d") {
   const medianMs = durationMs.length
     ? durationMs[Math.floor(durationMs.length / 2)]
     : null;
+  const totalDurationMs = durationMs.length
+    ? durationMs.reduce((a, b) => a + b, 0)
+    : 0;
+  const durationPct = durationPercentiles(durationMs);
 
   const sideWins = await all(
     `SELECT winner_side AS side, COUNT(*) AS n FROM games
@@ -3009,6 +3138,64 @@ export async function analyticsSnapshot(range = "30d") {
      GROUP BY winner_side`,
     sinceParams,
   );
+
+  const outcomeRows = await all(
+    `SELECT COALESCE(outcome, 'unknown') AS outcome, COUNT(*) AS n FROM games
+     WHERE 1=1 ${endedClause}
+     GROUP BY outcome`,
+    sinceParams,
+  );
+  const winReasonRows = await all(
+    `SELECT COALESCE(win_reason, 'unknown') AS win_reason, COUNT(*) AS n FROM games
+     WHERE 1=1 ${endedClause}
+     GROUP BY win_reason`,
+    sinceParams,
+  );
+  const outcomes = {
+    completed: 0,
+    forfeit: 0,
+    admin_cancel: 0,
+    unknown: 0,
+    byWinReason: {},
+    n: 0,
+  };
+  for (const row of outcomeRows) {
+    const key = row.outcome;
+    const n = Number(row.n) || 0;
+    outcomes.n += n;
+    if (key === "completed" || key === "forfeit" || key === "admin_cancel") {
+      outcomes[key] += n;
+    } else {
+      outcomes.unknown += n;
+    }
+  }
+  for (const row of winReasonRows) {
+    outcomes.byWinReason[row.win_reason] = Number(row.n) || 0;
+  }
+
+  const winByMode = await all(
+    `SELECT mode, winner_side AS side, COUNT(*) AS n FROM games
+     WHERE winner_side IS NOT NULL ${endedClause}
+     GROUP BY mode, winner_side
+     ORDER BY mode, side`,
+    sinceParams,
+  );
+
+  const winByMap = await all(
+    `SELECT COALESCE(map_id, 'unknown') AS map_id, winner_side AS side, COUNT(*) AS n
+     FROM games
+     WHERE winner_side IS NOT NULL ${endedClause}
+     GROUP BY COALESCE(map_id, 'unknown'), winner_side
+     ORDER BY n DESC`,
+    sinceParams,
+  );
+
+  const summaryRows = await all(
+    `SELECT winner_side, summary_json FROM games
+     WHERE summary_json IS NOT NULL ${endedClause}`,
+    sinceParams,
+  );
+  const balanceAgg = aggregateBalanceFromSummaries(summaryRows);
 
   const mmrBuckets = await all(
     `SELECT CAST(mmr / 100 AS INTEGER) * 100 AS bucket, COUNT(*) AS n
@@ -3039,6 +3226,42 @@ export async function analyticsSnapshot(range = "30d") {
     sinceParams,
   );
 
+  const spendByDay = await all(
+    `SELECT date(created_at / 1000, 'unixepoch') AS day,
+            COALESCE(SUM(CASE WHEN kind = 'spend' THEN -delta ELSE 0 END), 0) AS spent,
+            COALESCE(SUM(CASE WHEN kind = 'charge' THEN -delta ELSE 0 END), 0) AS charged
+     FROM ticket_ledger
+     WHERE 1=1 ${sinceClause}
+     GROUP BY day ORDER BY day`,
+    sinceParams,
+  );
+
+  const paypalGross = await get(
+    `SELECT
+       COALESCE(SUM(CASE WHEN credited_at IS NOT NULL THEN CAST(amount_value AS REAL) ELSE 0 END), 0) AS gross,
+       COALESCE(SUM(CASE WHEN refunded_at IS NOT NULL THEN CAST(amount_value AS REAL) ELSE 0 END), 0) AS refunds,
+       COUNT(DISTINCT CASE WHEN status = 'credited' THEN account_id END) AS paying_accounts,
+       COUNT(CASE WHEN credited_at IS NOT NULL THEN 1 END) AS credited_rows
+     FROM paypal_purchases
+     WHERE 1=1 ${sinceClause}`,
+    sinceParams,
+  );
+  const paypalByPackage = await all(
+    `SELECT package_id,
+            COUNT(*) AS n,
+            COALESCE(SUM(CASE WHEN credited_at IS NOT NULL THEN CAST(amount_value AS REAL) ELSE 0 END), 0) AS gross,
+            COALESCE(SUM(CASE WHEN refunded_at IS NOT NULL THEN CAST(amount_value AS REAL) ELSE 0 END), 0) AS refunds
+     FROM paypal_purchases
+     WHERE 1=1 ${sinceClause}
+     GROUP BY package_id
+     ORDER BY gross DESC`,
+    sinceParams,
+  );
+  const paypalGrossUsd = Number(paypalGross?.gross) || 0;
+  const paypalRefundsUsd = Number(paypalGross?.refunds) || 0;
+  const paypalNetUsd = paypalGrossUsd - paypalRefundsUsd;
+  const payingAccounts = Number(paypalGross?.paying_accounts) || 0;
+
   const dayStart = since != null
     ? new Date(since).toISOString().slice(0, 10)
     : null;
@@ -3048,6 +3271,7 @@ export async function analyticsSnapshot(range = "30d") {
       [dayStart],
     )
     : await get("SELECT COUNT(DISTINCT account_id) AS active FROM activity_day");
+  const activeInRange = Number(activity?.active) || 0;
 
   const today = new Date().toISOString().slice(0, 10);
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -3064,8 +3288,19 @@ export async function analyticsSnapshot(range = "30d") {
     sinceParams,
   );
 
+  const platformActives = await all(
+    `SELECT COALESCE(platform, 'unknown') AS platform,
+            COUNT(DISTINCT account_id) AS n
+     FROM login_events
+     WHERE ok = 1 AND account_id IS NOT NULL ${sinceClause}
+     GROUP BY COALESCE(platform, 'unknown')
+     ORDER BY n DESC`,
+    sinceParams,
+  );
+
   const peak = await get(
-    `SELECT MAX(sockets) AS peak_sockets, MAX(rooms) AS peak_rooms
+    `SELECT MAX(sockets) AS peak_sockets, MAX(rooms) AS peak_rooms,
+            MAX(sockets_authed) AS peak_authed
      FROM ops_samples WHERE 1=1 ${sinceClause}`,
     sinceParams,
   );
@@ -3080,6 +3315,14 @@ export async function analyticsSnapshot(range = "30d") {
      FROM mm_events WHERE 1=1 ${sinceClause}`,
     sinceParams,
   );
+  const waitRows = await all(
+    `SELECT wait_ms AS ms FROM mm_events
+     WHERE event = 'paired' AND wait_ms IS NOT NULL AND wait_ms > 0 ${sinceClause}
+     ORDER BY wait_ms`,
+    sinceParams,
+  );
+  const waitMs = waitRows.map((r) => Number(r.ms)).filter((n) => Number.isFinite(n) && n > 0);
+  const waitPct = durationPercentiles(waitMs);
 
   const registrations = await all(
     `SELECT date(created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n
@@ -3096,6 +3339,64 @@ export async function analyticsSnapshot(range = "30d") {
      GROUP BY day ORDER BY day`,
     sinceParams,
   );
+
+  const uniquePlayersPerDay = await all(
+    `SELECT day, COUNT(DISTINCT account_id) AS unique_players FROM (
+       SELECT date(ended_at / 1000, 'unixepoch') AS day, account_a AS account_id
+       FROM games WHERE account_a IS NOT NULL ${endedClause}
+       UNION
+       SELECT date(ended_at / 1000, 'unixepoch') AS day, account_b AS account_id
+       FROM games WHERE account_b IS NOT NULL ${endedClause}
+     ) GROUP BY day ORDER BY day`,
+    [...sinceParams, ...sinceParams],
+  );
+  const uniqueByDay = new Map(
+    uniquePlayersPerDay.map((r) => [r.day, Number(r.unique_players) || 0]),
+  );
+  const daily = gamesPerDay.map((r) => ({
+    day: r.day,
+    games: Number(r.n) || 0,
+    uniquePlayers: uniqueByDay.get(r.day) || 0,
+  }));
+
+  const playsInRange = await all(
+    `SELECT account_id, COUNT(*) AS n FROM (
+       SELECT account_a AS account_id FROM games
+       WHERE account_a IS NOT NULL ${endedClause}
+       UNION ALL
+       SELECT account_b AS account_id FROM games
+       WHERE account_b IS NOT NULL ${endedClause}
+     ) GROUP BY account_id`,
+    [...sinceParams, ...sinceParams],
+  );
+  const matchesPerActive = matchesPerPlayerStats(playsInRange.map((r) => Number(r.n) || 0));
+
+  const lifetimeRows = dayStart
+    ? await all(
+      `SELECT a.account_id AS id, COALESCE(g.n, 0) AS n
+       FROM (SELECT DISTINCT account_id FROM activity_day WHERE day >= ?) a
+       LEFT JOIN (
+         SELECT account_id, COUNT(*) AS n FROM (
+           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL
+           UNION ALL
+           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL
+         ) GROUP BY account_id
+       ) g ON g.account_id = a.account_id`,
+      [dayStart],
+    )
+    : await all(
+      `SELECT a.account_id AS id, COALESCE(g.n, 0) AS n
+       FROM (SELECT DISTINCT account_id FROM activity_day) a
+       LEFT JOIN (
+         SELECT account_id, COUNT(*) AS n FROM (
+           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL
+           UNION ALL
+           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL
+         ) GROUP BY account_id
+       ) g ON g.account_id = a.account_id`,
+    );
+  const lifetimeCounts = lifetimeRows.map((r) => Number(r.n) || 0);
+  const { funnel, segments } = funnelAndSegments(lifetimeCounts);
 
   // Retention: cohort registered in range, active on D1/D7/D30
   const retention = { d1: null, d7: null, d30: null, cohort: 0 };
@@ -3145,13 +3446,15 @@ export async function analyticsSnapshot(range = "30d") {
   );
   const newAccounts = Number(accountTotals.new_in_range) || 0;
 
+  const rateOrNull = (num, den) => (den > 0 ? num / den : null);
+
   return {
     range,
     since,
-    trackingNote: "DAU, ledger, queue, CCU, and win_reason metrics only cover data since those tables were deployed.",
+    trackingNote: "DAU/WAU/MAU are calendar windows (not the range filter). Retention excludes cohorts younger than 30 days. Balance tables need summary_json (new matches only). Platform is unknown until clients send auth.platform. Associations are not causation.",
     accounts: accountTotals,
     activity: {
-      activeInRange: Number(activity?.active) || 0,
+      activeInRange,
       dau: Number(dau?.n) || 0,
       wau: Number(wau?.n) || 0,
       mau: Number(mau?.n) || 0,
@@ -3159,18 +3462,67 @@ export async function analyticsSnapshot(range = "30d") {
     logins,
     games: {
       byMode: gamesByMode,
+      totalDurationMs,
       avgDurationMs: durationMs.length
-        ? durationMs.reduce((a, b) => a + b, 0) / durationMs.length
+        ? totalDurationMs / durationMs.length
         : null,
       medianDurationMs: medianMs,
       durationCount: durationMs.length,
+      durationPercentiles: durationPct,
       sideWins,
       perDay: gamesPerDay,
+      daily,
+    },
+    engagement: {
+      matchesPerActive,
+      funnel,
+      segments,
+      outcomes: {
+        ...outcomes,
+        completionRate: rateOrNull(outcomes.completed, outcomes.n - outcomes.admin_cancel),
+        forfeitRate: rateOrNull(outcomes.forfeit, outcomes.n - outcomes.admin_cancel),
+        adminCancelRate: rateOrNull(outcomes.admin_cancel, outcomes.n),
+      },
+      daily,
+    },
+    balance: {
+      sideWins,
+      winByMode,
+      winByMap,
+      units: balanceAgg.units,
+      upgrades: balanceAgg.upgrades,
+      withSummary: balanceAgg.withSummary,
+      note: "Win rates when a unit/upgrade appears are associational, not causal. n = side-match samples with summary_json.",
     },
     mmrBuckets,
-    economy: { purchases, ledger },
-    matchmaking: mm,
-    peak,
+    economy: {
+      purchases,
+      ledger,
+      spendByDay,
+      paypal: {
+        gross: paypalGrossUsd,
+        refunds: paypalRefundsUsd,
+        net: paypalNetUsd,
+        payingAccounts,
+        creditedRows: Number(paypalGross?.credited_rows) || 0,
+        byPackage: paypalByPackage,
+        conversion: rateOrNull(payingAccounts, activeInRange),
+        arpu: rateOrNull(paypalNetUsd, activeInRange),
+        arppu: rateOrNull(paypalNetUsd, payingAccounts),
+      },
+    },
+    matchmaking: {
+      ...mm,
+      waitPercentiles: waitPct,
+    },
+    peak: {
+      peak_sockets: peak?.peak_sockets ?? null,
+      peak_rooms: peak?.peak_rooms ?? null,
+      peak_authed: peak?.peak_authed ?? null,
+    },
+    platform: {
+      actives: platformActives,
+    },
     registrations,
     retention,
     conversion: {

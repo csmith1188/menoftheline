@@ -25,28 +25,257 @@
         </label>
       </form>
       <p class="admin-muted"><%= analytics.trackingNote %></p>
+
       <dl class="stats">
         <div><dt>Accounts</dt><dd><%= analytics.accounts.total %></dd></div>
         <div><dt>New</dt><dd><%= analytics.accounts.new_in_range %></dd></div>
+        <div><dt>Active (range)</dt><dd><%= analytics.activity.activeInRange %></dd></div>
         <div><dt>DAU</dt><dd><%= analytics.activity.dau %></dd></div>
         <div><dt>WAU</dt><dd><%= analytics.activity.wau %></dd></div>
         <div><dt>MAU</dt><dd><%= analytics.activity.mau %></dd></div>
         <div><dt>Verified</dt><dd><%= analytics.accounts.verified %></dd></div>
         <div><dt>Unverified</dt><dd><%= analytics.accounts.unverified %></dd></div>
         <div><dt>Banned</dt><dd><%= analytics.accounts.banned %></dd></div>
-        <div><dt>Peak sockets</dt><dd><%= analytics.peak.peak_sockets || "—" %></dd></div>
+        <div><dt>Peak sockets</dt><dd><%= analytics.peak.peak_sockets != null ? analytics.peak.peak_sockets : "—" %></dd></div>
+        <div><dt>Peak authed</dt><dd><%= analytics.peak.peak_authed != null ? analytics.peak.peak_authed : "—" %></dd></div>
+        <div><dt>Peak rooms</dt><dd><%= analytics.peak.peak_rooms != null ? analytics.peak.peak_rooms : "—" %></dd></div>
         <div><dt>Tickets out</dt><dd><%= analytics.accounts.tickets %></dd></div>
+        <div><dt>Tickets held</dt><dd><%= analytics.accounts.held %></dd></div>
       </dl>
+
+      <div class="admin-panel">
+        <h3>Engagement</h3>
+        <% var eng = analytics.engagement || {}; %>
+        <% var mpa = eng.matchesPerActive || {}; %>
+        <% var funnel = eng.funnel || {}; %>
+        <% var segs = eng.segments || {}; %>
+        <% var outc = eng.outcomes || {}; %>
+        <p>
+          Matches / active player
+          avg <%= mpa.avg != null ? mpa.avg.toFixed(2) : "—" %>
+          · median <%= mpa.median != null ? mpa.median : "—" %>
+          · n <%= mpa.n || 0 %>
+        </p>
+        <% charts.matchesPerPlayer.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %> games</span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+        <p>
+          Funnel (lifetime games among actives in range, n=<%= funnel.n || 0 %>):
+          ≥1 <%= funnel.g1 || 0 %>
+          · ≥2 <%= funnel.g2 || 0 %>
+          · ≥5 <%= funnel.g5 || 0 %>
+        </p>
+        <p>
+          Segments: one-time <%= segs.oneTime || 0 %>
+          · occasional (2–9) <%= segs.occasional || 0 %>
+          · regular (10+) <%= segs.regular || 0 %>
+          · zero games <%= segs.zeroGames || 0 %>
+        </p>
+        <p>
+          Outcomes (n=<%= outc.n || 0 %>):
+          completed <%= outc.completed || 0 %> (<%= formatRate(outc.completionRate) %>)
+          · forfeit <%= outc.forfeit || 0 %> (<%= formatRate(outc.forfeitRate) %>)
+          · admin cancel <%= outc.admin_cancel || 0 %>
+        </p>
+        <p class="admin-muted">
+          Win reasons:
+          <% var reasons = outc.byWinReason || {}; %>
+          capital <%= reasons.capital || 0 %>
+          · concede <%= reasons.concede || 0 %>
+          · disconnect <%= reasons.disconnect || 0 %>
+          · reconnect_spam <%= reasons.reconnect_spam || 0 %>
+          · admin <%= reasons.admin || 0 %>
+          · unknown <%= reasons.unknown || 0 %>
+          (legacy forfeits may all be “concede”)
+        </p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Games / day</h3>
+        <% charts.gamesPerDay.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Unique players / day</h3>
+        <% charts.uniquePlayersPerDay.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+        <p class="admin-muted">Distinct account seats in finished games that day (UTC).</p>
+      </div>
 
       <div class="admin-panel">
         <h3>Games by mode</h3>
         <% charts.gamesByMode.forEach(function (row) { %>
           <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
         <% }) %>
+        <% analytics.games.byMode.forEach(function (m) { %>
+          <p class="admin-muted"><%= m.mode %>: avg <%= m.avg_ms ? formatPlayDuration(m.avg_ms) : "—" %></p>
+        <% }) %>
         <p class="admin-muted">
-          Avg duration <%= analytics.games.avgDurationMs ? Math.round(analytics.games.avgDurationMs/60000) + " min" : "—" %>
-          · median <%= analytics.games.medianDurationMs ? Math.round(analytics.games.medianDurationMs/60000) + " min" : "—" %>
+          Total time played <%= analytics.games.totalDurationMs
+            ? formatPlayDuration(analytics.games.totalDurationMs)
+            : "—" %>
+          · avg <%= analytics.games.avgDurationMs
+            ? formatPlayDuration(analytics.games.avgDurationMs)
+            : "—" %>
+          · median <%= analytics.games.medianDurationMs
+            ? formatPlayDuration(analytics.games.medianDurationMs)
+            : "—" %>
+          · n <%= analytics.games.durationCount || 0 %>
         </p>
+        <% var dp = analytics.games.durationPercentiles || {}; %>
+        <p class="admin-muted">
+          Duration p50 <%= dp.p50 != null ? formatPlayDuration(dp.p50) : "—" %>
+          · p90 <%= dp.p90 != null ? formatPlayDuration(dp.p90) : "—" %>
+          · p99 <%= dp.p99 != null ? formatPlayDuration(dp.p99) : "—" %>
+        </p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Matchmaking</h3>
+        <p>Queued <%= analytics.matchmaking.queued %> · paired <%= analytics.matchmaking.paired %>
+          · expired <%= analytics.matchmaking.expired %> · abandoned <%= analytics.matchmaking.abandoned %>
+          · avg wait <%= analytics.matchmaking.avg_wait_ms != null ? Math.round(analytics.matchmaking.avg_wait_ms/1000) + "s" : "—" %></p>
+        <% var wp = analytics.matchmaking.waitPercentiles || {}; %>
+        <p class="admin-muted">
+          Wait p50 <%= wp.p50 != null ? Math.round(wp.p50/1000) + "s" : "—" %>
+          · p90 <%= wp.p90 != null ? Math.round(wp.p90/1000) + "s" : "—" %>
+          · p99 <%= wp.p99 != null ? Math.round(wp.p99/1000) + "s" : "—" %>
+          · n <%= wp.n || 0 %>
+        </p>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Balance</h3>
+        <% var bal = analytics.balance || {}; %>
+        <p class="admin-muted"><%= bal.note %></p>
+        <p>Side wins (n with winner):
+          <% (bal.sideWins || []).forEach(function (s) { %>
+            <%= s.side %> <%= s.n %>
+          <% }) %>
+          <% if (!(bal.sideWins || []).length) { %>—<% } %>
+        </p>
+        <% if ((bal.winByMode || []).length) { %>
+          <table class="admin-table">
+            <thead><tr><th>Mode</th><th>Side</th><th>n</th></tr></thead>
+            <tbody>
+              <% bal.winByMode.forEach(function (r) { %>
+                <tr><td><%= r.mode %></td><td><%= r.side %></td><td><%= r.n %></td></tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+        <% if ((bal.winByMap || []).length) { %>
+          <h4>By map</h4>
+          <table class="admin-table">
+            <thead><tr><th>Map</th><th>Side</th><th>n</th></tr></thead>
+            <tbody>
+              <% bal.winByMap.forEach(function (r) { %>
+                <tr><td><%= r.map_id %></td><td><%= r.side %></td><td><%= r.n %></td></tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } else { %>
+          <p class="admin-muted">No map_id rows yet.</p>
+        <% } %>
+        <p class="admin-muted">Matches with summary_json: <%= bal.withSummary || 0 %></p>
+        <% if ((bal.units || []).length) { %>
+          <h4>Units (deployed)</h4>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Type</th><th>n</th><th>Win%</th><th>Bought</th><th>Avg lived</th>
+                <th>Dmg out</th><th>Dmg in</th><th>Kills</th><th>Dmg/$</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% bal.units.forEach(function (u) { %>
+                <tr>
+                  <td><%= u.type %></td>
+                  <td><%= u.n %></td>
+                  <td><%= formatRate(u.winRate) %></td>
+                  <td><%= u.bought %></td>
+                  <td><%= u.avgSurvived != null ? u.avgSurvived.toFixed(2) : "—" %></td>
+                  <td><%= Math.round(u.dmgDealt) %></td>
+                  <td><%= Math.round(u.dmgTaken) %></td>
+                  <td><%= Math.round(u.kills) %></td>
+                  <td><%= u.costEfficiency != null ? u.costEfficiency.toFixed(2) : "—" %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } else { %>
+          <p class="admin-muted">No unit summary data yet.</p>
+        <% } %>
+        <% if ((bal.upgrades || []).length) { %>
+          <h4>Upgrades (any level &gt; 0)</h4>
+          <table class="admin-table">
+            <thead><tr><th>Kind</th><th>n</th><th>Win%</th></tr></thead>
+            <tbody>
+              <% bal.upgrades.forEach(function (u) { %>
+                <tr><td><%= u.kind %></td><td><%= u.n %></td><td><%= formatRate(u.winRate) %></td></tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Revenue (PayPal USD)</h3>
+        <% var pp = (analytics.economy && analytics.economy.paypal) || {}; %>
+        <p>
+          Gross <%= formatUsd(pp.gross) %>
+          · refunds <%= formatUsd(pp.refunds) %>
+          · net <%= formatUsd(pp.net) %>
+        </p>
+        <p>
+          Paying accounts <%= pp.payingAccounts || 0 %>
+          · conversion <%= formatRate(pp.conversion) %>
+          · ARPU <%= formatUsd(pp.arpu) %>
+          · ARPPU <%= formatUsd(pp.arppu) %>
+        </p>
+        <% if ((pp.byPackage || []).length) { %>
+          <table class="admin-table">
+            <thead><tr><th>Bundle</th><th>Rows</th><th>Gross</th><th>Refunds</th></tr></thead>
+            <tbody>
+              <% pp.byPackage.forEach(function (p) { %>
+                <tr>
+                  <td><%= p.package_id %></td>
+                  <td><%= p.n %></td>
+                  <td><%= formatUsd(p.gross) %></td>
+                  <td><%= formatUsd(p.refunds) %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } else { %>
+          <p class="admin-muted">No PayPal purchases in range.</p>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Economy (tickets)</h3>
+        <p>Digipog purchased tickets <%= analytics.economy.purchases.tickets_bought %> · Digipogs <%= analytics.economy.purchases.digipogs %>
+          · Failed <%= analytics.economy.purchases.failed %> · Pending <%= analytics.economy.purchases.pending %></p>
+        <p>Ledger charged <%= analytics.economy.ledger.charged %> · refunded <%= analytics.economy.ledger.refunded %>
+          · adjusted <%= analytics.economy.ledger.adjusted %> · spent <%= analytics.economy.ledger.spent %>
+          · issued <%= analytics.economy.ledger.issued %></p>
+        <h4>Ticket spend / day</h4>
+        <% charts.ticketSpend.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Platform &amp; ops</h3>
+        <% charts.platforms.forEach(function (row) { %>
+          <div class="admin-bar"><span><%= row.label %></span><div class="track"><div class="fill" style="width:<%= row.pct %>%"></div></div><span class="val"><%= row.value %></span></div>
+        <% }) %>
+        <% if (!(charts.platforms || []).length) { %>
+          <p class="admin-muted">No platform tags yet (clients must send auth.platform).</p>
+        <% } %>
       </div>
 
       <div class="admin-panel">
@@ -57,26 +286,12 @@
       </div>
 
       <div class="admin-panel">
-        <h3>Economy</h3>
-        <p>Purchased tickets <%= analytics.economy.purchases.tickets_bought %> · Digipogs <%= analytics.economy.purchases.digipogs %>
-          · Failed <%= analytics.economy.purchases.failed %> · Pending <%= analytics.economy.purchases.pending %></p>
-        <p>Ledger charged <%= analytics.economy.ledger.charged %> · refunded <%= analytics.economy.ledger.refunded %>
-          · adjusted <%= analytics.economy.ledger.adjusted %> · spent <%= analytics.economy.ledger.spent %></p>
-      </div>
-
-      <div class="admin-panel">
-        <h3>Matchmaking</h3>
-        <p>Queued <%= analytics.matchmaking.queued %> · paired <%= analytics.matchmaking.paired %>
-          · expired <%= analytics.matchmaking.expired %> · abandoned <%= analytics.matchmaking.abandoned %>
-          · avg wait <%= analytics.matchmaking.avg_wait_ms != null ? Math.round(analytics.matchmaking.avg_wait_ms/1000) + "s" : "—" %></p>
-      </div>
-
-      <div class="admin-panel">
         <h3>Retention / conversion</h3>
         <p>Cohort <%= analytics.retention.cohort %>
           · D1 <%= analytics.retention.d1 != null ? (analytics.retention.d1*100).toFixed(1)+"%" : "—" %>
           · D7 <%= analytics.retention.d7 != null ? (analytics.retention.d7*100).toFixed(1)+"%" : "—" %>
           · D30 <%= analytics.retention.d30 != null ? (analytics.retention.d30*100).toFixed(1)+"%" : "—" %></p>
+        <p class="admin-muted">Cohort = accounts registered in range and at least 30 days old. Immature cohorts show —.</p>
         <p>New→first match <%= analytics.conversion.withFirstMatch %>/<%= analytics.conversion.newAccounts %>
           (<%= analytics.conversion.rate != null ? (analytics.conversion.rate*100).toFixed(1)+"%" : "—" %>)</p>
       </div>

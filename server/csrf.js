@@ -14,7 +14,19 @@ function tokensMatch(sent, expected) {
 /** Issue a session token and expose it to EJS. */
 export function ensureCsrf(req, res, next) {
   if (req.session && !req.session.csrfToken) {
-    req.session.csrfToken = randomBytes(32).toString("base64url");
+    const path = String(req.path || "");
+    const isApi = path === "/api/v1" || path.startsWith("/api/v1/");
+    // Do not mint CSRF on a brand-new API session: with saveUninitialized:false
+    // that persists an empty lane.sid and can clobber a real login cookie.
+    const hasIdentity = Boolean(
+      req.session.accountId
+      || req.session.guestId
+      || req.session.userId
+      || req.session.formbarId,
+    );
+    if (!isApi || hasIdentity) {
+      req.session.csrfToken = randomBytes(32).toString("base64url");
+    }
   }
   res.locals.csrfToken = (req.session && req.session.csrfToken) || "";
   next();

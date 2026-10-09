@@ -410,6 +410,10 @@ app.use(express.urlencoded({ extended: false, limit: "100kb" }));
 app.use(sessionMiddleware);
 app.use(ensureCsrf);
 app.use(requireCsrf);
+app.use("/api/v1", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 app.use(async (req, res, next) => {
   try {
     const staff = await getStaffContext(req.session);
@@ -2833,8 +2837,11 @@ app.post("/api/v1/logout", requireApiSession, async (req, res, next) => {
 app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
   try {
     const prefs = readPrefsCookies(req);
+    const account = await resolveSessionAccount(req.session);
+    // Logged-in but unverified accounts play as guests — mint one if needed.
+    const createGuest = Boolean(account) && !accountEmailVerified(account);
     const player = await playerFromSession(req.session, {
-      createGuest: false,
+      createGuest,
       prefs,
     });
     if (!player) {
@@ -2843,7 +2850,6 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
     }
     syncPrefsCookies(res, player, req);
     const busy = matchmaker.isBusy(player.id);
-    const account = await resolveSessionAccount(req.session);
     const privileged = accountEmailVerified(account);
     const pack = ticketPack();
     res.json({

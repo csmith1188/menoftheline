@@ -10,12 +10,34 @@ function boot() {
   return (typeof window !== "undefined" && window.MOTL_BOOT) || {};
 }
 
+function capacitorNative() {
+  if (typeof window === "undefined" || !window.Capacitor) return false;
+  if (typeof window.Capacitor.isNativePlatform !== "function") return false;
+  try {
+    return Boolean(window.Capacitor.isNativePlatform());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True only for explicit packaged clients. Never infer from localStorage
+ * motl.serverUrl — a leftover URL made the website use credentials:omit,
+ * so /api/v1/me never saw lane.sid while the HTML header still looked logged in.
+ */
+export function isShell() {
+  if (typeof window === "undefined") return false;
+  if (window.MOTL_SHELL === true) return true;
+  return capacitorNative();
+}
+
 function injectedServerUrl() {
   if (typeof window === "undefined") return "";
   const fromWindow = String(window.MOTL_SERVER_URL || "").trim();
   if (fromWindow) return fromWindow.replace(/\/$/, "");
   const fromBoot = String(boot().serverUrl || "").trim();
   if (fromBoot) return fromBoot.replace(/\/$/, "");
+  if (!isShell()) return "";
   try {
     const stored = String(localStorage.getItem(SERVER_KEY) || "").trim();
     if (stored) return stored.replace(/\/$/, "");
@@ -25,34 +47,21 @@ function injectedServerUrl() {
   return "";
 }
 
-/**
- * True when running inside Electron/Capacitor (or a remote packaged client).
- * Same-origin website browsing is never a shell — even if localStorage has a
- * leftover motl.serverUrl — so cookie sessions stay authoritative.
- */
-export function isShell() {
-  if (typeof window === "undefined") return false;
-  if (window.MOTL_SHELL === true) return true;
-  if (window.Capacitor && typeof window.Capacitor.isNativePlatform === "function") {
-    try {
-      if (window.Capacitor.isNativePlatform()) return true;
-    } catch {
-      // ignore
-    }
-  }
-  const remote = injectedServerUrl();
-  if (!remote) return false;
+/** Remote API base for shells; empty on the website (same-origin relative URLs). */
+export function serverUrl() {
+  if (!isShell()) return "";
+  return injectedServerUrl();
+}
+
+/** Drop leftover shell storage so website cookie auth cannot be poisoned. */
+function clearWebsiteShellResidue() {
+  if (isShell()) return;
+  clearToken();
   try {
-    const here = String(window.location?.origin || "").replace(/\/$/, "");
-    if (here && remote === here) return false;
+    localStorage.removeItem(SERVER_KEY);
   } catch {
     // ignore
   }
-  return true;
-}
-
-export function serverUrl() {
-  return injectedServerUrl();
 }
 
 export function siteUrl(pathname = "/") {
@@ -119,13 +128,14 @@ export async function apiFetch(path, opts = {}) {
 }
 
 export async function ensureSession() {
+  clearWebsiteShellResidue();
   if (!isShell()) {
-    // Drop stale shell tokens so they cannot poison a later socket handshake.
-    clearToken();
-    const me = await apiFetch("/api/v1/me");
+    let me = await apiFetch("/api/v1/me");
     if (me.ok) return null;
     const res = await apiFetch("/api/v1/session", { method: "POST", json: {} });
     if (!res.ok) throw new Error(`session_failed_${res.status}`);
+    me = await apiFetch("/api/v1/me");
+    if (!me.ok) throw new Error(`session_failed_${me.status}`);
     return null;
   }
   const existing = getToken();

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { makeSim } from "./helpers.js";
 import { assertSessionSecret, debugRangesEnabled, isDevLocalHost, originAllowed } from "../server/hardening.js";
+import { ensureCsrf } from "../server/csrf.js";
 import { sanitizeCommand, allowSocketEvent } from "../server/commandLimit.js";
 import {
   authenticateFormbarToken,
@@ -23,6 +24,21 @@ process.env.NODE_ENV = "test";
 const db = await import("../server/db.js");
 const { renderWikiBody, safeWikiUrl } = await import("../server/wiki-render.js");
 const { Matchmaker } = await import("../server/matchmaking.js");
+
+test("ensureCsrf does not mint a token on an empty API session", () => {
+  const emptyApi = { session: {}, path: "/api/v1/me" };
+  const res = { locals: {} };
+  ensureCsrf(emptyApi, res, () => {});
+  assert.equal(emptyApi.session.csrfToken, undefined);
+
+  const identified = { session: { accountId: 1 }, path: "/api/v1/me" };
+  ensureCsrf(identified, res, () => {});
+  assert.ok(identified.session.csrfToken);
+
+  const html = { session: {}, path: "/games" };
+  ensureCsrf(html, res, () => {});
+  assert.ok(html.session.csrfToken);
+});
 
 test("production rejects a missing or placeholder session secret", () => {
   assert.throws(() => assertSessionSecret({ NODE_ENV: "production", SESSION_SECRET: "" }));

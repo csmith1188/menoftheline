@@ -30,7 +30,7 @@ shared/protocol.js        # PROTOCOL_VERSION + CLIENT_VERSION
 
 ## Auth
 
-- **Website:** cookie `lane.sid` only (no Bearer). Leftover `motl.sessionToken` / same-origin `motl.serverUrl` are ignored so login regenerateSession cannot orphan the API/socket.
+- **Website:** cookie `lane.sid` only (no Bearer). `isShell()` is true only when `MOTL_SHELL` or Capacitor native is set — never from `localStorage` `motl.serverUrl` (that forced `credentials:omit` and broke `/api/v1/me` while the HTML header still showed the account).
 - **Shells:** `POST /api/v1/session` → store token → `Authorization: Bearer` + Socket.IO `auth.token`. Stale Bearer falls back to cookie when present.
 - **OAuth:** system browser / Custom Tabs → `/api/v1/login?return=motl://auth` → deep link `motl://auth?token=…`.
 - Server allowlists only `motl://auth` for native OAuth return.

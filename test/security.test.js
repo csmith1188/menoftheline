@@ -102,6 +102,11 @@ test("origin checks follow THIS_URL and native tokens", () => {
     }),
     true,
   );
+  // Electron/Capacitor: odd Origins are fine when auth.token is present.
+  assert.equal(originAllowed("null", { thisUrl, nodeEnv: "production", hasAuthToken: true }), true);
+  assert.equal(originAllowed("capacitor://localhost", { thisUrl, nodeEnv: "production", hasAuthToken: true }), true);
+  assert.equal(originAllowed("", { thisUrl, nodeEnv: "production", hasAuthToken: true }), true);
+  assert.equal(originAllowed("null", { thisUrl, nodeEnv: "production", hasAuthToken: false }), false);
   assert.equal(originAllowed("http://8.8.8.8:3000", { thisUrl, nodeEnv: "development", hasAuthToken: false }), false);
   // Local THIS_URL + phone on LAN works even when NODE_ENV is unset/production.
   assert.equal(originAllowed("http://192.168.1.20:3000", {

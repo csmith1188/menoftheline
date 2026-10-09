@@ -3186,10 +3186,16 @@ io.use((socket, next) => {
   const origin = socket.handshake.headers && socket.handshake.headers.origin;
   const token = socket.handshake.auth && socket.handshake.auth.token;
   const hasAuthToken = typeof token === "string" && Boolean(token.trim());
+  // Cookie browsers sometimes omit Origin on Engine.IO polls; lane.sid is enough
+  // (SameSite=Lax will not send it on cross-site POSTs from evil.com).
+  const cookieHeader = String(
+    (socket.handshake.headers && socket.handshake.headers.cookie) || "",
+  );
+  const hasSessionCookie = /(?:^|;\s*)lane\.sid=/.test(cookieHeader);
   if (!originAllowed(origin, {
     thisUrl: THIS_URL,
     nodeEnv: process.env.NODE_ENV,
-    hasAuthToken,
+    hasAuthToken: hasAuthToken || hasSessionCookie,
   })) {
     let originHost;
     try {
@@ -3200,8 +3206,10 @@ io.use((socket, next) => {
     logger.warn({
       event: "origin_rejected",
       socketId: socket.id,
-      originHost,
-      origin: origin ? String(origin).slice(0, 120) : undefined,
+      originHost: originHost || undefined,
+      origin: origin != null && origin !== "" ? String(origin).slice(0, 120) : "(none)",
+      hasAuthToken,
+      hasSessionCookie,
       thisUrl: THIS_URL,
     }, "socket origin rejected");
     next(new Error("origin not allowed"));

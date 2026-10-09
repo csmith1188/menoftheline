@@ -139,20 +139,22 @@ export function apexSiblingHost(hostname) {
 }
 
 /**
- * Browser sockets must send an Origin that matches THIS_URL (or its www/apex sibling).
+ * Browser sockets (cookie auth) must send an Origin that matches THIS_URL
+ * (or its www/apex sibling). Packaged Electron/Capacitor clients authenticate
+ * with auth.token (session id); for those, Origin is ignored — shells often
+ * send Origin "null", capacitor://localhost, or https://localhost.
  *
  * Extra allowance for loopback / private LAN Origins when:
  * - NODE_ENV is development or test, or
  * - THIS_URL itself is loopback/private (local play with phones on Wi‑Fi
  *   while THIS_URL stays http://localhost:PORT — works even if NODE_ENV
  *   was never set in .env).
- *
- * A missing Origin is a non-browser client and is allowed only when the
- * native API token is present on the handshake.
  */
 export function originAllowed(origin, { thisUrl, nodeEnv, hasAuthToken } = {}) {
+  // Bearer session id is sufficient for native/shell clients.
+  if (hasAuthToken) return true;
   const value = typeof origin === "string" ? origin.trim() : "";
-  if (!value) return Boolean(hasAuthToken);
+  if (!value || value === "null") return false;
   let expected = "";
   let thisHost = "";
   let thisProto = "https:";

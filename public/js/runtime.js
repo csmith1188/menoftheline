@@ -199,8 +199,8 @@ export function connectSocket(extra = {}) {
     clientVersion: CLIENT_VERSION,
     ...extra.auth,
   };
-  const remote = serverUrl();
-  if (remote && isCrossOriginApiUrl(remote)) {
+  // Shells always send the session token (required for Origin bypass on the server).
+  if (isShell()) {
     const token = getToken();
     if (token) auth.token = token;
   }

@@ -39,10 +39,61 @@ export {
 
 function drawProjectile(ctx, shot) {
   const shell = UNIT_STATS.troop;
+  const color = shot.color || shell.projectileColor;
+  const size = shot.size || shell.projectileSize;
+  const trail = shot.trail;
+  if (trail && trail.length > 1) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 1; i < trail.length; i += 1) {
+      const t = i / (trail.length - 1);
+      ctx.beginPath();
+      ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.12 + 0.5 * t;
+      ctx.lineWidth = size * (0.25 + 0.7 * t);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   ctx.beginPath();
-  ctx.arc(shot.x, shot.y, shot.size || shell.projectileSize, 0, Math.PI * 2);
-  ctx.fillStyle = shot.color || shell.projectileColor;
+  ctx.arc(shot.x, shot.y, size, 0, Math.PI * 2);
+  ctx.fillStyle = color;
   ctx.fill();
+}
+
+function stepSmokePuffs(board, dt) {
+  const puffs = board.smokePuffs;
+  if (!puffs || !puffs.length) return;
+  let write = 0;
+  for (let i = 0; i < puffs.length; i += 1) {
+    const puff = puffs[i];
+    puff.age += dt;
+    if (puff.age >= puff.life) continue;
+    puff.x += puff.vx * dt;
+    puff.y += puff.vy * dt;
+    puff.vx *= Math.max(0, 1 - 2.4 * dt);
+    puff.vy *= Math.max(0, 1 - 2.4 * dt);
+    puffs[write] = puff;
+    write += 1;
+  }
+  puffs.length = write;
+}
+
+function drawSmokePuffs(ctx, puffs) {
+  if (!puffs || !puffs.length) return;
+  for (let i = 0; i < puffs.length; i += 1) {
+    const puff = puffs[i];
+    const t = Math.min(1, puff.age / puff.life);
+    const fade = (1 - t) * (1 - t);
+    const r = puff.r0 + (puff.r1 - puff.r0) * t;
+    ctx.beginPath();
+    ctx.arc(puff.x, puff.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(210, 205, 195, ${5 * fade})`;
+    ctx.fill();
+  }
 }
 
 function drawSplat(ctx, splat) {
@@ -82,19 +133,22 @@ const viewTroopMethods = {
     const ordered = this.order === "reform" || this.order === "halt"
       || this.order === "charge" || this.order === "fallback"
       || this.order === "retreat";
-    ctx.strokeStyle = this.order === "halt" && this.squared
-      ? CONFIG.colors.reform
-      : this.order === "halt"
-      ? CONFIG.colors.halt
-      : this.order === "reform"
+    const broken = this.broken;
+    ctx.strokeStyle = broken
+      ? "#000000"
+      : this.order === "halt" && this.squared
         ? CONFIG.colors.reform
-        : this.order === "charge"
-          ? CONFIG.colors.charge
-          : this.order === "fallback"
-            ? CONFIG.colors.fallback
-            : this.order === "retreat"
-              ? CONFIG.colors.retreat
-              : "#0d1218";
+        : this.order === "halt"
+          ? CONFIG.colors.halt
+          : this.order === "reform"
+            ? CONFIG.colors.reform
+            : this.order === "charge"
+              ? CONFIG.colors.charge
+              : this.order === "fallback"
+                ? CONFIG.colors.fallback
+                : this.order === "retreat"
+                  ? CONFIG.colors.retreat
+                  : "#0d1218";
     ctx.lineWidth = ordered ? 3 : 2;
 
     const r = this.bodyRadius();
@@ -105,19 +159,32 @@ const viewTroopMethods = {
       ctx.fillRect(this.x - pad, this.y - pad, pad * 2, pad * 2);
     }
     ctx.fillStyle = fill;
+    /** Closed shapes: stroke sits inside the fill so a thick broken rim does not grow the body. */
+    const paintClosed = () => {
+      ctx.fill();
+      if (!broken) {
+        ctx.stroke();
+        return;
+      }
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = "#000000";
+      // Clip keeps only the inward half; double width so the visible rim matches.
+      ctx.lineWidth = (ordered ? 5 : 4) * 2;
+      ctx.stroke();
+      ctx.restore();
+    };
     if (this.type === "cannon") {
       ctx.beginPath();
       ctx.arc(this.x, this.y, r * 0.8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      paintClosed();
     } else if (this.type === "skirmisher") {
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
       ctx.lineTo(this.x + r, this.y + r);
       ctx.lineTo(this.x - r, this.y + r);
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      paintClosed();
     } else if (this.type === "dragoon") {
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
@@ -125,13 +192,15 @@ const viewTroopMethods = {
       ctx.lineTo(this.x, this.y + r);
       ctx.lineTo(this.x - r, this.y);
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      paintClosed();
     } else if (this.type === "officer") {
       const s = r * 0.75;
+      const outer = ordered ? 5 : 4;
+      // Broken: keep outer size, shrink the fill so the black rim grows inward.
+      const inner = broken ? (ordered ? 1.5 : 1) : (ordered ? 3 : 2);
       ctx.save();
       ctx.lineCap = "round";
-      ctx.lineWidth = ordered ? 5 : 4;
+      ctx.lineWidth = outer;
       ctx.beginPath();
       ctx.moveTo(this.x - s, this.y - s);
       ctx.lineTo(this.x + s, this.y + s);
@@ -139,7 +208,7 @@ const viewTroopMethods = {
       ctx.lineTo(this.x - s, this.y + s);
       ctx.stroke();
       ctx.strokeStyle = fill;
-      ctx.lineWidth = ordered ? 3 : 2;
+      ctx.lineWidth = inner;
       ctx.beginPath();
       ctx.moveTo(this.x - s, this.y - s);
       ctx.lineTo(this.x + s, this.y + s);
@@ -152,15 +221,17 @@ const viewTroopMethods = {
       const nx = -tan.y;
       const ny = tan.x;
       const len = r * 0.6;
+      const outer = ordered ? 12 : 10;
+      const inner = broken ? (ordered ? 4 : 3) : (ordered ? 8 : 6);
       ctx.save();
       ctx.lineCap = "round";
-      ctx.lineWidth = ordered ? 12 : 10;
+      ctx.lineWidth = outer;
       ctx.beginPath();
       ctx.moveTo(this.x - nx * len, this.y - ny * len);
       ctx.lineTo(this.x + nx * len, this.y + ny * len);
       ctx.stroke();
       ctx.strokeStyle = fill;
-      ctx.lineWidth = ordered ? 8 : 6;
+      ctx.lineWidth = inner;
       ctx.stroke();
       ctx.restore();
     }
@@ -795,6 +866,7 @@ const boardMethods = {
     }
     drawDebugRanges(ctx, this);
     this.drawLaneHover(ctx);
+    drawSmokePuffs(ctx, this.smokePuffs);
     for (let i = 0; i < this.projectiles.length; i += 1) {
       drawProjectile(ctx, this.projectiles[i]);
     }
@@ -808,6 +880,12 @@ const boardMethods = {
     if (!this.player) return;
     this._frameInspectReady = false;
     this._frameInspect = null;
+    const now = performance.now();
+    const dt = this._smokeAt != null
+      ? Math.min(0.05, Math.max(0, (now - this._smokeAt) / 1000))
+      : 0;
+    this._smokeAt = now;
+    stepSmokePuffs(this, dt);
     this.presentLaneCenters();
     presentTroopMotion(this);
     if (this.refreshHoldSelect) this.refreshHoldSelect();

@@ -344,7 +344,8 @@ class Projectile {
  * Color marks whether the hit was a shot or a melee swing.
  */
 class HitSplat {
-  constructor(x, y, amount, kind) {
+  constructor(x, y, amount, kind, id) {
+    this.id = id || 0;
     this.x = x + (Math.random() - 0.5) * 14;
     this.y = y - 12;
     this.amount = amount;
@@ -4966,6 +4967,7 @@ export class GameSim {
     this.sounds = [];
     this.nextTroopId = 1;
     this.nextProjectileId = 1;
+    this.nextSplatId = 1;
     this.winner = null;
     this.winReason = null;
     this.elapsed = 0;
@@ -5303,6 +5305,7 @@ export class GameSim {
     for (let i = 0; i < this.splats.length; i += 1) {
       const splat = this.splats[i];
       splats.push({
+        id: splat.id,
         x: splat.x,
         y: splat.y,
         amount: splat.amount,
@@ -5797,7 +5800,7 @@ export class GameSim {
 
   /** Create a floating damage number at a world point. */
   spawnSplat(x, y, amount, kind) {
-    this.splats.push(new HitSplat(x, y, splatDamage(amount), kind));
+    this.splats.push(new HitSplat(x, y, splatDamage(amount), kind, this.nextSplatId++));
   }
 
   /** Rise and drop expired hit splats. */

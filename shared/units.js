@@ -14,6 +14,13 @@ import { CONFIG } from "./config.js";
  * chargeMultiplier and flankMultiplier apply to outgoing damage.
  * officerDamageMultiplier scales damage when hitting an officer.
  */
+/** Troop musket balls (and troop variants). */
+const PROJECTILE_COLOR_TROOP = "#f3d27a";
+/** Non-troop small arms (skirmisher, dragoon, officer, …). */
+const PROJECTILE_COLOR_OTHER = "#fff3b0";
+/** Cannon / howitzer / horse gun / keep shells. */
+const PROJECTILE_COLOR_CANNON = "#ff8a28";
+
 const SHOT = {
   shootingPushback: 1,
   meleePushback: 2,
@@ -21,7 +28,7 @@ const SHOT = {
   chargeMultiplier: 1.2,
   projectileSize: 4,
   projectileSpeed: 220,
-  projectileColor: "#f3d27a",
+  projectileColor: PROJECTILE_COLOR_TROOP,
   radius: 10,
   fatigue: 100,
 };
@@ -65,6 +72,7 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
     shootingPushback: 2,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   dragoon: {
     ...SHOT,
@@ -85,6 +93,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   cannon: {
     ...SHOT,
@@ -105,6 +114,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_CANNON,
   },
   officer: {
     ...SHOT,
@@ -126,6 +136,7 @@ export const UNIT_STATS = {
     restoreRate: 2,
     restoreHealth: true,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   // Alternates (same base type in play). Elite: yellow square. Light: white square.
   /** Troop with more hit points; takes half pushback; stronger melee push. */
@@ -170,7 +181,8 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 2,
-    shootingPushback: 1
+    shootingPushback: 1,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   /** Dragoon: normal flank multiplier, stronger charge hits and melee push. */
   lancer: {
@@ -194,6 +206,7 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
     meleePushback: 4,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   /** Cannon: shorter reach, cannister — one shell per in-range row, no splash. */
   howitzer: {
@@ -215,6 +228,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_CANNON,
   },
   /**
    * Officer alternate: same fatigue/health restore as an Officer (half the
@@ -240,6 +254,7 @@ export const UNIT_STATS = {
     restoreRate: 2,
     restoreHealth: true,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   militia: {
     ...SHOT,
@@ -282,6 +297,7 @@ export const UNIT_STATS = {
     officerDamageMultiplier: 1,
     shootingPushback: 2,
     ignoreTerrainSlow: true,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   hussar: {
     ...SHOT,
@@ -302,6 +318,7 @@ export const UNIT_STATS = {
     restoreRate: 0,
     officerDamageMultiplier: 1,
     ignoreTerrainSlow: true,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
   horseGun: {
     ...SHOT,
@@ -321,6 +338,7 @@ export const UNIT_STATS = {
     restoreRange: 0,
     restoreRate: 0,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_CANNON,
   },
   engineer: {
     ...SHOT,
@@ -341,6 +359,7 @@ export const UNIT_STATS = {
     restoreRate: 0,
     restoreHealth: false,
     officerDamageMultiplier: 1,
+    projectileColor: PROJECTILE_COLOR_OTHER,
   },
 };
 export function unitStats(type) {

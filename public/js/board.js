@@ -1455,7 +1455,7 @@ function activeBonuses(board, troop, allies) {
 }
 
 function orderStatus(order, broken) {
-  if (broken) return { text: "Broken", color: CONFIG.colors.fallback };
+  if (broken) return { text: "Broken", color: "#000000" };
   if (order === "halt") return { text: "Halt", color: CONFIG.colors.halt };
   if (order === "reform") return { text: "Reform", color: CONFIG.colors.reform };
   if (order === "charge") return { text: "Charge", color: CONFIG.colors.charge };
@@ -1620,9 +1620,31 @@ function notePointMotion(entity, x, y, snapPx = SNAP_PX) {
   entity.motionNext = next;
 }
 
+/** Rise/fade hit numbers on the client so they are not locked to snapshot rate. */
+function stepSplats(board, dt) {
+  const list = board.splats;
+  if (!list || !list.length || !(dt > 0)) return;
+  let write = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const splat = list[i];
+    splat.age += dt;
+    if (splat.age >= CONFIG.splatLife) continue;
+    splat.y -= CONFIG.splatRise * dt;
+    list[write] = splat;
+    write += 1;
+  }
+  list.length = write;
+}
+
 /** Glide troops and shells between the last two authoritative samples. */
 export function presentTroopMotion(board, now = performance.now()) {
   if (!board) return;
+  const prevAt = board._fxAt;
+  board._fxAt = now;
+  const fxDt = prevAt != null
+    ? Math.min(0.05, Math.max(0, (now - prevAt) / 1000))
+    : 0;
+  stepSplats(board, fxDt);
   const alpha = lerpAlpha(now, board.motionAt || now, board.motionGapMs || 0);
   const sides = [board.player, board.enemy];
   for (let s = 0; s < sides.length; s += 1) {
@@ -1643,6 +1665,90 @@ export function presentTroopMotion(board, now = performance.now()) {
     const point = lerpPoint(shot.motionPrev, shot.motionNext, alpha, SHOT_SNAP_PX);
     shot.x = point.x;
     shot.y = point.y;
+    noteShotTrail(shot);
+  }
+}
+
+/** Keep a short recent-path ribbon for projectile trails (display only). */
+function noteShotTrail(shot) {
+  if (!shot.trail) shot.trail = [];
+  const trail = shot.trail;
+  const last = trail.length ? trail[trail.length - 1] : null;
+  if (last) {
+    const dx = shot.x - last.x;
+    const dy = shot.y - last.y;
+    if (dx * dx + dy * dy < 2.25) return;
+  }
+  trail.push({ x: shot.x, y: shot.y });
+  // Cap by point count and total length so the streak stays short.
+  const maxPts = 7;
+  const maxLen = 22;
+  while (trail.length > maxPts) trail.shift();
+  let len = 0;
+  for (let i = trail.length - 1; i > 0; i -= 1) {
+    const a = trail[i];
+    const b = trail[i - 1];
+    len += Math.hypot(a.x - b.x, a.y - b.y);
+    if (len > maxLen) {
+      trail.splice(0, i);
+      break;
+    }
+  }
+}
+
+/** Client-only muzzle smoke when a shell first appears in a snapshot. */
+function spawnGunSmoke(board, x, y, shotSize, color) {
+  if (!board.smokePuffs) board.smokePuffs = [];
+  const cannon = color === UNIT_STATS.cannon.projectileColor;
+  const count = cannon ? 5 : 3;
+  const base = Math.max(4, shotSize || UNIT_STATS.troop.projectileSize) * (cannon ? 1.7 : 1);
+  for (let i = 0; i < count; i += 1) {
+    const ang = Math.random() * Math.PI * 2;
+    const spit = 2 + Math.random() * base * 0.6;
+    board.smokePuffs.push({
+      x: x + Math.cos(ang) * spit * 0.35,
+      y: y + Math.sin(ang) * spit * 0.35,
+      vx: Math.cos(ang) * (8 + Math.random() * 18),
+      vy: Math.sin(ang) * (8 + Math.random() * 18) - 12,
+      r0: base * (0.35 + Math.random() * 0.25),
+      r1: base * (1.4 + Math.random() * 1.1),
+      age: 0,
+      life: 0.28 + Math.random() * 0.22,
+    });
+  }
+}
+
+/**
+ * Snapshot only announces new hit numbers (by id). Rise/fade runs locally
+ * every frame in presentTroopMotion so they are not locked to STATE_MS.
+ */
+function syncSplats(board, splatSnap, mx, prevElapsed, elapsed) {
+  if (!board.splats) board.splats = [];
+  if (!board._splatSeen) board._splatSeen = new Set();
+  // New match (sim clock restarted): drop leftover client FX.
+  if (
+    prevElapsed != null
+    && Number.isFinite(elapsed)
+    && elapsed + 0.1 < prevElapsed
+  ) {
+    board.splats.length = 0;
+    board._splatSeen.clear();
+  }
+  for (let i = 0; i < splatSnap.length; i += 1) {
+    const src = splatSnap[i];
+    const id = src.id != null ? src.id : `anon-${i}-${src.x}-${src.y}-${src.amount}`;
+    if (board._splatSeen.has(id)) continue;
+    board._splatSeen.add(id);
+    const age = Number(src.age);
+    board.splats.push({
+      id,
+      x: mx(src.x),
+      // Reconstruct birth height so the first paint is not mid-rise.
+      y: src.y + (Number.isFinite(age) ? age * CONFIG.splatRise : 0),
+      amount: src.amount,
+      kind: src.kind,
+      age: 0,
+    });
   }
 }
 
@@ -1653,18 +1759,26 @@ function syncProjectiles(board, shots, mx) {
     const shot = prev[i];
     if (shot && shot.id != null) byId.set(shot.id, shot);
   }
+  // Skip puffs on the first sync so reconnects do not smoke every in-flight shell.
+  const smokeReady = board._smokeReady === true;
   const next = new Array(shots.length);
   for (let i = 0; i < shots.length; i += 1) {
     const data = shots[i];
     const id = data.id != null ? data.id : i;
-    const existing = byId.get(id) || {};
-    notePointMotion(existing, mx(data.x), data.y, SHOT_SNAP_PX);
-    existing.id = id;
-    existing.size = data.size;
-    existing.color = data.color;
-    next[i] = existing;
+    const existing = byId.get(id);
+    const isNew = !existing;
+    const shot = existing || {};
+    const x = mx(data.x);
+    const y = data.y;
+    notePointMotion(shot, x, y, SHOT_SNAP_PX);
+    shot.id = id;
+    shot.size = data.size;
+    shot.color = data.color;
+    if (isNew && smokeReady) spawnGunSmoke(board, x, y, data.size, data.color);
+    next[i] = shot;
   }
   board.projectiles = next;
+  board._smokeReady = true;
 }
 
 function makeTroop(data, side, mx) {
@@ -1904,19 +2018,7 @@ export function applySnapshot(board, snap, seat, controlSide) {
   );
   syncCheckpoints(board, snap.checkpoints, mx, viewOwner);
   syncProjectiles(board, snap.projectiles || [], mx);
-  const splatSnap = snap.splats;
-  if (!board.splats || board.splats.length !== splatSnap.length) {
-    board.splats = new Array(splatSnap.length);
-  }
-  for (let i = 0; i < splatSnap.length; i += 1) {
-    const src = splatSnap[i];
-    const prev = board.splats[i] || (board.splats[i] = {});
-    prev.x = mx(src.x);
-    prev.y = src.y;
-    prev.amount = src.amount;
-    prev.kind = src.kind;
-    prev.age = src.age;
-  }
+  syncSplats(board, snap.splats || [], mx, prevElapsed, elapsed);
   board.mapId = snap.mapId || snap.terrain && snap.terrain.mapId || CONFIG.defaultMapId;
   const rawFeatures = (snap.terrain && snap.terrain.features) || [];
   if (!board.terrainFeatures || board.terrainFeatures.length !== rawFeatures.length) {
@@ -1988,6 +2090,7 @@ export function createBoardState(canvas) {
     enemy: null,
     checkpoints: [],
     projectiles: [],
+    smokePuffs: [],
     splats: [],
     mapId: CONFIG.defaultMapId,
     terrainFeatures: [],

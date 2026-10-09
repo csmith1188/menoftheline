@@ -20,31 +20,47 @@ function capacitorNative() {
   }
 }
 
-/**
- * True only for explicit packaged clients. Never infer from localStorage
- * motl.serverUrl — a leftover URL made the website use credentials:omit,
- * so /api/v1/me never saw lane.sid while the HTML header still looked logged in.
- */
-export function isShell() {
-  if (typeof window === "undefined") return false;
-  if (window.MOTL_SHELL === true) return true;
-  return capacitorNative();
+function pageOrigin() {
+  try {
+    return String(window.location?.origin || "").replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function normalizeBase(url) {
+  return String(url || "").trim().replace(/\/$/, "");
 }
 
 function injectedServerUrl() {
   if (typeof window === "undefined") return "";
-  const fromWindow = String(window.MOTL_SERVER_URL || "").trim();
-  if (fromWindow) return fromWindow.replace(/\/$/, "");
-  const fromBoot = String(boot().serverUrl || "").trim();
-  if (fromBoot) return fromBoot.replace(/\/$/, "");
-  if (!isShell()) return "";
+  const fromWindow = normalizeBase(window.MOTL_SERVER_URL || "");
+  if (fromWindow) return fromWindow;
+  const fromBoot = normalizeBase(boot().serverUrl || "");
+  if (fromBoot) return fromBoot;
   try {
-    const stored = String(localStorage.getItem(SERVER_KEY) || "").trim();
-    if (stored) return stored.replace(/\/$/, "");
+    return normalizeBase(localStorage.getItem(SERVER_KEY) || "");
   } catch {
-    // ignore
+    return "";
   }
-  return "";
+}
+
+/**
+ * Packaged Electron/Capacitor clients that talk to a *remote* game host.
+ * Same-origin http(s) website browsing is never a shell — even if MOTL_SHELL
+ * or Capacitor is injected — so lane.sid cookies are always sent.
+ */
+export function isShell() {
+  if (typeof window === "undefined") return false;
+  const remote = injectedServerUrl();
+  const here = pageOrigin();
+  if (here && remote && remote === here) return false;
+  if (here && !remote) {
+    // No remote API host: this is the website (or a mis-flagged shell). Use cookies.
+    return false;
+  }
+  if (window.MOTL_SHELL === true) return true;
+  return capacitorNative();
 }
 
 /** Remote API base for shells; empty on the website (same-origin relative URLs). */
@@ -53,9 +69,14 @@ export function serverUrl() {
   return injectedServerUrl();
 }
 
+/** True when fetch must not send cookies (cross-origin packaged shell). */
+function omitCredentials() {
+  return Boolean(isShell() && serverUrl());
+}
+
 /** Drop leftover shell storage so website cookie auth cannot be poisoned. */
 function clearWebsiteShellResidue() {
-  if (isShell()) return;
+  if (omitCredentials()) return;
   clearToken();
   try {
     localStorage.removeItem(SERVER_KEY);
@@ -111,15 +132,14 @@ export async function apiFetch(path, opts = {}) {
   if (json !== undefined) {
     headers.set("content-type", "application/json");
   }
-  // Website auth is the lane.sid cookie. Bearer is for shells only; a leftover
-  // motl.sessionToken after login regenerateSession would otherwise win and 401.
-  if (isShell()) {
+  // Website / same-origin: cookies. Remote shells: Bearer only.
+  if (omitCredentials()) {
     const token = getToken();
     if (token) headers.set("authorization", `Bearer ${token}`);
   }
   const url = path.startsWith("http") ? path : `${serverUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   const init = {
-    credentials: isShell() ? "omit" : "include",
+    credentials: omitCredentials() ? "omit" : "include",
     ...rest,
     headers,
   };
@@ -129,7 +149,7 @@ export async function apiFetch(path, opts = {}) {
 
 export async function ensureSession() {
   clearWebsiteShellResidue();
-  if (!isShell()) {
+  if (!omitCredentials()) {
     let me = await apiFetch("/api/v1/me");
     if (me.ok) return null;
     const res = await apiFetch("/api/v1/session", { method: "POST", json: {} });
@@ -170,7 +190,7 @@ export function connectSocket(extra = {}) {
     clientVersion: CLIENT_VERSION,
     ...extra.auth,
   };
-  if (isShell()) {
+  if (omitCredentials()) {
     const token = getToken();
     if (token) auth.token = token;
   }

@@ -19,7 +19,7 @@
         <label>Search<input type="search" name="q" value="<%= query.q %>" placeholder="Name, email, id…"></label>
         <label>Filter
           <select name="filter">
-            <% ["", "banned", "verified", "unverified", "recent", "local", "formbar", "discord", "multi", "admin", "moderator", "player"].forEach(function (f) { %>
+            <% ["", "banned", "deleted", "verified", "unverified", "recent", "local", "formbar", "discord", "multi", "admin", "moderator", "player"].forEach(function (f) { %>
               <option value="<%= f %>" <%= query.filter === f ? "selected" : "" %>><%= f || "All" %></option>
             <% }) %>
           </select>

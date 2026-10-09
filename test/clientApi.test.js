@@ -13,6 +13,7 @@ process.env.COUNTDOWN_MS = "50";
 process.env.SKIP_FORMBAR = "1";
 process.env.FORMBAR_LOGIN = "1";
 process.env.FORMBAR_PUBLIC_KEY_B64 = publicKeyB64;
+process.env.NO_FREE = "0";
 process.env.NODE_ENV = "test";
 
 const { listen, httpServer, io } = await import("../app.js");

@@ -34,6 +34,7 @@ shared/protocol.js        # PROTOCOL_VERSION + CLIENT_VERSION
 - **Shells:** remote `MOTL_SERVER_URL` + `POST /api/v1/session` → Bearer + Socket.IO `auth.token`. Stale Bearer falls back to cookie when present. Socket Origin checks are skipped when `auth.token` is present (`null` / `capacitor://localhost` / `file://` are common). Rebuild the desktop/Android export after client transport changes (`npm run client:export`).
 - **OAuth:** system browser / Custom Tabs → `/api/v1/login?return=motl://auth` → deep link `motl://auth?token=…`.
 - Server allowlists only `motl://auth` for native OAuth return.
+- **Account deletion:** `POST /api/v1/account/delete` with Bearer session and body `{ "confirm": "DELETE", "password"?: "..." }` (password required when the account has local credentials; otherwise the session must have a fresh login within 10 minutes). On success the server destroys the session; the shell should clear its stored token. See `docs/account-deletion.md`.
 
 ## Version compatibility
 

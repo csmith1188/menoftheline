@@ -307,9 +307,17 @@ export async function initDb() {
   logger.info({ event: "db_ready", dbFile: path.basename(dbFile) }, "database ready");
 }
 
-const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, tooltips, bgm_volume, news_email_opt_in, news_email_opt_in_at, news_email_opt_out_at, news_email_consent_source, news_email_consent_ip, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, created_at, updated_at`;
+const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, tooltips, bgm_volume, news_email_opt_in, news_email_opt_in_at, news_email_opt_out_at, news_email_consent_source, news_email_consent_ip, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, deleted_at, created_at, updated_at`;
 
 export const ACCOUNT_ROLES = Object.freeze(["player", "moderator", "admin"]);
+
+/** Public display name for soft-deleted accounts (also reserved for live users). */
+export const FALLEN_SOLDIER = "Fallen Soldier";
+
+/** Days to retain former_name for staff moderation; then cleared. */
+export const DELETED_IDENTITY_RETENTION_DAYS = 730;
+
+export const ACCOUNT_DELETE_REAUTH_MS = 10 * 60 * 1000;
 
 export function normalizeAccountRole(role) {
   const value = String(role || "player").trim().toLowerCase();
@@ -330,6 +338,80 @@ export function isAccountBanned(account, now = Date.now()) {
   const expires = account.ban_expires_at;
   if (expires != null && Number(expires) > 0 && Number(expires) <= now) return false;
   return true;
+}
+
+export function isAccountDeleted(account) {
+  return Boolean(account && account.deleted_at != null);
+}
+
+/** Public-facing name; never exposes former identity of deleted accounts. */
+export function publicDisplayName(account, { snapshotName } = {}) {
+  if (!account || isAccountDeleted(account)) return FALLEN_SOLDIER;
+  const live = account.name != null ? String(account.name).trim() : "";
+  if (live) return live;
+  const snap = snapshotName != null ? String(snapshotName).trim() : "";
+  return snap || FALLEN_SOLDIER;
+}
+
+function namesEqualInsensitive(a, b) {
+  return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+}
+
+function isReservedDisplayName(name) {
+  return namesEqualInsensitive(name, FALLEN_SOLDIER);
+}
+
+/** Scrub PII keys from admin audit JSON blobs. */
+function scrubAuditJson(raw) {
+  if (raw == null || raw === "") return null;
+  let obj;
+  try {
+    obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return null;
+  }
+  if (!obj || typeof obj !== "object") return null;
+  const drop = new Set([
+    "email", "password_hash", "formbar_id", "discord_id", "name",
+    "admin_notes", "news_email_consent_ip", "news_email_consent_source",
+  ]);
+  const out = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (drop.has(key)) continue;
+    out[key] = value;
+  }
+  try {
+    return JSON.stringify(out);
+  } catch {
+    return null;
+  }
+}
+
+function anonymizeChatJson(raw, formerName) {
+  if (raw == null || raw === "") return raw;
+  let rows;
+  try {
+    rows = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return raw;
+  }
+  if (!Array.isArray(rows)) return raw;
+  let changed = false;
+  const next = rows.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const copy = { ...entry };
+    if (copy.kind === "user" && copy.from != null && namesEqualInsensitive(copy.from, formerName)) {
+      copy.from = FALLEN_SOLDIER;
+      changed = true;
+    }
+    return copy;
+  });
+  if (!changed) return raw;
+  try {
+    return JSON.stringify(next);
+  } catch {
+    return raw;
+  }
 }
 
 async function ensureAccountColumn(cols, name, ddl) {
@@ -356,12 +438,22 @@ async function ensureAdminSchema() {
   await ensureAccountColumn(accountCols, "news_email_opt_out_at", "news_email_opt_out_at INTEGER");
   await ensureAccountColumn(accountCols, "news_email_consent_source", "news_email_consent_source TEXT");
   await ensureAccountColumn(accountCols, "news_email_consent_ip", "news_email_consent_ip TEXT");
+  await ensureAccountColumn(accountCols, "deleted_at", "deleted_at INTEGER");
   await run("CREATE INDEX IF NOT EXISTS accounts_role ON accounts (role)");
   await run("CREATE INDEX IF NOT EXISTS accounts_banned_at ON accounts (banned_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_last_seen ON accounts (last_seen_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_name_nocase ON accounts (name COLLATE NOCASE)");
   await run("CREATE INDEX IF NOT EXISTS accounts_email_verified ON accounts (email_verified_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_news_email ON accounts (news_email_opt_in, email_verified_at)");
+  await run("CREATE INDEX IF NOT EXISTS accounts_deleted_at ON accounts (deleted_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS deleted_account_identity (
+    account_id INTEGER PRIMARY KEY,
+    former_name TEXT,
+    deleted_at INTEGER NOT NULL,
+    deleted_via TEXT NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS deleted_account_identity_deleted_at ON deleted_account_identity (deleted_at)");
 
   const gameCols = await all("PRAGMA table_info(games)");
   if (!gameCols.some((col) => col.name === "win_reason")) {
@@ -556,7 +648,7 @@ async function ensureAdminSchema() {
 
 async function bootstrapAdminRoles() {
   const existing = await get(
-    "SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'",
+    "SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin' AND deleted_at IS NULL",
   );
   if (existing && Number(existing.n) > 0) return;
 
@@ -780,7 +872,7 @@ export async function getAccountByFormbar(formbarId) {
   const id = Number(formbarId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const row = await get(
-    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE formbar_id = ?`,
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE formbar_id = ? AND deleted_at IS NULL`,
     [id],
   );
   return row || null;
@@ -790,7 +882,7 @@ export async function getAccountByEmail(email) {
   const key = String(email || "").trim().toLowerCase();
   if (!key) return null;
   const row = await get(
-    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE email = ?`,
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE email = ? AND deleted_at IS NULL`,
     [key],
   );
   return row || null;
@@ -800,7 +892,7 @@ export async function getAccountByDiscord(discordId) {
   const key = String(discordId || "").trim();
   if (!key || key.length > 32) return null;
   const row = await get(
-    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE discord_id = ?`,
+    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE discord_id = ? AND deleted_at IS NULL`,
     [key],
   );
   return row || null;
@@ -819,14 +911,16 @@ export async function getAccountByName(name) {
   const key = String(name || "").trim();
   if (!key) return null;
   const row = await get(
-    `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE name = ? COLLATE NOCASE`,
+    `SELECT ${ACCOUNT_SELECT} FROM accounts
+     WHERE name = ? COLLATE NOCASE AND deleted_at IS NULL`,
     [key],
   );
   return row || null;
 }
 
-/** True if another account already uses this display name (case-insensitive). */
+/** True if another live account already uses this display name (case-insensitive). */
 export async function isDisplayNameTaken(name, excludeAccountId = null) {
+  if (isReservedDisplayName(name)) return true;
   const existing = await getAccountByName(name);
   if (!existing) return false;
   if (excludeAccountId != null && Number(existing.id) === Number(excludeAccountId)) {
@@ -871,15 +965,21 @@ export async function allocateUniqueDisplayName(desired, options = {}) {
 export async function setAccountDisplayName(accountId, name, { spendTicket = false } = {}) {
   const id = Number(accountId);
   if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+  const existing = await getAccount(id);
+  if (!existing) return { ok: false, error: "missing" };
+  if (isAccountDeleted(existing)) return { ok: false, error: "deleted" };
   const check = validateDisplayName(name);
   if (!check.ok) return { ok: false, error: "invalid", message: check.error };
+  if (isReservedDisplayName(check.name)) {
+    return { ok: false, error: "reserved", message: "That display name is reserved." };
+  }
 
   if (!spendTicket) {
     if (await isDisplayNameTaken(check.name, id)) {
       return { ok: false, error: "taken" };
     }
     const result = await run(
-      "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?",
+      "UPDATE accounts SET name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
       [check.name, Date.now(), id],
     );
     if (!result.changes) return { ok: false, error: "missing" };
@@ -890,7 +990,8 @@ export async function setAccountDisplayName(accountId, name, { spendTicket = fal
     await execRun("BEGIN IMMEDIATE");
     try {
       const taken = await execGet(
-        "SELECT id FROM accounts WHERE name = ? COLLATE NOCASE AND id != ? LIMIT 1",
+        `SELECT id FROM accounts
+         WHERE name = ? COLLATE NOCASE AND id != ? AND deleted_at IS NULL LIMIT 1`,
         [check.name, id],
       );
       if (taken) {
@@ -1036,10 +1137,17 @@ export async function deleteLocalAccount(accountId) {
     await execRun("BEGIN IMMEDIATE");
     try {
       const row = await execGet(
-        "SELECT id, formbar_id, discord_id, email, password_hash FROM accounts WHERE id = ?",
+        "SELECT id, formbar_id, discord_id, email, password_hash, deleted_at FROM accounts WHERE id = ?",
         [id],
       );
-      if (!row || row.formbar_id || row.discord_id || !row.email || !row.password_hash) {
+      if (
+        !row
+        || row.deleted_at != null
+        || row.formbar_id
+        || row.discord_id
+        || !row.email
+        || !row.password_hash
+      ) {
         await execRun("ROLLBACK");
         return false;
       }
@@ -1058,6 +1166,246 @@ export async function deleteLocalAccount(accountId) {
         await execRun("ROLLBACK");
       } catch (rollbackErr) {
         logRollbackFailed("deleteLocalAccount", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function getDeletedAccountIdentity(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const row = await get(
+    `SELECT account_id, former_name, deleted_at, deleted_via
+     FROM deleted_account_identity WHERE account_id = ?`,
+    [id],
+  );
+  return row || null;
+}
+
+/** Clear former_name after retention window (keeps row). */
+export async function purgeExpiredDeletedIdentities(now = Date.now()) {
+  const cutoff = Number(now) - DELETED_IDENTITY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const result = await run(
+    `UPDATE deleted_account_identity
+     SET former_name = NULL
+     WHERE former_name IS NOT NULL AND deleted_at < ?`,
+    [cutoff],
+  );
+  return Number(result.changes) || 0;
+}
+
+/** Best-effort wipe of express-session rows bound to an account. */
+export async function destroyAccountSessions(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return 0;
+  const table = await get(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+  );
+  if (!table) return 0;
+  const patterns = [
+    `%"accountId":${id}%`,
+    `%"accountId": ${id}%`,
+    `%"accountId":"${id}"%`,
+  ];
+  let total = 0;
+  for (const pattern of patterns) {
+    const result = await run("DELETE FROM sessions WHERE sess LIKE ?", [pattern]);
+    total += Number(result.changes) || 0;
+  }
+  return total;
+}
+
+/**
+ * Soft-delete an account: scrub PII, anonymize public snapshots, keep id for history.
+ * Idempotent when already deleted. Call destroyAccountSessions after success.
+ */
+export async function deleteAccountSelf(accountId, { via = "self" } = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet(
+        `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
+        [id],
+      );
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "missing" };
+      }
+      if (row.deleted_at != null) {
+        await execRun("COMMIT");
+        return { ok: true, alreadyDeleted: true, account: row };
+      }
+      if (isAdminRole(row.role)) {
+        const admins = await execGet(
+          "SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin' AND deleted_at IS NULL",
+        );
+        if (Number(admins?.n) <= 1) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "last_admin" };
+        }
+      }
+      if (Number(row.held) > 0) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "held_tickets" };
+      }
+      const pendingPaypal = await execGet(
+        `SELECT id FROM paypal_purchases
+         WHERE account_id = ? AND status IN ('created', 'approved', 'captured')
+         LIMIT 1`,
+        [id],
+      );
+      if (pendingPaypal) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "pending_paypal" };
+      }
+      const pendingDigipog = await execGet(
+        `SELECT id FROM ticket_purchases
+         WHERE account_id = ? AND status = 'pending'
+         LIMIT 1`,
+        [id],
+      );
+      if (pendingDigipog) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "pending_digipog" };
+      }
+
+      const formerName = String(row.name || "").trim() || FALLEN_SOLDIER;
+      const now = Date.now();
+      const freeTickets = Math.max(0, Number(row.tickets) || 0);
+
+      await execRun(
+        `INSERT INTO deleted_account_identity (account_id, former_name, deleted_at, deleted_via)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET
+           former_name = excluded.former_name,
+           deleted_at = excluded.deleted_at,
+           deleted_via = excluded.deleted_via`,
+        [id, formerName, now, String(via || "self").slice(0, 32)],
+      );
+
+      if (freeTickets > 0) {
+        await insertTicketLedger(execRun, {
+          accountId: id,
+          delta: -freeTickets,
+          balanceAfter: 0,
+          heldAfter: 0,
+          kind: "account_delete",
+          refType: "account",
+          refId: id,
+          reason: "self_service_account_deletion",
+          createdAt: now,
+        });
+      }
+
+      await execRun(
+        `UPDATE accounts SET
+          email = NULL,
+          password_hash = NULL,
+          formbar_id = NULL,
+          discord_id = NULL,
+          email_verified_at = NULL,
+          email_verified_by = NULL,
+          email_verified_reason = NULL,
+          name = ?,
+          role = 'player',
+          tickets = 0,
+          held = 0,
+          tooltips = 1,
+          bgm_volume = 50,
+          news_email_opt_in = 0,
+          news_email_opt_in_at = NULL,
+          news_email_opt_out_at = ?,
+          news_email_consent_source = NULL,
+          news_email_consent_ip = NULL,
+          banned_at = NULL,
+          ban_reason = NULL,
+          ban_expires_at = NULL,
+          banned_by_account_id = NULL,
+          admin_notes = NULL,
+          session_epoch = session_epoch + 1,
+          deleted_at = ?,
+          updated_at = ?
+         WHERE id = ?`,
+        [FALLEN_SOLDIER, now, now, now, id],
+      );
+
+      await execRun("DELETE FROM auth_tokens WHERE account_id = ?", [id]);
+      await execRun("DELETE FROM newsletter_unsub_tokens WHERE account_id = ?", [id]);
+      await execRun(
+        `UPDATE newsletter_outbox SET status = 'cancelled', last_error = 'account_deleted'
+         WHERE account_id = ? AND status IN ('pending', 'sending')`,
+        [id],
+      );
+
+      await execRun(
+        `UPDATE games SET name_a = ?, formbar_a = NULL WHERE account_a = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+      await execRun(
+        `UPDATE games SET name_b = ?, formbar_b = NULL WHERE account_b = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+
+      const chatGames = await execAll(
+        `SELECT id, chat_json FROM games
+         WHERE (account_a = ? OR account_b = ?) AND chat_json IS NOT NULL`,
+        [id, id],
+      );
+      for (const game of chatGames) {
+        const next = anonymizeChatJson(game.chat_json, formerName);
+        if (next !== game.chat_json) {
+          await execRun("UPDATE games SET chat_json = ? WHERE id = ?", [next, game.id]);
+        }
+      }
+
+      await execRun(
+        `UPDATE player_reports SET reporter_name = ? WHERE reporter_account_id = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+      await execRun(
+        `UPDATE player_reports SET reported_name = ? WHERE reported_account_id = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+      await execRun(
+        `UPDATE suggestions SET name = ?, formbar_id = NULL WHERE account_id = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+      await execRun(
+        `UPDATE wiki_revisions SET name = ?, formbar_id = NULL WHERE account_id = ?`,
+        [FALLEN_SOLDIER, id],
+      );
+      await execRun(
+        `UPDATE ticket_purchases SET formbar_id = NULL WHERE account_id = ?`,
+        [id],
+      );
+
+      const audits = await execAll(
+        `SELECT id, before_json, after_json FROM admin_audit
+         WHERE target_type = 'account' AND target_id = ?`,
+        [String(id)],
+      );
+      for (const audit of audits) {
+        await execRun(
+          "UPDATE admin_audit SET before_json = ?, after_json = ? WHERE id = ?",
+          [scrubAuditJson(audit.before_json), scrubAuditJson(audit.after_json), audit.id],
+        );
+      }
+
+      await execRun("COMMIT");
+      const account = await execGet(
+        `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
+        [id],
+      );
+      return { ok: true, alreadyDeleted: false, account, formerName };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("deleteAccountSelf", rollbackErr);
       }
       throw err;
     }
@@ -1083,6 +1431,7 @@ export async function linkFormbarToAccount(accountId, formbarId) {
   if (!Number.isInteger(fid) || fid <= 0) return { ok: false, error: "bad_formbar" };
   const target = await getAccount(id);
   if (!target) return { ok: false, error: "missing" };
+  if (isAccountDeleted(target)) return { ok: false, error: "deleted" };
   if (target.formbar_id && Number(target.formbar_id) === fid) {
     return { ok: true, account: target, merged: false };
   }
@@ -1114,6 +1463,7 @@ export async function linkDiscordToAccount(accountId, discordId) {
   if (!did || did.length > 32) return { ok: false, error: "bad_discord" };
   const target = await getAccount(id);
   if (!target) return { ok: false, error: "missing" };
+  if (isAccountDeleted(target)) return { ok: false, error: "deleted" };
   if (target.discord_id && String(target.discord_id) === did) {
     return { ok: true, account: target, merged: false };
   }
@@ -1148,6 +1498,9 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
   const donor = await getAccount(donorId);
   if (!survivor || !donor) return { ok: false, error: "missing" };
   if (survivor.id === donor.id) return { ok: true, account: survivor };
+  if (isAccountDeleted(survivor) || isAccountDeleted(donor)) {
+    return { ok: false, error: "deleted" };
+  }
 
   const survivorFormbar = survivor.formbar_id != null ? Number(survivor.formbar_id) : null;
   const donorFormbar = donor.formbar_id != null ? Number(donor.formbar_id) : null;
@@ -2446,7 +2799,8 @@ export async function listNewsEmailEligibleAccounts() {
   const now = Date.now();
   const rows = await all(
     `SELECT ${ACCOUNT_SELECT} FROM accounts
-     WHERE email IS NOT NULL AND TRIM(email) != ''
+     WHERE deleted_at IS NULL
+       AND email IS NOT NULL AND TRIM(email) != ''
        AND email_verified_at IS NOT NULL
        AND news_email_opt_in = 1
        AND (banned_at IS NULL OR (ban_expires_at IS NOT NULL AND ban_expires_at <= ?))`,
@@ -2939,7 +3293,7 @@ export async function systemStats() {
     `SELECT COUNT(*) AS accounts,
             COALESCE(SUM(tickets), 0) AS tickets,
             COALESCE(SUM(held), 0) AS held
-     FROM accounts`,
+     FROM accounts WHERE deleted_at IS NULL`,
   );
   const games = await get(
     `SELECT COUNT(*) AS finished,
@@ -2959,7 +3313,7 @@ export async function systemStats() {
     `SELECT
        COALESCE(SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END), 0) AS admins,
        COALESCE(SUM(CASE WHEN role = 'moderator' THEN 1 ELSE 0 END), 0) AS moderators
-     FROM accounts`,
+     FROM accounts WHERE deleted_at IS NULL`,
   );
   return {
     accounts: accounts.accounts,
@@ -3049,7 +3403,9 @@ export async function listAdminAudit({
 }
 
 export async function countAdmins() {
-  const row = await get("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'");
+  const row = await get(
+    "SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin' AND deleted_at IS NULL",
+  );
   return Number(row?.n) || 0;
 }
 
@@ -3461,6 +3817,12 @@ export async function searchAccounts({
   } else if (filter === "admin" || filter === "moderator" || filter === "player") {
     where.push("role = ?");
     params.push(filter);
+  } else if (filter === "deleted") {
+    where.push("deleted_at IS NOT NULL");
+  }
+  // Hide tombstones by default; exact id search and filter=deleted still find them.
+  if (filter !== "deleted" && !(/^\d+$/.test(query))) {
+    where.push("deleted_at IS NULL");
   }
   let order = "created_at DESC";
   if (sort === "name") order = "name COLLATE NOCASE ASC";
@@ -3555,16 +3917,35 @@ export async function listAccountMmrHistory(accountId, { page = 1, pageSize = 20
      LIMIT ? OFFSET ?`,
     [...params, size, offset],
   );
+  const opponentIds = [...new Set(
+    raw.map((g) => {
+      const isA = Number(g.account_a) === id;
+      return isA ? g.account_b : g.account_a;
+    }).filter((oid) => oid != null),
+  )];
+  const opponentNames = new Map();
+  for (const oid of opponentIds) {
+    const opp = await getAccount(oid);
+    const snap = raw.find((g) => Number(g.account_a) === oid || Number(g.account_b) === oid);
+    const snapshotName = snap
+      ? (Number(snap.account_a) === oid ? snap.name_a : snap.name_b)
+      : null;
+    opponentNames.set(oid, publicDisplayName(opp, { snapshotName }));
+  }
   const rows = raw.map((g) => {
     const isA = Number(g.account_a) === id;
     const mmrBefore = isA ? g.mmr_a_before : g.mmr_b_before;
     const mmrAfter = isA ? g.mmr_a_after : g.mmr_b_after;
     const won = isA ? g.winner_side === "player" : g.winner_side === "enemy";
+    const opponentAccountId = isA ? g.account_b : g.account_a;
+    const snapshotName = isA ? g.name_b : g.name_a;
     return {
       gameId: g.id,
       endedAt: g.ended_at,
-      opponentName: isA ? g.name_b : g.name_a,
-      opponentAccountId: isA ? g.account_b : g.account_a,
+      opponentName: opponentAccountId != null
+        ? (opponentNames.get(opponentAccountId) || publicDisplayName(null, { snapshotName }))
+        : (snapshotName || "Unknown"),
+      opponentAccountId,
       won,
       mmrBefore,
       mmrAfter,
@@ -3660,7 +4041,7 @@ export async function analyticsSnapshot(range = "30d") {
        COALESCE(SUM(CASE WHEN email IS NOT NULL THEN 1 ELSE 0 END), 0) AS local_email,
        COALESCE(SUM(tickets), 0) AS tickets,
        COALESCE(SUM(held), 0) AS held
-     FROM accounts`,
+     FROM accounts WHERE deleted_at IS NULL`,
     [since || 0],
   );
 

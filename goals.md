@@ -46,7 +46,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 # Site
 - revenue goals
 - Game over match stats
-- account deletion
+- ~~account deletion~~
 - ~~delete your own bug reports~~
 - don't fill formbar id's for guest / non-formbar users
 - ~~news mailer~~ (admin News editor + opt-in drip newsletter)

@@ -18,9 +18,14 @@
       <p><a href="/admin/users">← Users</a></p>
       <h2><%= a.name %> <span class="admin-pill <%= a.role === 'admin' ? 'admin-role' : '' %>"><%= a.role %></span>
         <% if (detail.banned) { %><span class="admin-pill banned">banned</span><% } %>
+        <% if (detail.deleted) { %><span class="admin-pill banned">deleted</span><% } %>
       </h2>
       <div class="admin-grid">
         <div><strong>Internal ID</strong><div class="admin-mono"><%= a.id %></div></div>
+        <% if (detail.deleted) { %>
+          <div><strong>Former name</strong><div><%= detail.formerName || "—" %></div></div>
+          <div><strong>Deleted</strong><div><%= detail.deletedAt ? new Date(detail.deletedAt).toLocaleString() : "—" %><% if (detail.deletedVia) { %> (<%= detail.deletedVia %>)<% } %></div></div>
+        <% } %>
         <div><strong>Email</strong><div><%= a.email || "—" %></div></div>
         <div><strong>Formbar</strong><div class="admin-mono"><%= a.formbar_id || "—" %></div></div>
         <div><strong>Discord</strong><div class="admin-mono"><%= a.discord_id || "—" %></div></div>

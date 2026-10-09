@@ -22,6 +22,9 @@
         <% if (localAccountsEnabled) { %>
           <form method="post" action="/login">
 <%- include("csrf-field") %>
+            <% if (typeof nextPath !== "undefined" && nextPath) { %>
+              <input type="hidden" name="next" value="<%= nextPath %>">
+            <% } %>
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" required value="<%= email || "" %>">
             <label for="password">Password</label>
@@ -45,11 +48,11 @@
         <% } %>
         <% if (formbarLoginEnabled) { %>
           <% if (localAccountsEnabled) { %><p class="hint">Or</p><% } %>
-          <a class="action" href="/login?formbar=1">Log in with Formbar</a>
+          <a class="action" href="/login?formbar=1<%= typeof nextQuery !== 'undefined' ? nextQuery : '' %>">Log in with Formbar</a>
         <% } %>
         <% if (discordLoginEnabled) { %>
           <% if (localAccountsEnabled || formbarLoginEnabled) { %><p class="hint">Or</p><% } %>
-          <a class="action" href="/login?discord=1">Log in with Discord</a>
+          <a class="action" href="/login?discord=1<%= typeof nextQuery !== 'undefined' ? nextQuery : '' %>">Log in with Discord</a>
         <% } %>
       <% } %>
     </section>

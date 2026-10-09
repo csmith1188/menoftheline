@@ -21,16 +21,22 @@ import {
   createSuggestion,
   deleteOwnBug,
   deleteOwnSuggestion,
+  deleteAccountSelf,
   deleteLocalAccount,
+  destroyAccountSessions,
   dataPath,
   ensureGuest,
   failTicketPurchase,
   findAccountForProfile,
   FREE_OPEN_SUGGESTIONS,
+  FALLEN_SOLDIER,
+  ACCOUNT_DELETE_REAUTH_MS,
   getAccount,
   getAccountByEmail,
   getAccountByFormbar,
   getUser,
+  isAccountDeleted,
+  publicDisplayName,
   getWikiPageBySlug,
   initDb,
   linkDiscordToAccount,
@@ -532,10 +538,23 @@ const DEFAULT_APP_RETURN = "motl://auth";
 
 function accountPublic(account) {
   if (!account) return null;
+  if (isAccountDeleted(account)) {
+    return {
+      formbarId: null,
+      discordId: null,
+      name: FALLEN_SOLDIER,
+      mmr: account.mmr,
+      tickets: 0,
+      held: 0,
+      wins: account.wins,
+      losses: account.losses,
+      deleted: true,
+    };
+  }
   return {
     formbarId: account.formbar_id,
     discordId: account.discord_id || null,
-    name: account.name,
+    name: publicDisplayName(account),
     mmr: account.mmr,
     tickets: account.tickets,
     held: account.held,
@@ -553,11 +572,12 @@ function playerPublic(player) {
   };
 }
 
-function setAccountSession(sess, account) {
+function setAccountSession(sess, account, { markReauth = false } = {}) {
   sess.accountId = account.id;
   sess.formbarId = account.formbar_id || null;
-  sess.formbarName = account.name;
+  sess.formbarName = publicDisplayName(account);
   sess.sessionEpoch = Number(account.session_epoch || 0);
+  if (markReauth) sess.reauthAt = Date.now();
 }
 
 function regenerateSession(req) {
@@ -574,13 +594,18 @@ function regenerateSession(req) {
 }
 
 async function establishAccountSession(req, account, notice, provider = null, res = null) {
+  if (isAccountDeleted(account)) {
+    const err = new Error("deleted");
+    err.code = "deleted";
+    throw err;
+  }
   if (isAccountBanned(account)) {
     const err = new Error("banned");
     err.code = "banned";
     throw err;
   }
   await regenerateSession(req);
-  setAccountSession(req.session, account);
+  setAccountSession(req.session, account, { markReauth: true });
   if (notice) req.session.notice = notice;
   touchAccountLogin(account.id, provider).catch(() => {});
   if (res) {
@@ -589,6 +614,11 @@ async function establishAccountSession(req, account, notice, provider = null, re
       bgmVolume: bgmVolumePercent(account),
     }, THIS_URL);
   }
+}
+
+function sessionReauthFresh(sess, now = Date.now()) {
+  const at = Number(sess && sess.reauthAt);
+  return Number.isFinite(at) && at > 0 && (now - at) <= ACCOUNT_DELETE_REAUTH_MS;
 }
 
 /** User-facing notice for profile link / merge failures. */
@@ -665,14 +695,23 @@ async function resolveSessionAccount(sess) {
   if (!sess) return null;
   if (sess.accountId) {
     const account = await getAccount(sess.accountId);
-    if (account) {
+    if (account && !isAccountDeleted(account)) {
+      const sessEpoch = Number(sess.sessionEpoch || 0);
+      const acctEpoch = Number(account.session_epoch || 0);
+      if (sessEpoch !== acctEpoch) return null;
       setAccountSession(sess, account);
       return account;
+    }
+    if (account && isAccountDeleted(account)) {
+      sess.accountId = null;
+      sess.formbarId = null;
+      sess.formbarName = null;
+      return null;
     }
   }
   if (sess.formbarId) {
     const account = await getAccountByFormbar(sess.formbarId);
-    if (account) {
+    if (account && !isAccountDeleted(account)) {
       setAccountSession(sess, account);
       return account;
     }
@@ -702,17 +741,19 @@ async function applyFormbarToken(sess, tokenString) {
   const name = nameCheck.ok ? nameCheck.name : `Player ${identity.id}`;
   const account = await upsertAccount(identity.id, name);
   if (!account) return null;
-  setAccountSession(sess, account);
+  if (isAccountDeleted(account)) return null;
+  setAccountSession(sess, account, { markReauth: true });
   return account;
 }
 
 async function playerFromSession(sess, options = {}) {
   if (!sess) return null;
   const account = await resolveSessionAccount(sess);
+  if (account && isAccountDeleted(account)) return null;
   if (account && accountEmailVerified(account)) {
     return {
       id: `a:${account.id}`,
-      name: account.name,
+      name: publicDisplayName(account),
       accountId: account.id,
       formbarId: account.formbar_id || null,
       mmr: account.mmr,
@@ -1029,7 +1070,7 @@ async function completeFormbarLogin(req, res, token) {
     req.session.save(() => res.redirect("/login"));
     return;
   }
-  setAccountSession(req.session, account);
+  setAccountSession(req.session, account, { markReauth: true });
   if (account) touchAccountLogin(account.id, "formbar").catch(() => {});
   if (account) {
     writePrefsCookies(res, {
@@ -1043,7 +1084,9 @@ async function completeFormbarLogin(req, res, token) {
     userId: account && account.id,
     formbarId: userId,
   }, "Formbar login ok");
-  req.session.save(() => res.redirect("/"));
+  const nextPath = safeNext(req.session.oauthNext || "/");
+  delete req.session.oauthNext;
+  req.session.save(() => res.redirect(nextPath || "/"));
 }
 
 function discordCallbackUrl(req) {
@@ -1178,7 +1221,7 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     req.session.save(() => res.redirect("/login"));
     return;
   }
-  setAccountSession(req.session, account);
+  setAccountSession(req.session, account, { markReauth: true });
   touchAccountLogin(account.id, "discord").catch(() => {});
   writePrefsCookies(res, {
     tooltips: tooltipsEnabled(account),
@@ -1205,12 +1248,18 @@ app.get("/login", async (req, res, next) => {
         res.status(404).send("Formbar login is disabled.");
         return;
       }
+      req.session.oauthNext = safeNext(req.query.next || "/");
       const redirectURL = encodeURIComponent(`${THIS_URL}/login`);
-      res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      req.session.save(() => {
+        res.redirect(`${AUTH_URL}/oauth?redirectURL=${redirectURL}`);
+      });
       return;
     }
     if (req.query.discord === "1") {
-      await beginDiscordOAuth(req, res, { callbackUrl: discordCallbackUrl(req) });
+      await beginDiscordOAuth(req, res, {
+        callbackUrl: discordCallbackUrl(req),
+        nextPath: safeNext(req.query.next || "/"),
+      });
       return;
     }
     if (!anyLoginEnabled()) {
@@ -1229,12 +1278,16 @@ app.get("/login", async (req, res, next) => {
       res.redirect("/");
       return;
     }
+    const nextPath = safeNext(req.query && req.query.next);
+    const nextForLogin = nextPath !== "/" ? nextPath : "";
     req.session.save(() => res.render("login", {
       nav: null,
       viewer: null,
       notice: takeNotice(req),
       email: "",
       disabled: false,
+      nextPath: nextForLogin,
+      nextQuery: nextForLogin ? `&next=${encodeURIComponent(nextForLogin)}` : "",
     }));
   } catch (err) {
     next(err);
@@ -1307,10 +1360,16 @@ app.post("/login", async (req, res, next) => {
       : undefined;
     await establishAccountSession(req, account, notice, "local", res);
     logger.info({ event: "auth_login", provider: "local", userId: account.id }, "local login ok");
-    req.session.save(() => res.redirect("/"));
+    const nextPath = safeNext(req.body && req.body.next);
+    req.session.save(() => res.redirect(nextPath || "/"));
   } catch (err) {
     if (err && err.code === "banned") {
       req.session.notice = "This account is banned.";
+      req.session.save(() => res.redirect("/login"));
+      return;
+    }
+    if (err && err.code === "deleted") {
+      req.session.notice = "That account no longer exists.";
       req.session.save(() => res.redirect("/login"));
       return;
     }
@@ -1895,7 +1954,10 @@ app.get("/profile/:id", async (req, res, next) => {
     const account = await findAccountForProfile(req.params.id);
     const viewer = await pageViewer(req);
     const privileged = accountEmailVerified(viewer);
-    const isOwner = Boolean(account && viewer && account.id === viewer.id);
+    const deleted = isAccountDeleted(account);
+    const isOwner = Boolean(
+      account && viewer && account.id === viewer.id && !deleted,
+    );
     const mmrPage = Math.max(1, Number.parseInt(String(req.query.mmrpage || "1"), 10) || 1);
     const mmrHistory = account
       ? await listAccountMmrHistory(account.id, { page: mmrPage })
@@ -1910,9 +1972,12 @@ app.get("/profile/:id", async (req, res, next) => {
       ? await listOpenSuggestionsForAccount(account.id)
       : [];
     const body = {
-      account,
+      account: account
+        ? { ...account, name: publicDisplayName(account) }
+        : null,
       viewer,
       isOwner,
+      deleted,
       mmrHistory,
       playStats,
       myBugs,
@@ -2007,6 +2072,115 @@ app.post("/profile/news-email", async (req, res, next) => {
       ? "You will receive news emails."
       : "News emails turned off.";
     req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+  } catch (err) {
+    next(err);
+  }
+});
+
+function accountDeleteErrorNotice(error) {
+  if (error === "held_tickets") {
+    return "Leave any match or queue before deleting your account.";
+  }
+  if (error === "pending_paypal" || error === "pending_digipog") {
+    return "A ticket purchase is still pending. Wait for it to finish, then try again.";
+  }
+  if (error === "last_admin") {
+    return "The last admin account cannot be deleted.";
+  }
+  if (error === "bad_password") {
+    return "Password incorrect.";
+  }
+  if (error === "reauth_required") {
+    return "Sign in again to confirm account deletion.";
+  }
+  if (error === "confirm") {
+    return "Type DELETE to confirm.";
+  }
+  return "Could not delete account.";
+}
+
+async function performAccountDeletion(account, { password, confirm, sess }) {
+  if (!account || isAccountDeleted(account)) {
+    return { ok: true, alreadyDeleted: true };
+  }
+  if (String(confirm || "").trim() !== "DELETE") {
+    return { ok: false, error: "confirm" };
+  }
+  const hasPassword = Boolean(account.password_hash);
+  if (hasPassword) {
+    const ok = await verifyPassword(String(password || ""), account.password_hash);
+    if (!ok) return { ok: false, error: "bad_password" };
+  } else if (!sessionReauthFresh(sess)) {
+    return { ok: false, error: "reauth_required" };
+  }
+  const result = await deleteAccountSelf(account.id, { via: "self" });
+  if (!result.ok) return result;
+  await destroyAccountSessions(account.id).catch(() => 0);
+  return result;
+}
+
+app.get("/account/delete", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!accountEmailVerified(viewer) || isAccountDeleted(viewer)) {
+      res.redirect("/login");
+      return;
+    }
+    const hasPassword = Boolean(viewer.password_hash);
+    const reauthOk = hasPassword || sessionReauthFresh(req.session);
+    req.session.save(() => res.render("account-delete", {
+      nav: null,
+      viewer,
+      notice: takeNotice(req),
+      hasPassword,
+      reauthOk,
+      formbarLoginEnabled: formbarLoginEnabled(),
+      discordLoginEnabled: discordLoginEnabled(),
+      ticketBalance: Math.max(0, (Number(viewer.tickets) || 0) - (Number(viewer.held) || 0)),
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/account/delete", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!accountEmailVerified(viewer) || isAccountDeleted(viewer)) {
+      res.redirect("/login");
+      return;
+    }
+    if (!rateLimit(`account-delete:${viewer.id}`, { max: 5, windowMs: 60 * 60 * 1000 })) {
+      req.session.notice = "Too many deletion attempts. Try again later.";
+      req.session.save(() => res.redirect("/account/delete"));
+      return;
+    }
+    const result = await performAccountDeletion(viewer, {
+      password: req.body && req.body.password,
+      confirm: req.body && req.body.confirm,
+      sess: req.session,
+    });
+    if (!result.ok) {
+      req.session.notice = accountDeleteErrorNotice(result.error);
+      req.session.save(() => res.redirect("/account/delete"));
+      return;
+    }
+    logger.info({
+      event: "account_deleted",
+      accountId: viewer.id,
+      alreadyDeleted: Boolean(result.alreadyDeleted),
+    }, "account self-deleted");
+    await new Promise((resolve, reject) => {
+      req.session.regenerate((err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        req.session.notice = "Your account has been deleted.";
+        req.session.save((saveErr) => (saveErr ? reject(saveErr) : resolve()));
+      });
+    });
+    res.redirect("/");
   } catch (err) {
     next(err);
   }
@@ -2903,6 +3077,7 @@ app.get("/api/v1/login/callback", async (req, res, next) => {
       res.status(403).send("This account is banned.");
       return;
     }
+    req.session.reauthAt = Date.now();
     touchAccountLogin(account.id, "formbar").catch(() => {});
     const ret = safeAppReturn(req.session.apiReturn) || DEFAULT_APP_RETURN;
     delete req.session.apiReturn;
@@ -2999,12 +3174,58 @@ app.get("/api/v1/login/discord/callback", async (req, res, next) => {
       res.status(403).send("This account is banned.");
       return;
     }
-    setAccountSession(req.session, account);
+    setAccountSession(req.session, account, { markReauth: true });
     touchAccountLogin(account.id, "discord").catch(() => {});
     const ret = safeAppReturn(req.session.apiReturn) || DEFAULT_APP_RETURN;
     delete req.session.apiReturn;
     await saveSession(req.session);
     res.redirect(`${ret}?token=${encodeURIComponent(req.sessionID)}`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Self-service account deletion for packaged clients.
+ * Body: `{ "confirm": "DELETE", "password"?: "..." }`.
+ */
+app.post("/api/v1/account/delete", requireApiSession, async (req, res, next) => {
+  try {
+    const account = await resolveSessionAccount(req.session);
+    if (!accountEmailVerified(account) || isAccountDeleted(account)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!rateLimit(`account-delete:${account.id}`, { max: 5, windowMs: 60 * 60 * 1000 })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
+    const result = await performAccountDeletion(account, {
+      password: req.body && req.body.password,
+      confirm: req.body && req.body.confirm,
+      sess: req.session,
+    });
+    if (!result.ok) {
+      const status = result.error === "bad_password" || result.error === "confirm"
+        || result.error === "reauth_required"
+        ? 400
+        : result.error === "held_tickets" || result.error === "pending_paypal"
+          || result.error === "pending_digipog" || result.error === "last_admin"
+          ? 409
+          : 400;
+      res.status(status).json({ error: result.error });
+      return;
+    }
+    logger.info({
+      event: "account_deleted",
+      accountId: account.id,
+      alreadyDeleted: Boolean(result.alreadyDeleted),
+      source: "api",
+    }, "account self-deleted");
+    await new Promise((resolve, reject) => {
+      req.session.destroy((err) => (err ? reject(err) : resolve()));
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -3444,6 +3665,16 @@ io.use((socket, next) => {
     }
     if (user.accountId) {
       const account = await getAccount(user.accountId);
+      if (account && isAccountDeleted(account)) {
+        logger.warn({
+          event: "socket_auth_failed",
+          reason: "deleted",
+          socketId: socket.id,
+          accountId: account.id,
+        }, "deleted account socket rejected");
+        next(new Error("session revoked"));
+        return;
+      }
       if (account && isAccountBanned(account)) {
         logger.warn({
           event: "socket_auth_failed",

@@ -4,14 +4,18 @@ import {
   bumpSessionEpoch,
   countOpenPlayerReports,
   findPaypalPurchaseByOrderOrCapture,
+  FALLEN_SOLDIER,
   getAccount,
+  getDeletedAccountIdentity,
   isAccountBanned,
+  isAccountDeleted,
   listAccountGames,
   listAdminAudit,
   listPaypalPurchasesForAccount,
   listPlayerReports,
   listTicketLedger,
   normalizeAccountRole,
+  publicDisplayName,
   searchAccounts,
   setAccountDisplayName,
   setAccountRole,
@@ -32,13 +36,35 @@ export {
 export function publicAccount(account) {
   if (!account) return null;
   const { password_hash: _ph, ...rest } = account;
-  return rest;
+  if (isAccountDeleted(account)) {
+    return {
+      ...rest,
+      name: FALLEN_SOLDIER,
+      email: null,
+      formbar_id: null,
+      discord_id: null,
+      password_hash: undefined,
+    };
+  }
+  return {
+    ...rest,
+    name: publicDisplayName(account),
+  };
 }
 
 export async function getUserDetail(accountId) {
   const account = await getAccount(accountId);
   if (!account) return null;
-  const [ledger, games, audit, reportsAgainst, reportsFiled, openReportsAgainst, paypalPurchases] = await Promise.all([
+  const [
+    ledger,
+    games,
+    audit,
+    reportsAgainst,
+    reportsFiled,
+    openReportsAgainst,
+    paypalPurchases,
+    deletedIdentity,
+  ] = await Promise.all([
     listTicketLedger(account.id, { limit: 50 }),
     listAccountGames(account.id, { limit: 20 }),
     listAdminAudit({
@@ -50,6 +76,7 @@ export async function getUserDetail(accountId) {
     listPlayerReports({ reporterAccountId: account.id, status: "all", limit: 20 }),
     countOpenPlayerReports(account.id),
     listPaypalPurchasesForAccount(account.id, { limit: 50 }),
+    isAccountDeleted(account) ? getDeletedAccountIdentity(account.id) : null,
   ]);
   return {
     account: publicAccount(account),
@@ -61,6 +88,12 @@ export async function getUserDetail(accountId) {
     openReportsAgainst,
     paypalPurchases,
     banned: isAccountBanned(account),
+    deleted: isAccountDeleted(account),
+    formerName: deletedIdentity && deletedIdentity.former_name
+      ? String(deletedIdentity.former_name)
+      : null,
+    deletedAt: deletedIdentity ? deletedIdentity.deleted_at : (account.deleted_at || null),
+    deletedVia: deletedIdentity ? deletedIdentity.deleted_via : null,
   };
 }
 

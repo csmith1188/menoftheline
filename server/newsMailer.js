@@ -13,6 +13,7 @@ import {
   getActiveCampaignForNews,
   issueNewsletterUnsubToken,
   isAccountBanned,
+  isAccountDeleted,
   listNewsEmailEligibleAccounts,
   newsEmailOptedIn,
   pauseCampaignForQuota,
@@ -154,6 +155,7 @@ export async function sendNewsTestEmail({ newsId, account }) {
 
 function recipientStillEligible(account) {
   if (!account || !account.email) return { ok: false, reason: "no_email" };
+  if (isAccountDeleted(account)) return { ok: false, reason: "deleted" };
   if (!accountEmailVerified(account)) return { ok: false, reason: "unverified" };
   if (!newsEmailOptedIn(account)) return { ok: false, reason: "opted_out" };
   if (isAccountBanned(account)) return { ok: false, reason: "banned" };

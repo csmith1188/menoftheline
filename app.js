@@ -337,19 +337,24 @@ function requireApiSession(req, res, next) {
   if (match) {
     const sid = match[1];
     loadStoredSession(sid).then((data) => {
-      if (!data) {
-        logger.warn({
-          event: "api_unauthorized",
-          path: req.path,
-          ip: clientIp(req),
-          reason: "no_session",
-        }, "API unauthorized");
-        res.status(401).json({ error: "unauthorized" });
+      if (data) {
+        req.sessionID = sid;
+        req.session = wrapStoredSession(sid, data);
+        next();
         return;
       }
-      req.sessionID = sid;
-      req.session = wrapStoredSession(sid, data);
-      next();
+      // Stale shell token after login regenerateSession: fall back to cookie.
+      if (req.session && req.sessionID) {
+        next();
+        return;
+      }
+      logger.warn({
+        event: "api_unauthorized",
+        path: req.path,
+        ip: clientIp(req),
+        reason: "no_session",
+      }, "API unauthorized");
+      res.status(401).json({ error: "unauthorized" });
     }).catch(next);
     return;
   }
@@ -3181,18 +3186,14 @@ io.use((socket, next) => {
   if (typeof token === "string" && token.trim()) {
     const sid = token.trim();
     loadStoredSession(sid).then((data) => {
-      if (!data) {
-        logger.warn({
-          event: "socket_auth_failed",
-          reason: "no_session",
-          socketId: socket.id,
-        }, "socket auth failed");
-        next(new Error("no session"));
+      if (data) {
+        socket.request.sessionID = sid;
+        socket.request.session = wrapStoredSession(sid, data);
+        next();
         return;
       }
-      socket.request.sessionID = sid;
-      socket.request.session = wrapStoredSession(sid, data);
-      next();
+      // Stale Bearer: use cookie session (website) instead of failing hard.
+      sessionMiddleware(socket.request, {}, next);
     }).catch(next);
     return;
   }

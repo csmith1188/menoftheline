@@ -156,6 +156,63 @@ test("client API cookie session can call /me", async () => {
   assert.equal(meRes.status, 200);
 });
 
+test("stale Bearer falls back to cookie session for /me and socket", async () => {
+  const sessionRes = await fetch(`${base}/api/v1/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ name: "Cookie Fallback" }),
+  });
+  assert.equal(sessionRes.status, 200);
+  const session = await sessionRes.json();
+  const jar = new Map();
+  const setCookie = sessionRes.headers.getSetCookie?.() || [];
+  for (const c of setCookie) {
+    const [pair] = c.split(";");
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq), pair.slice(eq + 1));
+  }
+  const cookieHeader = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  assert.ok(cookieHeader, "expected lane.sid Set-Cookie from /api/v1/session");
+
+  const meRes = await fetch(`${base}/api/v1/me`, {
+    headers: {
+      authorization: "Bearer stale-or-regenerated-sid",
+      accept: "application/json",
+      cookie: cookieHeader,
+    },
+  });
+  assert.equal(meRes.status, 200);
+  const me = await meRes.json();
+  assert.equal(me.player.id, session.player.id);
+
+  const playRes = await fetch(`${base}/api/v1/play`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer stale-or-regenerated-sid",
+      accept: "application/json",
+      cookie: cookieHeader,
+    },
+    body: JSON.stringify({ mode: "bot" }),
+  });
+  assert.equal(playRes.status, 200);
+
+  const socket = ioClient(base, {
+    auth: { token: "stale-or-regenerated-sid" },
+    extraHeaders: { cookie: cookieHeader },
+    transports: ["websocket"],
+    forceNew: true,
+    reconnection: false,
+  });
+  try {
+    await onceEvent(socket, "connect");
+    const lobby = await onceEvent(socket, "lobby");
+    assert.ok(lobby);
+  } finally {
+    socket.close();
+  }
+});
+
 test("client API starts a bot game and accepts a buy", async (t) => {
   const session = await createSession();
   assert.ok(session.token);

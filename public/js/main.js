@@ -36,8 +36,8 @@ import {
 } from "./runtime.js";
 
 consumeAuthQuery();
+await ensureSession().catch(() => {});
 if (isShell()) {
-  await ensureSession().catch(() => {});
   const ver = await checkVersion().catch(() => null);
   if (ver && Number(ver.minProtocol) > PROTOCOL_VERSION) showOutdated(ver);
 }

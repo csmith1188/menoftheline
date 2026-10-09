@@ -25,7 +25,11 @@ function injectedServerUrl() {
   return "";
 }
 
-/** True when running inside Electron/Capacitor (or any shell that set a remote server URL). */
+/**
+ * True when running inside Electron/Capacitor (or a remote packaged client).
+ * Same-origin website browsing is never a shell — even if localStorage has a
+ * leftover motl.serverUrl — so cookie sessions stay authoritative.
+ */
 export function isShell() {
   if (typeof window === "undefined") return false;
   if (window.MOTL_SHELL === true) return true;
@@ -36,7 +40,15 @@ export function isShell() {
       // ignore
     }
   }
-  return Boolean(injectedServerUrl());
+  const remote = injectedServerUrl();
+  if (!remote) return false;
+  try {
+    const here = String(window.location?.origin || "").replace(/\/$/, "");
+    if (here && remote === here) return false;
+  } catch {
+    // ignore
+  }
+  return true;
 }
 
 export function serverUrl() {
@@ -90,8 +102,12 @@ export async function apiFetch(path, opts = {}) {
   if (json !== undefined) {
     headers.set("content-type", "application/json");
   }
-  const token = getToken();
-  if (token) headers.set("authorization", `Bearer ${token}`);
+  // Website auth is the lane.sid cookie. Bearer is for shells only; a leftover
+  // motl.sessionToken after login regenerateSession would otherwise win and 401.
+  if (isShell()) {
+    const token = getToken();
+    if (token) headers.set("authorization", `Bearer ${token}`);
+  }
   const url = path.startsWith("http") ? path : `${serverUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   const init = {
     credentials: isShell() ? "omit" : "include",
@@ -103,16 +119,20 @@ export async function apiFetch(path, opts = {}) {
 }
 
 export async function ensureSession() {
+  if (!isShell()) {
+    // Drop stale shell tokens so they cannot poison a later socket handshake.
+    clearToken();
+    const me = await apiFetch("/api/v1/me");
+    if (me.ok) return null;
+    const res = await apiFetch("/api/v1/session", { method: "POST", json: {} });
+    if (!res.ok) throw new Error(`session_failed_${res.status}`);
+    return null;
+  }
   const existing = getToken();
   if (existing) {
     const me = await apiFetch("/api/v1/me");
     if (me.ok) return existing;
     clearToken();
-  }
-  if (!isShell()) {
-    // Website: cookie session may already exist; create guest only if /me fails.
-    const me = await apiFetch("/api/v1/me");
-    if (me.ok) return null;
   }
   const res = await apiFetch("/api/v1/session", { method: "POST", json: {} });
   if (!res.ok) throw new Error(`session_failed_${res.status}`);
@@ -140,8 +160,10 @@ export function connectSocket(extra = {}) {
     clientVersion: CLIENT_VERSION,
     ...extra.auth,
   };
-  const token = getToken();
-  if (token) auth.token = token;
+  if (isShell()) {
+    const token = getToken();
+    if (token) auth.token = token;
+  }
   const opts = {
     transports: ["websocket", "polling"],
     ...extra,

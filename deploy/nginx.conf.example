@@ -12,9 +12,16 @@ upstream motl_node {
   keepalive 16;
 }
 
+# Prefer one public host (match THIS_URL). Apex → www keeps lane.sid + Socket.IO Origin aligned.
 server {
   listen 80;
   server_name example.com;
+  return 302 https://www.example.com$request_uri;
+}
+
+server {
+  listen 80;
+  server_name www.example.com;
 
   root /var/www/menoftheline;
 

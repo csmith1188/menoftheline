@@ -69,14 +69,19 @@ export function serverUrl() {
   return injectedServerUrl();
 }
 
-/** True when fetch must not send cookies (cross-origin packaged shell). */
-function omitCredentials() {
-  return Boolean(isShell() && serverUrl());
+/** True when the request URL is cross-origin (packaged shell → remote API). */
+function isCrossOriginApiUrl(url) {
+  if (!url || !/^https?:/i.test(url)) return false;
+  try {
+    return new URL(url).origin.replace(/\/$/, "") !== pageOrigin();
+  } catch {
+    return true;
+  }
 }
 
 /** Drop leftover shell storage so website cookie auth cannot be poisoned. */
 function clearWebsiteShellResidue() {
-  if (omitCredentials()) return;
+  if (isShell() && serverUrl() && isCrossOriginApiUrl(serverUrl())) return;
   clearToken();
   try {
     localStorage.removeItem(SERVER_KEY);
@@ -132,15 +137,17 @@ export async function apiFetch(path, opts = {}) {
   if (json !== undefined) {
     headers.set("content-type", "application/json");
   }
-  // Website / same-origin: cookies. Remote shells: Bearer only.
-  if (omitCredentials()) {
+  const url = path.startsWith("http") ? path : `${serverUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  const crossOrigin = isCrossOriginApiUrl(url);
+  // Same-origin (website): always send cookies. Cross-origin shells: Bearer only.
+  // Put credentials after ...rest so callers cannot accidentally force omit.
+  if (crossOrigin) {
     const token = getToken();
     if (token) headers.set("authorization", `Bearer ${token}`);
   }
-  const url = path.startsWith("http") ? path : `${serverUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   const init = {
-    credentials: omitCredentials() ? "omit" : "include",
     ...rest,
+    credentials: crossOrigin ? "omit" : "include",
     headers,
   };
   if (json !== undefined) init.body = JSON.stringify(json);
@@ -149,7 +156,9 @@ export async function apiFetch(path, opts = {}) {
 
 export async function ensureSession() {
   clearWebsiteShellResidue();
-  if (!omitCredentials()) {
+  const remote = serverUrl();
+  const crossOrigin = Boolean(remote && isCrossOriginApiUrl(remote));
+  if (!crossOrigin) {
     let me = await apiFetch("/api/v1/me");
     if (me.ok) return null;
     const res = await apiFetch("/api/v1/session", { method: "POST", json: {} });
@@ -190,7 +199,8 @@ export function connectSocket(extra = {}) {
     clientVersion: CLIENT_VERSION,
     ...extra.auth,
   };
-  if (omitCredentials()) {
+  const remote = serverUrl();
+  if (remote && isCrossOriginApiUrl(remote)) {
     const token = getToken();
     if (token) auth.token = token;
   }

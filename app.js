@@ -116,6 +116,7 @@ import {
 } from "./server/paypal.js";
 import {
   assertSessionSecret,
+  canonicalRedirectLocation,
   debugRangesEnabled,
   originAllowed,
   positiveEnv,
@@ -390,6 +391,19 @@ app.locals.maxOpenBugs = MAX_OPEN_BUGS;
 app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
 app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
 app.use(securityHeadersMiddleware(THIS_URL));
+// Keep www vs apex on one host so lane.sid cookies and Socket.IO Origin match THIS_URL.
+app.use((req, res, next) => {
+  if (process.env.CANONICAL_HOST_REDIRECT === "0") {
+    next();
+    return;
+  }
+  const dest = canonicalRedirectLocation(THIS_URL, req);
+  if (!dest) {
+    next();
+    return;
+  }
+  res.redirect(302, dest);
+});
 // Serve static assets before sessions. Otherwise a cookieless first visit races
 // HTML + CSS/JS through ensureCsrf, each minting a different lane.sid / CSRF
 // token, and guest form POSTs fail with "Invalid form token".
@@ -412,6 +426,14 @@ app.use(ensureCsrf);
 app.use(requireCsrf);
 app.use("/api/v1", (req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
+  next();
+});
+// HTML is personalized (login state); never let proxies cache it.
+app.use((req, res, next) => {
+  const accept = String(req.get("accept") || "");
+  if (accept.includes("text/html")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
   next();
 });
 app.use(async (req, res, next) => {
@@ -2838,13 +2860,26 @@ app.get("/api/v1/me", requireApiSession, async (req, res, next) => {
   try {
     const prefs = readPrefsCookies(req);
     const account = await resolveSessionAccount(req.session);
-    // Logged-in but unverified accounts play as guests — mint one if needed.
-    const createGuest = Boolean(account) && !accountEmailVerified(account);
-    const player = await playerFromSession(req.session, {
-      createGuest,
+    // Prefer account player; otherwise mint/reuse a guest so cookie sessions
+    // never strand the games menu on 401 after /api/v1/session succeeded.
+    let player = await playerFromSession(req.session, {
+      createGuest: Boolean(account) && !accountEmailVerified(account),
       prefs,
     });
     if (!player) {
+      const ip = clientIp(req);
+      if (rateLimit(`guest:${ip}`, { max: LIMITS.guest, windowMs: LIMITS.guestWindow })) {
+        player = await playerFromSession(req.session, { createGuest: true, prefs });
+        if (player) await saveSession(req.session);
+      }
+    }
+    if (!player) {
+      logger.warn({
+        event: "api_me_no_player",
+        ip: clientIp(req),
+        hasAccountId: Boolean(req.session && req.session.accountId),
+        hasGuestId: Boolean(req.session && req.session.guestId),
+      }, "API /me has session but no player");
       res.status(401).json({ error: "unauthorized" });
       return;
     }

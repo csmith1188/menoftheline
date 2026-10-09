@@ -114,6 +114,33 @@ export function isDevLocalHost(hostname) {
  * A missing Origin is a non-browser client and is allowed only when the
  * native API token is present on the handshake.
  */
+/**
+ * If the request Host is not THIS_URL's host, return an absolute redirect URL
+ * to the canonical host (same path + query). Skips loopback / private THIS_URL
+ * and missing Host. Used so www vs apex do not split lane.sid cookies.
+ */
+export function canonicalRedirectLocation(thisUrl, req) {
+  let expected;
+  try {
+    expected = new URL(thisUrl);
+  } catch {
+    return null;
+  }
+  if (isDevLocalHost(expected.hostname)) return null;
+  const hostHeader = String(req.get?.("host") || req.headers?.host || "").split(",")[0].trim();
+  if (!hostHeader) return null;
+  let reqHost = hostHeader;
+  try {
+    // Host may be "www.example.com:443" — URL needs a scheme.
+    reqHost = new URL(`http://${hostHeader}`).host;
+  } catch {
+    return null;
+  }
+  if (reqHost.toLowerCase() === expected.host.toLowerCase()) return null;
+  const path = String(req.originalUrl || req.url || "/");
+  return `${expected.origin}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 export function originAllowed(origin, { thisUrl, nodeEnv, hasAuthToken } = {}) {
   const value = typeof origin === "string" ? origin.trim() : "";
   if (!value) return Boolean(hasAuthToken);

@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { makeSim } from "./helpers.js";
-import { assertSessionSecret, debugRangesEnabled, isDevLocalHost, originAllowed } from "../server/hardening.js";
+import {
+  assertSessionSecret,
+  canonicalRedirectLocation,
+  debugRangesEnabled,
+  isDevLocalHost,
+  originAllowed,
+} from "../server/hardening.js";
 import { ensureCsrf } from "../server/csrf.js";
 import { sanitizeCommand, allowSocketEvent } from "../server/commandLimit.js";
 import {
@@ -24,6 +30,22 @@ process.env.NODE_ENV = "test";
 const db = await import("../server/db.js");
 const { renderWikiBody, safeWikiUrl } = await import("../server/wiki-render.js");
 const { Matchmaker } = await import("../server/matchmaking.js");
+
+test("canonical host redirect maps apex to THIS_URL host", () => {
+  const thisUrl = "https://www.menoftheline.com";
+  assert.equal(
+    canonicalRedirectLocation(thisUrl, { get: () => "menoftheline.com", originalUrl: "/games" }),
+    "https://www.menoftheline.com/games",
+  );
+  assert.equal(
+    canonicalRedirectLocation(thisUrl, { get: () => "www.menoftheline.com", originalUrl: "/games" }),
+    null,
+  );
+  assert.equal(
+    canonicalRedirectLocation("http://127.0.0.1:3000", { get: () => "localhost:3000", originalUrl: "/" }),
+    null,
+  );
+});
 
 test("ensureCsrf does not mint a token on an empty API session", () => {
   const emptyApi = { session: {}, path: "/api/v1/me" };

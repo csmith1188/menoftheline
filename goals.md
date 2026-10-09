@@ -1,21 +1,16 @@
 # Bugs (Will fix first)
-- units are drawn sharply, but lanes are not
-- terrain footprints darker
-- easy bot doesn't buy upgraded units
 
 # Feature (Will add to game)
-- Red Chat Alert when maintenance scheduled
-- Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
-- Fog in lanes in 3d
-- Game mode to play by programming each unit and keep's orders
 - Wiki Categories
 
 # Capacity
 One Node process still owns each match. `METRICS=1` and `npm run load -- bot` measure it. Sim steps stay at 50 ms; snapshots go out about every 100 ms. A crowded 20-vs-20 bench is too heavy for 100 rooms on one core (see `npm run sim-bench`), so `WORKER_COUNT` can pin each match to one owner process. That does not copy GameSim through Redis. Leave PM2 at one instance until you set workers on purpose.
 
 # Ideas (May add to game)
+- Fog in lanes in 3d
 - Units also cost men from initial pool?
+- Game mode to play by programming each unit and keep's orders
 
 - Towns produce food/men/horses/steel? strategic capturing of towns?
 

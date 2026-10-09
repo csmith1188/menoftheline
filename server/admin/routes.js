@@ -735,21 +735,34 @@ export function createAdminRouter(deps) {
         return;
       }
       const paused = req.body.paused === "1" || req.body.paused === "on";
+      const message = String(req.body.message || "").trim();
       await setMaintenance({
-        message: req.body.message || "",
+        message,
         paused,
         updatedBy: req.adminAccount.id,
       });
+      let alerted = 0;
+      if (message || paused) {
+        const notice = message
+          || "Matchmaking is temporarily paused. Active matches continue.";
+        alerted = matchmaker.announceMaintenance(notice) || 0;
+      }
       await auditAdmin(req, {
         action: "maintenance_update",
         targetType: "site",
         targetId: "maintenance",
         reason: req.body.reason || null,
-        after: { paused, message: req.body.message || "" },
+        after: { paused, message, alerted },
       });
-      req.session.notice = paused
-        ? "Matchmaking paused for new joins."
-        : "Maintenance settings updated.";
+      if (paused && alerted) {
+        req.session.notice = `Matchmaking paused; alerted ${alerted} active match${alerted === 1 ? "" : "es"}.`;
+      } else if (paused) {
+        req.session.notice = "Matchmaking paused for new joins.";
+      } else if (alerted) {
+        req.session.notice = `Maintenance notice sent to ${alerted} active match${alerted === 1 ? "" : "es"}.`;
+      } else {
+        req.session.notice = "Maintenance settings updated.";
+      }
       req.session.save(() => res.redirect("/admin/ops"));
     } catch (err) {
       next(err);

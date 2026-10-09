@@ -101,14 +101,14 @@ function drawTerrain(ctx, features) {
     const total = Path.lanePaces(f.lane);
     if (!(total > 0)) continue;
     const half = f.halfWidthPaces || 0;
-    const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.4)";
+    const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.7)";
     const width = laneStrokeWidth(f.lane);
     const emoji = f.emoji || TERRAIN_EMOJI[f.kind] || "";
     for (let s = 0; s < f.sublanes.length; s += 1) {
       const sub = f.sublanes[s];
       ctx.lineWidth = width;
       ctx.strokeStyle = tint;
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 1;
       strokeLaneInterval(ctx, f.lane, sub, f.centerPaces - half, f.centerPaces + half);
       if (!emoji) continue;
       const mid = Path.pointAt(

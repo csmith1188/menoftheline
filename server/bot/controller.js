@@ -17,7 +17,8 @@ export function botProfile(difficulty) {
     useFatigue: hard,
     useRole: hard,
     dynamicComposition: hard,
-    alternates: hard,
+    /** Both difficulties buy light/elite alternates when land and tactics allow. */
+    alternates: true,
     chargeScoring: hard,
     groupRetreat: hard,
     keepCommitLocal: hard,

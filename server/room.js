@@ -145,6 +145,8 @@ export class GameRoom {
     this.pauseWant = { a: false, b: false };
     /** Seat key that should see the red chat pause alert (the non-requester). */
     this.pauseAlertSeat = null;
+    /** Per-seat red chat alert for a scheduled maintenance notice. */
+    this.maintenanceAlert = { a: false, b: false };
     /** True after both humans agreed to pause. */
     this.paused = false;
     /** Votes to resume; either both, or the unpause countdown finishing. */
@@ -921,13 +923,39 @@ export class GameRoom {
     this.broadcastState({ volatile: false });
   }
 
-  /** Clear the red chat pause alert (opening chat). */
+  /** Clear red chat alerts for this seat (opening chat). */
   pauseSeen(socket) {
     const seat = this.seatBySocket(socket);
     if (!seat) return;
-    if (this.pauseAlertSeat !== seat.key) return;
-    this.pauseAlertSeat = null;
+    let changed = false;
+    if (this.pauseAlertSeat === seat.key) {
+      this.pauseAlertSeat = null;
+      changed = true;
+    }
+    if (this.maintenanceAlert[seat.key]) {
+      this.maintenanceAlert[seat.key] = false;
+      changed = true;
+    }
+    if (changed) this.pushLobby();
+  }
+
+  /**
+   * Post a maintenance notice into chat and flag the chat button red for
+   * every human seat (including bot matches where chat is normally off).
+   */
+  announceMaintenance(message) {
+    const line = String(message || "").trim();
+    if (!line) return;
+    if (!matchChatEnabled()) return;
+    const text = /^maintenance\b/i.test(line) ? line : `Maintenance: ${line}`;
+    this.systemChat(text, { force: true });
+    for (const key of ["a", "b"]) {
+      const seat = this.seat[key];
+      if (!seat || seat.bot) continue;
+      if (seat.socket || seat.userId) this.maintenanceAlert[key] = true;
+    }
     this.pushLobby();
+    this.broadcastState({ volatile: false });
   }
 
   opponentSeat(seat) {
@@ -1112,9 +1140,13 @@ export class GameRoom {
     }
   }
 
-  /** System line into history + live broadcast (no-op when chat inactive). */
-  systemChat(text) {
-    if (!this.roomChatActive()) return;
+  /**
+   * System line into history + live broadcast.
+   * No-op when chat inactive unless `{ force: true }` (maintenance notices).
+   */
+  systemChat(text, { force = false } = {}) {
+    if (!force && !this.roomChatActive()) return;
+    if (force && !matchChatEnabled()) return;
     const line = String(text || "").trim();
     if (!line) return;
     const msg = {
@@ -1372,12 +1404,13 @@ export class GameRoom {
   pausePublicFor(seat) {
     const human = this.humanPauseMatch();
     const reconnectWaiting = Boolean(this.reconnectWaitEnds);
+    const maintenanceAlert = Boolean(this.maintenanceAlert[seat.key]);
     return {
       canPause: human && this.status === "playing" && !this.sim.winner && !reconnectWaiting,
       paused: this.paused || reconnectWaiting,
       pauseWant: Boolean(this.pauseWant[seat.key]),
       unpauseWant: Boolean(this.unpauseWant[seat.key]),
-      pauseAlert: this.pauseAlertSeat === seat.key,
+      pauseAlert: this.pauseAlertSeat === seat.key || maintenanceAlert,
       unpauseEnds: this.unpauseEnds,
       unpauseLeft: this.unpauseLeftMs(),
       menuPaused: this.menuPaused,
@@ -1390,6 +1423,9 @@ export class GameRoom {
   lobbyFor(seat) {
     const chatOn = this.roomChatActive();
     const pause = this.pausePublicFor(seat);
+    const maintAlert = Boolean(this.maintenanceAlert[seat.key]);
+    // Show chat chrome for maintenance notices even in bot/guest matches.
+    const showChat = chatOn || maintAlert;
     const canReport = this.canReportFrom(seat);
     return {
       seat: seat.key,
@@ -1405,8 +1441,8 @@ export class GameRoom {
       reportBodyMax: REPORT_BODY_MAX,
       botSettings: this.botSettingsPublic(),
       debugPlay: this.debugPlayPublic(),
-      chatEnabled: chatOn,
-      chatHistory: chatOn ? this.chatLog.slice() : [],
+      chatEnabled: showChat,
+      chatHistory: showChat ? this.chatLog.slice() : [],
       ...pause,
     };
   }

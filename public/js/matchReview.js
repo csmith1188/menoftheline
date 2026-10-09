@@ -18,6 +18,12 @@ function unitLabel(type) {
   return UNIT_LABELS[type] || type;
 }
 
+/** Pre-rendered silhouette from `npm run export-graphics` → public/img/units/plain/. */
+function unitIconSrc(type) {
+  if (!UNIT_LABELS[type]) return null;
+  return `/img/units/plain/${encodeURIComponent(type)}.png`;
+}
+
 function formatDuration(elapsedSec) {
   const n = Number(elapsedSec);
   if (!Number.isFinite(n) || n < 0) return "—";
@@ -28,13 +34,30 @@ function formatDuration(elapsedSec) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+function unitChip(type, count) {
+  const label = unitLabel(type);
+  const n = Number(count);
+  const src = unitIconSrc(type);
+  if (!src) {
+    return `<span class="match-review-unit match-review-unit-text">${escapeHtml(label)} ×${n}</span>`;
+  }
+  return `
+    <span class="match-review-unit" title="${escapeHtml(label)}">
+      <img src="${src}" alt="${escapeHtml(label)}" width="28" height="28" loading="lazy" decoding="async" />
+      <span class="match-review-unit-n">×${n}</span>
+    </span>
+  `;
+}
+
 function countList(counts) {
   if (!counts || typeof counts !== "object") return "—";
   const parts = Object.entries(counts)
     .filter(([, n]) => Number(n) > 0)
     .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
-    .map(([type, n]) => `${escapeHtml(unitLabel(type))} ×${Number(n)}`);
-  return parts.length ? parts.join(", ") : "—";
+    .map(([type, n]) => unitChip(type, n));
+  return parts.length
+    ? `<span class="match-review-units">${parts.join("")}</span>`
+    : "—";
 }
 
 function upgradeList(ups) {

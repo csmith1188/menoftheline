@@ -22,14 +22,14 @@ export const TERRAIN_EMOJI = {
   fort: "🏰",
 };
 
-/** Soft tints for row strokes (client). */
+/** Row-stroke tints for terrain footprints (client). */
 export const TERRAIN_TINT = {
-  hill: "rgba(140, 120, 70, 0.55)",
-  woods: "rgba(50, 100, 55, 0.55)",
-  river: "rgba(50, 110, 160, 0.55)",
-  peak: "rgba(110, 110, 120, 0.6)",
-  bridge: "rgba(130, 95, 60, 0.5)",
-  fort: "rgba(90, 90, 90, 0.35)",
+  hill: "rgba(115, 90, 40, 0.88)",
+  woods: "rgba(25, 70, 30, 0.88)",
+  river: "rgba(25, 80, 135, 0.88)",
+  peak: "rgba(70, 70, 80, 0.9)",
+  bridge: "rgba(100, 70, 35, 0.7)",
+  fort: "rgba(55, 55, 55, 0.78)",
 };
 
 let _cachedMapKey = null;

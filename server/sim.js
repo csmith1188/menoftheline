@@ -3960,10 +3960,11 @@ class Unit {
     } else if (this.meleeLockTimer > 0) {
       this.meleeLockTimer = Math.max(0, this.meleeLockTimer - dt);
     }
-    // Fall Back that is still in the fight is Retreat. A retreat that has
-    // already reached this side's end of the lane stays Fall Back.
+    // Fall Back that is still in the fight Halts. The player may then
+    // order Fall Back (Retreat) manually. A Fall Back that has already
+    // reached this side's end of the lane stays Fall Back.
     if (inMeleeNow && !this.broken && this.order === "fallback" && this.progress > 0) {
-      this.order = "retreat";
+      this.order = "halt";
     }
     // Leaving melee Halts, except Charge and Retreat. Retreat is not
     // cancelled by walking out of contact or by the fight that caused it.

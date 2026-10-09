@@ -1,5 +1,10 @@
 import { CONFIG } from "../../shared/config.js";
-import { UNIT_STATS, UNIT_VARIANTS, unitLandCost } from "../../shared/units.js";
+import {
+  UNIT_STATS,
+  UNIT_VARIANTS,
+  isLightAlternate,
+  unitLandCost,
+} from "../../shared/units.js";
 import { featuresOnMap } from "../../shared/terrain.js";
 import { BASE_TYPES, LANES, enemyRowCount, enemyShares, typeGold } from "./assess.js";
 
@@ -117,29 +122,40 @@ function mapKinds(mapId) {
   return kinds;
 }
 
-function canBuyAlt(side, key, reserve) {
+/** Land that must remain after an alternate buy (full upgrade for elites). */
+function altLandReserve(side, key) {
+  const reserve = upgradeReserve(side);
+  if (isLightAlternate(key)) {
+    return Math.floor(reserve * CONFIG.botLightAltLandReserve);
+  }
+  return reserve;
+}
+
+function canBuyAlt(side, key) {
   if (!key || !side.canAffordUnit(key)) return false;
+  const reserve = altLandReserve(side, key);
   if (unitLandCost(key) > 0 && landLeft(side, key) < reserve) return false;
   return true;
 }
 
 /**
- * Alternate spawn key when Hard still wants that role and the land
- * cost does not eat the next upgrade. Otherwise the base unit.
+ * Alternate spawn key when the profile allows it and the land cost does
+ * not eat the next upgrade reserve. Otherwise the base unit.
+ * UNIT_VARIANTS lists yellow (elite) then white (light).
  */
 export function chooseSpawnKey(side, base, profile, ctx) {
   if (!profile.alternates) return base;
   const alts = UNIT_VARIANTS[base] || [];
-  const white = alts[0];
-  const yellow = alts[1];
-  const reserve = upgradeReserve(side);
+  const yellow = alts[0];
+  const white = alts[1];
   const laneUnits = ctx.laneUnits;
   const mods = ctx.mods;
 
-  if (yellow && canBuyAlt(side, yellow, reserve)) {
+  if (yellow && canBuyAlt(side, yellow)) {
     if (base === "troop"
       && countType(laneUnits, "troop") >= CONFIG.botMinTroopsBeforeSupport
-      && side.gold < UNIT_STATS.troop.cost) {
+      && ctx.posture !== "hold"
+      && ctx.posture !== "defend") {
       return yellow;
     }
     if (base === "skirmisher" && ctx.mapHasWoodsOrPeaks) return yellow;
@@ -151,7 +167,9 @@ export function chooseSpawnKey(side, base, profile, ctx) {
     if (base === "officer" && ctx.mapHasRiverOrHill) return yellow;
   }
 
-  if (!white || !canBuyAlt(side, white, reserve)) return base;
+  if (!white || !canBuyAlt(side, white)) return base;
+  // Cheap light filler when the base unit is out of reach.
+  if (!side.canAffordUnit(base)) return white;
   if (base === "troop") {
     if (countType(laneUnits, "troop") < CONFIG.botMinTroopsBeforeSupport) return base;
     if (ctx.posture !== "hold" && ctx.posture !== "defend") return base;

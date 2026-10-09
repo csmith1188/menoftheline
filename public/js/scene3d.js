@@ -10,13 +10,14 @@ import { isArcLane, laneRowColor } from "./mapView.js";
 
 /** Parse rgba(...) tint into a hex-ish color + opacity for 3D materials. */
 function terrainColor(kind) {
-  const tint = TERRAIN_TINT[kind] || "rgba(80,80,80,0.5)";
-  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(tint);
+  const tint = TERRAIN_TINT[kind] || "rgba(80,80,80,0.7)";
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:\s*,\s*([\d.]+))?/.exec(tint);
   const r = m ? Number(m[1]) : 80;
   const g = m ? Number(m[2]) : 80;
   const b = m ? Number(m[3]) : 80;
+  const opacity = m && m[4] != null ? Number(m[4]) : 0.7;
   const hex = (r << 16) | (g << 8) | b;
-  return { color: hex, opacity: 0.45 };
+  return { color: hex, opacity };
 }
 
 function labelTexture(lines, opts = {}) {
@@ -1136,51 +1137,72 @@ export function createScene(canvas) {
   }
 
   function syncUpgradeUi(board) {
-    const show = Boolean(board.player) && !board.telescope;
-    const sides = [
-      { id: "player", fill: "#1a2a3a", stroke: CONFIG.colors.player },
-      { id: "enemy", fill: "#2a1a1a", stroke: CONFIG.colors.enemy },
-    ];
-    while (upgradeMeshes.length < sides.length) {
-      const side = sides[upgradeMeshes.length];
-      const pad = makePad(80, 40, side.fill);
+    const show = Boolean(board.player) && Boolean(board.enemy) && !board.telescope;
+    if (!upgradeMeshes.length) {
+      const pad = makePad(160, 40, "#1a222c");
       upgradeMeshes.push(pad);
       hud.add(pad);
     }
-    for (let i = 0; i < sides.length; i += 1) {
-      const side = sides[i];
-      const mesh = upgradeMeshes[i];
-      mesh.visible = show;
-      if (!show) continue;
-      const owner = board[side.id];
-      if (!owner) {
-        mesh.visible = false;
-        continue;
-      }
-      const box = board.upgradeReadoutRect(side.id);
-      placePad(mesh, box, 15);
-      mesh.scale.set(box.w / 80, 1.1, box.h / 40);
-      mesh.userData.face.scale.x = board.southpaw ? -1 : 1;
-      mesh.material.opacity = 1;
-      mesh.material.transparent = true;
-      const lines = owner.upgradeLines();
-      const key = `${lines.join("|")}:${side.id}:${uiFontsReady() ? "1" : "0"}`;
-      if (mesh.userData.face.userData.key !== key) {
-        setLabel(mesh.userData.face, lines.map((text) => ({
-          text,
-          font: canvasFont(28),
-          color: side.stroke,
-        })), {
-          width: 256,
-          height: 128,
-          fill: side.fill,
-          stroke: side.stroke,
-          textOutline: "#0d1218",
-          key,
-        });
-        mesh.userData.face.userData.key = key;
-      }
+    for (let i = 1; i < upgradeMeshes.length; i += 1) {
+      upgradeMeshes[i].visible = false;
     }
+    const mesh = upgradeMeshes[0];
+    mesh.visible = show;
+    if (!show) return;
+    const box = board.upgradeReadoutRect();
+    placePad(mesh, box, 15);
+    mesh.scale.set(box.w / 160, 1.1, box.h / 40);
+    mesh.userData.face.scale.x = board.southpaw ? -1 : 1;
+    mesh.material.opacity = 1;
+    mesh.material.transparent = true;
+    const mine = board.player.upgradeRows();
+    const theirs = board.enemy.upgradeRows();
+    const key = [
+      mine.map((r) => r.text).join("|"),
+      theirs.map((r) => r.text).join("|"),
+      uiFontsReady() ? "1" : "0",
+    ].join(":");
+    if (mesh.userData.face.userData.key === key) return;
+    const width = 320;
+    const height = 128;
+    const pad = document.createElement("canvas");
+    pad.width = width;
+    pad.height = height;
+    const ctx = pad.getContext("2d");
+    ctx.fillStyle = "#1a222c";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = "#3a4654";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, width - 4, height - 4);
+    const midX = width / 2;
+    const iconHalf = 28;
+    const step = height / (mine.length + 1);
+    ctx.textBaseline = "middle";
+    ctx.font = canvasFont(28);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#0d1218";
+    for (let i = 0; i < mine.length; i += 1) {
+      const y = step * (i + 1);
+      ctx.textAlign = "center";
+      ctx.fillStyle = CONFIG.colors.text;
+      ctx.strokeText(mine[i].icon, midX, y);
+      ctx.fillText(mine[i].icon, midX, y);
+      ctx.textAlign = "right";
+      ctx.fillStyle = CONFIG.colors.player;
+      ctx.strokeText(mine[i].text, midX - iconHalf, y);
+      ctx.fillText(mine[i].text, midX - iconHalf, y);
+      ctx.textAlign = "left";
+      ctx.fillStyle = CONFIG.colors.enemy;
+      ctx.strokeText(theirs[i].text, midX + iconHalf, y);
+      ctx.fillText(theirs[i].text, midX + iconHalf, y);
+    }
+    const tex = new THREE.CanvasTexture(pad);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    if (mesh.userData.face.material.map) mesh.userData.face.material.map.dispose();
+    mesh.userData.face.material.map = tex;
+    mesh.userData.face.material.color.set("#ffffff");
+    mesh.userData.face.material.needsUpdate = true;
+    mesh.userData.face.userData.key = key;
   }
 
   function clearGroup(group) {
@@ -1235,7 +1257,7 @@ export function createScene(canvas) {
       const r = fogRegions[i];
       if (!r.fogged) continue;
       const color = isArcLane(r.lane) ? 0x2a2218 : 0x1a2e28;
-      addPaceInterval(fogGroup, r.lane, r.sublane, r.minPaces, r.maxPaces, color, 10, 12, 0.85);
+      addPaceInterval(fogGroup, r.lane, r.sublane, r.minPaces, r.maxPaces, color, 10, 12, 0.7);
     }
 
     for (let i = 0; i < features.length; i += 1) {

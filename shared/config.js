@@ -475,6 +475,11 @@ export const CONFIG = {
   botColorGuardMinValue: 800,
   /** Enemy rows in the buy lane before a cannon buy becomes a howitzer. */
   botHowitzerMinRows: 3,
+  /**
+   * Fraction of the next upgrade's land price that must remain after a light
+   * (white) alternate buy. Elite (yellow) buys still reserve the full price.
+   */
+  botLightAltLandReserve: 0.5,
 
   // Bot — keep attack
 

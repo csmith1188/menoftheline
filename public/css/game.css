@@ -301,6 +301,37 @@ li::marker {
   color: #d2cbb8;
 }
 
+.match-review-units {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+}
+
+.match-review-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.match-review-unit img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.match-review-unit-n {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: #e8dfc8;
+}
+
+.match-review-unit-text {
+  font-size: 0.8rem;
+  color: #d2cbb8;
+}
+
 @media (max-width: 520px) {
   .match-review-cols {
     grid-template-columns: 1fr;

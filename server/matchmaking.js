@@ -781,6 +781,19 @@ export class Matchmaker {
     if (room) room.pauseSeen(socket);
   }
 
+  /** Push a maintenance notice + red chat alert into every live room. */
+  announceMaintenance(message) {
+    const line = String(message || "").trim();
+    if (!line) return 0;
+    let n = 0;
+    for (const room of this.rooms.values()) {
+      if (!room || room.status === "dead" || room.closing) continue;
+      room.announceMaintenance(line);
+      n += 1;
+    }
+    return n;
+  }
+
   settingsOpen(socket, open) {
     const room = this.rooms.get(socket.data.gameId);
     if (room) room.settingsOpen(socket, open);

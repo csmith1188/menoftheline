@@ -507,6 +507,7 @@ const boardMethods = {
 
   /**
    * Rebuild the offscreen fog/terrain/lane layer when the key or DPR changes.
+   * Used only in overview; telescope paints vectors live so zoom stays sharp.
    * Lane centers stay out of this cache so economy easing stays per-frame.
    */
   ensureMapUnderlay() {
@@ -620,15 +621,21 @@ const boardMethods = {
   },
 
   drawLanes(ctx) {
-    this.ensureMapUnderlay();
-    if (this._underlay) {
-      ctx.drawImage(
-        this._underlay,
-        0,
-        0,
-        CONFIG.canvasWidth,
-        CONFIG.canvasHeight,
-      );
+    // Telescope scales the world transform; blitting the overview underlay
+    // would upsample a low-res bitmap. Stroke vectors into the live ctx instead.
+    if (this.telescope) {
+      this.paintMapUnderlay(ctx);
+    } else {
+      this.ensureMapUnderlay();
+      if (this._underlay) {
+        ctx.drawImage(
+          this._underlay,
+          0,
+          0,
+          CONFIG.canvasWidth,
+          CONFIG.canvasHeight,
+        );
+      }
     }
     this.drawLaneCenters(ctx);
   },
@@ -648,13 +655,13 @@ const boardMethods = {
       const total = Path.lanePaces(f.lane);
       if (!(total > 0)) continue;
       const half = f.halfWidthPaces || 0;
-      const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.4)";
+      const tint = TERRAIN_TINT[f.kind] || "rgba(80,80,80,0.7)";
       const width = laneStrokeWidth(f.lane);
       for (let s = 0; s < f.sublanes.length; s += 1) {
         const sub = f.sublanes[s];
         ctx.lineWidth = width;
         ctx.strokeStyle = tint;
-        ctx.globalAlpha = 0.55;
+        ctx.globalAlpha = 1;
         this.strokeLaneInterval(
           ctx,
           f.lane,
@@ -1117,37 +1124,43 @@ const boardMethods = {
     ctx.restore();
   },
 
-  /** Speed, damage, and armor under the buy row (former strategy slots). */
+  /**
+   * Centered upgrade HUD under the buy row: icon column in the middle,
+   * player amounts right-justified against it, enemy left-justified.
+   */
   drawUpgradeReadouts(ctx) {
     if (!this.player || !this.enemy) return;
+    const box = this.upgradeReadoutRect();
+    const mine = this.player.upgradeRows();
+    const theirs = this.enemy.upgradeRows();
     const lineH = 14 * CONFIG.uiScale;
-    const drawStack = (lines, box, color) => {
-      const midX = box.x + box.w / 2;
-      const totalH = (lines.length - 1) * lineH;
-      const startY = box.y + box.h / 2 - totalH / 2;
-      ctx.textAlign = "center";
-      ctx.fillStyle = color;
-      for (let i = 0; i < lines.length; i += 1) {
-        const y = startY + i * lineH;
-        ctx.strokeText(lines[i], midX, y);
-        ctx.fillText(lines[i], midX, y);
-      }
-    };
+    const midX = box.x + box.w / 2;
+    const iconHalf = 11 * CONFIG.uiScale;
+    const totalH = (mine.length - 1) * lineH;
+    const startY = box.y + box.h / 2 - totalH / 2;
     ctx.save();
     ctx.textBaseline = "middle";
     ctx.font = this.uiFont(12);
     ctx.lineWidth = 4;
     ctx.strokeStyle = "#0d1218";
-    drawStack(
-      this.player.upgradeLines(),
-      this.upgradeReadoutRect("player"),
-      CONFIG.colors.player,
-    );
-    drawStack(
-      this.enemy.upgradeLines(),
-      this.upgradeReadoutRect("enemy"),
-      CONFIG.colors.enemy,
-    );
+    for (let i = 0; i < mine.length; i += 1) {
+      const y = startY + i * lineH;
+      const icon = mine[i].icon;
+      ctx.textAlign = "center";
+      ctx.fillStyle = CONFIG.colors.text;
+      ctx.strokeText(icon, midX, y);
+      ctx.fillText(icon, midX, y);
+
+      ctx.textAlign = "right";
+      ctx.fillStyle = CONFIG.colors.player;
+      ctx.strokeText(mine[i].text, midX - iconHalf, y);
+      ctx.fillText(mine[i].text, midX - iconHalf, y);
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = CONFIG.colors.enemy;
+      ctx.strokeText(theirs[i].text, midX + iconHalf, y);
+      ctx.fillText(theirs[i].text, midX + iconHalf, y);
+    }
     ctx.restore();
   },
 

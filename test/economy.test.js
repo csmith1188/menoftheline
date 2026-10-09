@@ -1,10 +1,31 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CONFIG } from "../shared/config.js";
-import { UNIT_STATS } from "../shared/units.js";
-import { desiredComposition } from "../server/bot/economy.js";
+import { UNIT_STATS, unitLandCost } from "../shared/units.js";
+import { chooseSpawnKey, desiredComposition } from "../server/bot/economy.js";
 import { botProfile } from "../server/bot/controller.js";
 import { makeBot, makeSim, spawn, stepBot, living } from "./helpers.js";
+
+function spawnCtx(overrides = {}) {
+  return {
+    laneUnits: [],
+    allFriends: [],
+    mods: {
+      skirmisherFromCavalry: false,
+      dragoonFromSupport: false,
+      cannonFromInfantry: false,
+      officerFromLine: false,
+    },
+    posture: "hold",
+    enemyRows: 0,
+    armyValue: 0,
+    mapHasWoodsOrPeaks: false,
+    mapHasRiverOrHill: false,
+    frontSlowed: false,
+    gunsBlocked: false,
+    ...overrides,
+  };
+}
 
 function valueOf(units, type) {
   return units
@@ -196,5 +217,57 @@ describe("purchases", () => {
     stepBot(bot, sim);
     assert.equal(sim.checkpoints[0].producing, true);
     assert.equal(living(sim.player).length, before);
+  });
+
+  it("Simple buys a light militia when gold cannot cover a troop", () => {
+    const sim = makeSim();
+    const bot = makeBot("simple");
+    // Under the line minimum so decideEconomy forces a troop-role buy.
+    spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: 0 });
+    spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: 1 });
+    bot.buyLane = "top";
+    sim.player.gold = UNIT_STATS.militia.cost + 20;
+    sim.player.land = unitLandCost("militia") + CONFIG.upgradeBaseCost;
+    sim.player.income = 1000;
+    assert.ok(sim.player.gold < UNIT_STATS.troop.cost);
+    const before = living(sim.player).length;
+    stepBot(bot, sim);
+    const militia = living(sim.player).filter((unit) => unit.variant === "militia");
+    assert.equal(living(sim.player).length, before + 1);
+    assert.equal(militia.length, 1);
+  });
+
+  it("Hard picks grenadiers when attacking with a formed line", () => {
+    const sim = makeSim();
+    const troops = [];
+    for (let i = 0; i < CONFIG.botMinTroopsBeforeSupport; i += 1) {
+      troops.push(spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: i }));
+    }
+    sim.player.gold = UNIT_STATS.grenadier.cost + 50;
+    sim.player.land = unitLandCost("grenadier") + CONFIG.upgradeBaseCost;
+    const key = chooseSpawnKey(sim.player, "troop", botProfile("hard"), spawnCtx({
+      laneUnits: troops,
+      allFriends: troops,
+      posture: "attack",
+      armyValue: valueOf(troops),
+    }));
+    assert.equal(key, "grenadier");
+  });
+
+  it("picks light militia on hold once a line exists", () => {
+    const sim = makeSim();
+    const troops = [];
+    for (let i = 0; i < CONFIG.botMinTroopsBeforeSupport; i += 1) {
+      troops.push(spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: i }));
+    }
+    sim.player.gold = UNIT_STATS.troop.cost + 50;
+    sim.player.land = unitLandCost("militia") + CONFIG.upgradeBaseCost;
+    const key = chooseSpawnKey(sim.player, "troop", botProfile("simple"), spawnCtx({
+      laneUnits: troops,
+      allFriends: troops,
+      posture: "hold",
+      armyValue: valueOf(troops),
+    }));
+    assert.equal(key, "militia");
   });
 });

@@ -192,13 +192,21 @@ export const sideStateMethods = {
     return `${formatSignedRate(this.laneBonus())}💰  ${formatSignedRate(this.bankIncome())}🏛️  −${taxText}💰  −${investText}🌿`;
   },
 
-  /** Speed, damage, and armor ranks as separate lines for upgrade readouts. */
-  upgradeLines() {
+  /**
+   * Speed, damage, and armor rows for the centered upgrade HUD.
+   * Icons sit in the middle; each side draws only its `text`.
+   */
+  upgradeRows() {
     return [
-      `${this.speedMultiplier.toFixed(2)}x ⚡`,
-      `${this.damageScale().toFixed(2)}x ⚔️`,
-      `${Math.round(this.armorReduction() * 100)}% 🛡️`,
+      { icon: "⚡", text: `${this.speedMultiplier.toFixed(2)}x` },
+      { icon: "⚔️", text: `${this.damageScale().toFixed(2)}x` },
+      { icon: "🛡️", text: `${Math.round(this.armorReduction() * 100)}%` },
     ];
+  },
+
+  /** Speed, damage, and armor ranks as separate lines (icon on the right). */
+  upgradeLines() {
+    return this.upgradeRows().map((row) => `${row.text} ${row.icon}`);
   },
 
   /** Speed, damage, and armor ranks, stacked for the upgrade HUD. */
@@ -569,12 +577,18 @@ export const boardStateMethods = {
     };
   },
 
-  /** Upgrade readout box: player left (first line), enemy right (first arc). */
-  upgradeReadoutRect(sideId) {
-    const ids = Path.laneIds();
-    const line = ids.find((id) => isLineLane(id)) || ids[0] || "top";
-    const arc = ids.find((id) => isArcLane(id)) || ids[ids.length - 1] || "bottom";
-    return this.strategyButtonRect(sideId === "enemy" ? arc : line);
+  /**
+   * Full strategy-row box for the centered upgrade HUD
+   * (player values | icons | enemy values).
+   */
+  upgradeReadoutRect() {
+    const layout = this.strategyRowLayout();
+    return {
+      x: layout.x,
+      y: layout.y,
+      w: layout.w * 2 + layout.gap,
+      h: layout.h,
+    };
   },
 
   buyButtonRect(index) {

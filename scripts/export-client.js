@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { CLIENT_VERSION, PROTOCOL_VERSION } from "../shared/protocol.js";
+import { resolveAssetVersion } from "../server/assetVersion.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "dist", "client");
@@ -55,7 +56,7 @@ if (sio) {
   copyFile(sio, path.join(out, "vendor", "socket.io", "socket.io.js"));
 }
 
-const assetVersion = process.env.ASSET_VERSION || "1";
+const assetVersion = resolveAssetVersion({ root });
 const boot = {
   protocolVersion: PROTOCOL_VERSION,
   clientVersion: CLIENT_VERSION,

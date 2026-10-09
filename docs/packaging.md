@@ -39,6 +39,8 @@ shared/protocol.js        # PROTOCOL_VERSION + CLIENT_VERSION
 ## Version compatibility
 
 - `GET /api/v1/version` → `{ protocol, minProtocol, serverVersion, assetVersion }`
+- **Website asset freshness:** `assetVersion` comes from `server/assetVersion.js` (`ASSET_VERSION` env, else git short SHA, else `CLIENT_VERSION`). EJS pages emit `?v=` and `window.MOTL_ASSET_VERSION`. Code paths (`/js`, `/css`, `/shared`, `/vendor/three`) use `Cache-Control: no-cache` so ESM imports revalidate. Long-lived website tabs poll `/api/v1/version` via `watchAssetUpdates` and reload when safe (banner during a live match seat). HTML stays `no-store`.
+- **Packaged shells:** `assetVersion` is recorded in `boot.json` / `shell-config.js` at export time but is **not** used to force-reload local bundles. Shells rely on the protocol gate below; rebuild/reinstall to ship new client JS.
 - Packaged clients send `x-motl-protocol` / Socket.IO `auth.protocol`.
 - If client protocol < `minProtocol` (env `MOTL_MIN_PROTOCOL`, default = current `PROTOCOL_VERSION`): HTTP 426 / socket error `client_outdated`.
 - Missing protocol is allowed (legacy website sockets and older native clients).

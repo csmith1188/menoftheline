@@ -37,7 +37,9 @@ import {
   ensureSession,
   goHome,
   isShell,
+  matchSeatBusy,
   showOutdated,
+  watchAssetUpdates,
 } from "./runtime.js";
 import { syncMatchReview, viewMatchReview } from "./matchReview.js";
 
@@ -120,6 +122,9 @@ const unitInfoUi = bindUnitInfo({
 
 const scene = createScene(canvas);
 const board = createBoardState(canvas);
+watchAssetUpdates({
+  getBusy: () => matchSeatBusy(board.status, board.winner),
+});
 board.directOrders = true;
 board.tooltips = readTooltipsDefault();
 board.onBuyInfo = (type) => unitInfoUi.open(type);

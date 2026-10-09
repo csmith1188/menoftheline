@@ -184,6 +184,7 @@ import {
   isClientOutdated,
   parseProtocol,
 } from "./shared/protocol.js";
+import { resolveAssetVersion } from "./server/assetVersion.js";
 
 const require = createRequire(import.meta.url);
 const connectSqlite3 = require("connect-sqlite3");
@@ -414,7 +415,7 @@ function saveSession(sess) {
 
 app.set("view engine", "ejs");
 app.set("views", path.join(root, "views"));
-app.locals.assetVersion = process.env.ASSET_VERSION || "1";
+app.locals.assetVersion = resolveAssetVersion({ root });
 app.locals.accountEmailVerified = accountEmailVerified;
 app.locals.suggestionBodyMax = SUGGESTION_BODY_MAX;
 app.locals.suggestionReproMax = SUGGESTION_REPRO_MAX;
@@ -442,11 +443,21 @@ app.use((req, res, next) => {
 // Serve static assets before sessions. Otherwise a cookieless first visit races
 // HTML + CSS/JS through ensureCsrf, each minting a different lane.sid / CSRF
 // token, and guest form POSTs fail with "Invalid form token".
+// Code assets: revalidate every use (ESM imports are not ?v=-busted).
+const staticRevalidate = {
+  etag: true,
+  setHeaders(res) {
+    res.setHeader("Cache-Control", "no-cache");
+  },
+};
 const staticHour = { maxAge: "1h", etag: true };
-app.use("/shared", express.static(path.join(root, "shared"), staticHour));
-app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticHour));
+app.use("/shared", express.static(path.join(root, "shared"), staticRevalidate));
+app.use("/vendor/three", express.static(path.join(root, "node_modules", "three"), staticRevalidate));
+app.use("/js", express.static(path.join(root, "public", "js"), staticRevalidate));
+app.use("/css", express.static(path.join(root, "public", "css"), staticRevalidate));
 app.get("/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json");
+  res.setHeader("Cache-Control", "no-cache");
   res.sendFile(path.join(root, "public", "manifest.webmanifest"));
 });
 // Long-cache match music so return visits skip the multi-MB download on the game host.

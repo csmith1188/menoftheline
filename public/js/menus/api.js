@@ -10,6 +10,7 @@ import {
   loginUrl,
   openExternal,
   showOutdated,
+  watchAssetUpdates,
 } from "../runtime.js";
 
 export async function bootMenus() {
@@ -23,6 +24,7 @@ export async function bootMenus() {
       return null;
     }
   }
+  watchAssetUpdates();
   return loadMe();
 }
 

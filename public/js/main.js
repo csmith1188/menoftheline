@@ -32,7 +32,9 @@ import {
   ensureSession,
   goHome,
   isShell,
+  matchSeatBusy,
   showOutdated,
+  watchAssetUpdates,
 } from "./runtime.js";
 import { syncMatchReview, viewMatchReview } from "./matchReview.js";
 
@@ -107,6 +109,9 @@ const unitInfoUi = bindUnitInfo({
 });
 
 const board = createBoard(canvas);
+watchAssetUpdates({
+  getBusy: () => matchSeatBusy(board.status, board.winner),
+});
 board.tooltips = readTooltipsDefault();
 board.onBuyInfo = (type) => unitInfoUi.open(type);
 southpawBtn.setAttribute("aria-pressed", board.southpaw ? "true" : "false");

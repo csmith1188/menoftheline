@@ -88,6 +88,8 @@ test("client API version and protocol gate", async () => {
   assert.equal(typeof ver.protocol, "number");
   assert.equal(typeof ver.minProtocol, "number");
   assert.ok(ver.minProtocol <= ver.protocol);
+  assert.equal(typeof ver.assetVersion, "string");
+  assert.ok(ver.assetVersion.length > 0);
 
   const session = await createSession();
   const outdated = await fetch(`${base}/api/v1/play`, {

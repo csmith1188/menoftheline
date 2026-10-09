@@ -64,6 +64,7 @@ server/
   wiki-diff.js         Revision diffs
   formbar.js           Digipog transfers; one outstanding socket transfer at a time
   discord.js           Discord OAuth authorize/token/user helpers
+  assetVersion.js      Deploy cache-bust id (ASSET_VERSION → git SHA → CLIENT_VERSION)
   load-env.js          dotenv load (imported first by app.js)
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
@@ -75,7 +76,7 @@ shared/                Authoritative tunables + geometry used by server, client,
   terrain.js           Terrain rules: move, LOS/fog, cover, range, snapshot helpers
   unitInfo.js          Player-facing unit copy + derived info panels
 public/js/             Browser match client (ES modules, imports ../shared/)
-  runtime.js           Cookie vs shell token, server URL, Socket.IO, openExternal
+  runtime.js           Cookie vs shell token, server URL, Socket.IO, openExternal, asset update watch
   menus/               Shared games / lobby-create / account UI (API-driven)
   main.js              2D match bootstrap: socket, lobby, menus
   main3d.js / scene3d.js   3D match client
@@ -94,13 +95,14 @@ views/                 EJS shells (landing, play, wiki, admin/, scores, lobby-cr
 platforms/electron/    Desktop shell (local dist/client + remote game server)
 platforms/capacitor/   Android/iOS shell (replaces retired pocketMOTL client)
 shared/protocol.js     PROTOCOL_VERSION / CLIENT_VERSION for packaged clients
+shared/assetUpdate.js  Website asset-version reload/prompt decision helpers
 docs/packaging.md      Export, deep links, version gate, shell packaging
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports app.js
 scripts/export-client.js Static client export for shells
 scripts/load/          socket-load.js (100-player harness), sim-bench.js
-deploy/nginx.conf.example  One Node process behind Nginx; static files cached
+deploy/nginx.conf.example  One Node process behind Nginx; code assets no-cache + ETag
 goals.md               Backlog / roadmap (not docs)
 data/                  Runtime DB, news.json (do not commit secrets)
 ```
@@ -130,6 +132,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js` (static assets before session), `test/security.test.js` / `test/securityHttp.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, `public/js/runtime.js`, `docs/packaging.md` |
+| Website client cache / deploy freshness | `server/assetVersion.js`, `app.js` static mounts | EJS `?v=` + `views/asset-boot.ejs`; `/js` `/css` `/shared` `/vendor` `no-cache`; `runtime.watchAssetUpdates` (skip shells); `deploy/nginx.conf.example`; `test/assetVersion.test.js` |
 | Electron / Capacitor packaging | `docs/packaging.md`, `scripts/export-client.js` | `platforms/electron/`, `platforms/capacitor/` (pocketMOTL Kotlin client retired) |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | Admin dashboard (roles, users, analytics, logs, games, ops, news, reports) | `server/admin/` (`routes.js`, `auth.js`, `news.js`, …) | `views/admin/` (incl. `news.ejs`, `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`, newsletter_*), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |

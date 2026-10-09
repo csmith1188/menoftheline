@@ -42,11 +42,24 @@ test("metrics route is absent until METRICS=1, and static assets cache", async (
   const script = await fetch(`${base}/js/main.js`);
   assert.equal(script.status, 200);
   const cache = script.headers.get("cache-control") || "";
-  assert.match(cache, /max-age=3600/);
+  assert.match(cache, /no-cache/i);
+  assert.equal(cache.includes("max-age=3600"), false);
 
   const versioned = await fetch(`${base}/js/main.js?v=1`);
   assert.equal(versioned.status, 200);
-  assert.match(versioned.headers.get("cache-control") || "", /max-age=3600/);
+  assert.match(versioned.headers.get("cache-control") || "", /no-cache/i);
+
+  const shared = await fetch(`${base}/shared/config.js`);
+  assert.equal(shared.status, 200);
+  assert.match(shared.headers.get("cache-control") || "", /no-cache/i);
+
+  const css = await fetch(`${base}/css/landing.css`);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get("cache-control") || "", /no-cache/i);
+
+  const manifest = await fetch(`${base}/manifest.webmanifest`);
+  assert.equal(manifest.status, 200);
+  assert.match(manifest.headers.get("cache-control") || "", /no-cache/i);
 
   const home = await fetch(`${base}/`);
   assert.equal(home.status, 200);
@@ -54,4 +67,5 @@ test("metrics route is absent until METRICS=1, and static assets cache", async (
   assert.equal(homeCache.includes("max-age=3600"), false);
   const html = await home.text();
   assert.match(html, /\/css\/landing\.css\?v=/);
+  assert.match(html, /MOTL_ASSET_VERSION/);
 });

@@ -1649,3 +1649,45 @@ li::marker {
 .banks button:disabled {
   cursor: default;
 }
+
+.motl-asset-update {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 14px;
+  max-width: min(92vw, 420px);
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(29, 40, 54, 0.96);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-text);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.motl-asset-update p {
+  margin: 0;
+}
+
+.motl-asset-update button {
+  appearance: none;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gold);
+  font: inherit;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.motl-asset-update button:hover {
+  background: rgba(232, 195, 106, 0.12);
+}

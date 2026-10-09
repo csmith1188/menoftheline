@@ -50,28 +50,29 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
   }
 
+  # Code assets: no-cache + ETag. Entry scripts use ?v=assetVersion, but ESM
+  # relative imports (./render.js, ../shared/config.js) do not — revalidate.
   location /js/ {
     alias /var/www/menoftheline/public/js/;
-    # ESM imports (runtime.js) are not cache-busted by ?v= on the entry script.
     add_header Cache-Control "no-cache";
     etag on;
   }
 
   location /css/ {
     alias /var/www/menoftheline/public/css/;
-    expires 1h;
+    add_header Cache-Control "no-cache";
     etag on;
   }
 
   location /shared/ {
     alias /var/www/menoftheline/shared/;
-    expires 1h;
+    add_header Cache-Control "no-cache";
     etag on;
   }
 
   location /vendor/three/ {
     alias /var/www/menoftheline/node_modules/three/;
-    expires 1h;
+    add_header Cache-Control "no-cache";
     etag on;
   }
 

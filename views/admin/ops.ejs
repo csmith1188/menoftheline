@@ -40,12 +40,8 @@
       </div>
 
       <div class="admin-panel">
-        <h3>News (JSON)</h3>
-        <form method="post" action="/admin/ops/news">
-          <%- include("../csrf-field") %>
-          <textarea name="newsJson" rows="16" style="width:100%; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;"><%= JSON.stringify(news, null, 2) %></textarea>
-          <button type="submit">Save news</button>
-        </form>
+        <h3>News</h3>
+        <p class="hint">News editing and the mailer moved to <a href="/admin/news">Admin → News</a>.</p>
       </div>
 
       <div class="admin-panel">

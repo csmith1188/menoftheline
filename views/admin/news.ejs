@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>News · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>News / Mailer</h2>
+      <p class="hint">
+        Eligible subscribers: <%= eligible %>.
+        SMTP hour: <%= mailBudget.sentLastHour %> sent, <%= mailBudget.remaining %> remaining
+        (cap <%= mailBudget.config.maxPerHour %>/hour, delay <%= Math.round(mailBudget.config.delayMs / 1000) %>s).
+      </p>
+      <% if (eligible > mailBudget.remaining) { %>
+        <p class="notice">DreamHost SMTP is limited to about 100 recipients/hour. This campaign will drip over multiple hours.</p>
+      <% } %>
+      <div class="admin-actions" style="margin-bottom:1rem">
+        <a class="action" href="/admin/news/new">New entry</a>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Entries</h3>
+        <% if (!news.length) { %>
+          <p class="hint">No news yet.</p>
+        <% } else { %>
+          <ul class="list">
+            <% news.forEach(function (item) { %>
+              <li class="card">
+                <p class="hint"><%= item.date %><% if (item.category) { %> · <%= item.category %><% } %></p>
+                <h3 style="margin:0"><a href="/admin/news/<%= encodeURIComponent(item.id) %>"><%= item.title %></a></h3>
+                <p class="hint admin-mono"><%= item.id %></p>
+                <% const active = activeByNews[item.id]; %>
+                <% if (active) { %>
+                  <p class="hint">Campaign #<%= active.id %>: <%= active.status %>
+                    (sent <%= active.sent %>/<%= active.total %>, failed <%= active.failed %>, pending <%= active.pending %>)</p>
+                <% } %>
+              </li>
+            <% }) %>
+          </ul>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Mailing history</h3>
+        <% if (!campaigns.length) { %>
+          <p class="hint">No campaigns yet.</p>
+        <% } else { %>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>News</th>
+                  <th>Status</th>
+                  <th>Admin</th>
+                  <th>Counts</th>
+                  <th>Started</th>
+                  <th>Finished</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% campaigns.forEach(function (c) { %>
+                  <tr>
+                    <td><%= c.id %></td>
+                    <td><a href="/admin/news/<%= encodeURIComponent(c.news_id) %>"><%= c.news_id %></a></td>
+                    <td><%= c.status %></td>
+                    <td><%= c.created_by != null ? ("#" + c.created_by) : "—" %></td>
+                    <td class="hint"><%= c.sent %> sent · <%= c.failed %> fail · <%= c.pending %> pend · <%= c.skipped %> skip / <%= c.total %></td>
+                    <td class="hint"><%= c.started_at ? new Date(c.started_at).toLocaleString() : "—" %></td>
+                    <td class="hint"><%= c.completed_at ? new Date(c.completed_at).toLocaleString() : "—" %></td>
+                  </tr>
+                  <% if (c.error_summary) { %>
+                    <tr><td colspan="7" class="hint"><%= c.error_summary %></td></tr>
+                  <% } %>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Raw JSON</h3>
+        <p class="hint">Advanced edit of the full news.json array. Validates before save; preserves unknown keys where possible.</p>
+        <form method="post" action="/admin/news/raw">
+          <%- include("../csrf-field") %>
+          <textarea name="newsJson" rows="18" style="width:100%; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;"><%= JSON.stringify(news, null, 2) %></textarea>
+          <button type="submit">Save JSON</button>
+        </form>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

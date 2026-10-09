@@ -19,7 +19,8 @@
       "Skirmisher melee damage decreased from 7 to 6.",
       "Skirmisher ranged damage decreased from 7 to 6.",
       "Skirmisher shooting range decreased from 220 to 200."
-    ]
+    ],
+    "id": "2026-10-05-cavalry-skirmishers-and-engineer-balance"
   },
   {
     "date": "2026-10-04",
@@ -31,7 +32,8 @@
       "Hussar (Dragoon): ignore terrain slow (still blocked by peaks) and gain a melee pack bonus for every other friendly Hussar in melee reach. Selected-unit info shows Pack +% the same way it shows Line +%.",
       "Horse Guns (Cannon): faster field guns with less range and punch. They still cannot cross rivers unless an Engineer pontoons them.",
       "Engineer (Officer): does not restore the line. Within 60 paces it opens LOS through terrain, pontoons overlapping rivers so artillery can cross, and while on a hill shares that hill's shooting-range bonus with nearby friends."
-    ]
+    ],
+    "id": "2026-10-04-light-alternate-units"
   },
   {
     "date": "2026-10-04",
@@ -44,7 +46,8 @@
       "Howitzer, Color Guard gold cost increased from 400 to 500.",
       "Lancer gold cost increased from 250 to 300.",
       "Troop gold cost increased from 100 to 150."
-    ]
+    ],
+    "id": "2026-10-04-unit-price-balance"
   },
   {
     "date": "2026-10-03",
@@ -56,7 +59,8 @@
       "Units hiding behind their own fort get cover, and some terrain makes shooting easier or harder.",
       "Different terrain changes how fast units can move depending on their type.",
       "There are improvements to tooltips and training mode to help you learn these changes."
-    ]
+    ],
+    "id": "2026-10-03-terrain-and-line-of-sight"
   },
   {
     "date": "2026-09-30",
@@ -65,7 +69,8 @@
     "items": [
       "Can start a training mode game against a bot or other random player. Only the bottom lane is active, and the game is slowed down.",
       "Tooltips now show you the anticipated action when clicking/touching an object in the game."
-    ]
+    ],
+    "id": "2026-09-30-training-mode-and-tooltips"
   },
   {
     "date": "2026-09-29",
@@ -74,7 +79,8 @@
     "items": [
       "Choose the 3D client when creating or joining a game.",
       "Game speed is now 2/3 the original speed. This should allow players to spend more time arranging their units and managin their economy."
-    ]
+    ],
+    "id": "2026-09-29-3d-client-and-speed-tweaks"
   },
   {
     "date": "2026-09-29",
@@ -88,7 +94,8 @@
       "Color Guard now restores causalties instead of boosting speed and attack speed.",
       "Keeps shoot less, but not greatly increase health and fatigue recovery, unless the enemy takes your fort!",
       "All units now Charge and Fall Back through all friendly units. All units collide normally otherwise."
-    ]
+    ],
+    "id": "2026-09-29-unit-unit-controls-and-unit-icons-rework"
   },
   {
     "date": "2026-09-26",
@@ -102,7 +109,8 @@
       "Strategy only reorders targets inside the usual engagement and shoot ranges. Halt and lined volleys still use full range; advancing units still open at engage range.",
       "Officer rules are unchanged: skirmishers may snipe officers; other units skip them while another target is in full shooting range.",
       "Howitzers still fire closest per row and ignore lane strategy. Keep guns follow the top lane strategy."
-    ]
+    ],
+    "id": "2026-09-26-grand-strategy"
   },
   {
     "date": "2026-09-26",
@@ -121,7 +129,8 @@
       "The scoreboard shows net land per second, and the economy row lists the research land drain.",
       "Move-order flashes appear above the unit selection readout.",
       "Grenadiers ignore bonus flanking damage. Charge and other bonuses still apply; they remain troops for everything else."
-    ]
+    ],
+    "id": "2026-09-26-upkeep-town-research-grenadiers"
   },
   {
     "date": "2026-09-24",
@@ -131,7 +140,8 @@
       "Dragoons and Lancers no longer collide with friendly units while charging.",
       "When units that were passing through each other start colliding again (for example after leaving fallback), they step forward or back — whichever is shorter — until they no longer overlap.",
       "Units cannot fire or melee while overlapping a friendly they collide with."
-    ]
+    ],
+    "id": "2026-09-24-charge-through-stack-resolve"
   },
   {
     "date": "2026-09-23",
@@ -140,6 +150,7 @@
     "items": [
       "Game is live and complete!",
       "You can not play as a guest, or log into Formbar to play ranked or matched games."
-    ]
+    ],
+    "id": "2026-09-23-happy-birthday"
   }
 ]

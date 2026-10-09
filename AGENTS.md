@@ -52,11 +52,14 @@ server/
   admin/               Staff dashboard (role authz, audit, users, analytics, logs, matches, ops, routes)
   db.js                SQLite accounts (internal id), tickets, wiki, suggestions, games, admin audit/ledger, paypal_purchases
   auth.js              Local auth flags (incl. MATCH_CHAT), scrypt passwords, tokens, rate limits, EN/ES name filter (glin-profanity)
-  mail.js              Nodemailer verify/reset email (SMTP_*)
+  mail.js              Nodemailer verify/reset + news email (SMTP_*, NEWS_MAIL_*)
+  newsStore.js         data/news.json load/validate/upsert (ids, lock)
+  newsRender.js        News website / email HTML / plain-text renderers
+  newsMailer.js        Newsletter drip worker (campaigns/outbox)
   paypal.js            PayPal Orders v2 (create/capture/webhook verify/settle) + reconcile loop
   paypalPackages.js    Server-only USD ticket package catalog
   rating.js            MMR/Elo
-  news.js              Landing news from data/news.json
+  news.js              Re-exports loadNews from newsStore.js
   wiki-render.js       Markdown → HTML for wiki
   wiki-diff.js         Revision diffs
   formbar.js           Digipog transfers; one outstanding socket transfer at a time
@@ -128,7 +131,8 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, `public/js/runtime.js`, `docs/packaging.md` |
 | Electron / Capacitor packaging | `docs/packaging.md`, `scripts/export-client.js` | `platforms/electron/`, `platforms/capacitor/` (pocketMOTL Kotlin client retired) |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
-| Admin dashboard (roles, users, analytics, logs, games, ops, reports) | `server/admin/` (`routes.js`, `auth.js`, …) | `views/admin/` (incl. `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |
+| Admin dashboard (roles, users, analytics, logs, games, ops, news, reports) | `server/admin/` (`routes.js`, `auth.js`, `news.js`, …) | `views/admin/` (incl. `news.ejs`, `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`, newsletter_*), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |
+| News editor / newsletter mailer | `server/newsStore.js`, `server/newsRender.js`, `server/newsMailer.js`, `docs/news-mail.md` | Admin `/admin/news` (admin-only); profile opt-in; `/unsubscribe/news`; DreamHost drip via `NEWS_MAIL_*`; `npm run patch-notes` prepends with `id` |
 | End-of-match Match Review (game-over banner) | `server/matchSummary.js`, `shared/matchReview.js` | `room.decorateState` → `snap.matchReview`; `public/js/matchReview.js` + `main.js` / `main3d.js`; play EJS/`game.css` |
 | Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` (Formbar-linked only) |
 | Buy PayPal ticket packs | `server/paypal.js`, `server/paypalPackages.js`, `docs/paypal.md` | `/buy` + `views/paypal-store.ejs` / `public/js/paypalBuy.js`; `POST /api/paypal/orders` + capture; `POST /webhooks/paypal`; gated: local/Discord login + credentials; blocked when `formbar_id` set; ledger `paypal_purchase` / `paypal_clawback`; admin user + ops lookup/export |

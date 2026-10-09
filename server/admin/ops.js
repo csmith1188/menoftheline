@@ -7,6 +7,7 @@ import {
   setSiteSetting,
 } from "../db.js";
 import { loadNews } from "../news.js";
+import { saveNewsArray } from "../newsStore.js";
 import { asErr, logger } from "../logger.js";
 import {
   anyLoginEnabled,
@@ -20,7 +21,6 @@ import { mailReady } from "../mail.js";
 import { metricsEnabled } from "../metrics.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const newsFile = path.join(root, "data", "news.json");
 
 export async function isMatchmakingPaused() {
   const row = await getSiteSetting("matchmaking_paused");
@@ -42,26 +42,7 @@ export function readNews() {
 }
 
 export function saveNews(items, updatedBy = null) {
-  if (!Array.isArray(items)) throw new Error("news must be an array");
-  const cleaned = items
-    .filter((item) => item && item.title)
-    .map((item) => ({
-      date: String(item.date || new Date().toISOString().slice(0, 10)),
-      title: String(item.title).slice(0, 200),
-      summary: item.summary != null ? String(item.summary).slice(0, 2000) : "",
-      items: Array.isArray(item.items)
-        ? item.items.map((line) => String(line).slice(0, 500)).slice(0, 50)
-        : [],
-    }));
-  const tmp = `${newsFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(cleaned, null, 2)}\n`, "utf8");
-  fs.renameSync(tmp, newsFile);
-  logger.info({
-    event: "news_saved",
-    count: cleaned.length,
-    updatedBy,
-  }, "news.json updated");
-  return cleaned;
+  return saveNewsArray(items, updatedBy);
 }
 
 export async function configHealth() {

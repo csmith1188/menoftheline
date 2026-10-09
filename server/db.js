@@ -307,7 +307,7 @@ export async function initDb() {
   logger.info({ event: "db_ready", dbFile: path.basename(dbFile) }, "database ready");
 }
 
-const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, tooltips, bgm_volume, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, created_at, updated_at`;
+const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, tooltips, bgm_volume, news_email_opt_in, news_email_opt_in_at, news_email_opt_out_at, news_email_consent_source, news_email_consent_ip, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, created_at, updated_at`;
 
 export const ACCOUNT_ROLES = Object.freeze(["player", "moderator", "admin"]);
 
@@ -351,11 +351,17 @@ async function ensureAdminSchema() {
   await ensureAccountColumn(accountCols, "session_epoch", "session_epoch INTEGER NOT NULL DEFAULT 0");
   await ensureAccountColumn(accountCols, "email_verified_by", "email_verified_by INTEGER");
   await ensureAccountColumn(accountCols, "email_verified_reason", "email_verified_reason TEXT");
+  await ensureAccountColumn(accountCols, "news_email_opt_in", "news_email_opt_in INTEGER NOT NULL DEFAULT 0");
+  await ensureAccountColumn(accountCols, "news_email_opt_in_at", "news_email_opt_in_at INTEGER");
+  await ensureAccountColumn(accountCols, "news_email_opt_out_at", "news_email_opt_out_at INTEGER");
+  await ensureAccountColumn(accountCols, "news_email_consent_source", "news_email_consent_source TEXT");
+  await ensureAccountColumn(accountCols, "news_email_consent_ip", "news_email_consent_ip TEXT");
   await run("CREATE INDEX IF NOT EXISTS accounts_role ON accounts (role)");
   await run("CREATE INDEX IF NOT EXISTS accounts_banned_at ON accounts (banned_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_last_seen ON accounts (last_seen_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_name_nocase ON accounts (name COLLATE NOCASE)");
   await run("CREATE INDEX IF NOT EXISTS accounts_email_verified ON accounts (email_verified_at)");
+  await run("CREATE INDEX IF NOT EXISTS accounts_news_email ON accounts (news_email_opt_in, email_verified_at)");
 
   const gameCols = await all("PRAGMA table_info(games)");
   if (!gameCols.some((col) => col.name === "win_reason")) {
@@ -487,6 +493,65 @@ async function ensureAdminSchema() {
   await run("CREATE INDEX IF NOT EXISTS admin_events_event ON admin_events (event, created_at)");
   await run("CREATE INDEX IF NOT EXISTS admin_events_match ON admin_events (match_id)");
   await run("CREATE INDEX IF NOT EXISTS admin_events_account ON admin_events (account_id, created_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS newsletter_consent_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    opted_in INTEGER NOT NULL,
+    source TEXT,
+    ip TEXT,
+    user_agent TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS newsletter_consent_account ON newsletter_consent_events (account_id, created_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS newsletter_unsub_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    revoked_at INTEGER
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS newsletter_unsub_account ON newsletter_unsub_tokens (account_id)");
+
+  await run(`CREATE TABLE IF NOT EXISTS newsletter_campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    news_id TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_by INTEGER,
+    started_at INTEGER,
+    completed_at INTEGER,
+    total INTEGER NOT NULL DEFAULT 0,
+    sent INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    pending INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    error_summary TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS newsletter_campaigns_news ON newsletter_campaigns (news_id, status)");
+  await run("CREATE INDEX IF NOT EXISTS newsletter_campaigns_created ON newsletter_campaigns (created_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS newsletter_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    email_domain TEXT,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER,
+    last_error TEXT,
+    provider_message_id TEXT,
+    claimed_by TEXT,
+    claimed_at INTEGER,
+    sent_at INTEGER,
+    created_at INTEGER NOT NULL,
+    UNIQUE (campaign_id, account_id)
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS newsletter_outbox_claim ON newsletter_outbox (status, next_attempt_at)");
+  await run("CREATE INDEX IF NOT EXISTS newsletter_outbox_campaign ON newsletter_outbox (campaign_id, status)");
 }
 
 async function bootstrapAdminRoles() {
@@ -979,6 +1044,12 @@ export async function deleteLocalAccount(accountId) {
         return false;
       }
       await execRun("DELETE FROM auth_tokens WHERE account_id = ?", [id]);
+      await execRun("DELETE FROM newsletter_unsub_tokens WHERE account_id = ?", [id]);
+      await execRun(
+        `UPDATE newsletter_outbox SET status = 'cancelled', last_error = 'account_deleted'
+         WHERE account_id = ? AND status IN ('pending', 'sending')`,
+        [id],
+      );
       const result = await execRun("DELETE FROM accounts WHERE id = ?", [id]);
       await execRun("COMMIT");
       return result.changes > 0;
@@ -2364,6 +2435,492 @@ export async function setPlayerBgmVolume(player, percent) {
     [value, Date.now(), id],
   );
   return result.changes > 0;
+}
+
+export function newsEmailOptedIn(account) {
+  return !!(account && Number(account.news_email_opt_in) === 1);
+}
+
+/** Eligible newsletter recipients: verified email, opted in, not banned. */
+export async function listNewsEmailEligibleAccounts() {
+  const now = Date.now();
+  const rows = await all(
+    `SELECT ${ACCOUNT_SELECT} FROM accounts
+     WHERE email IS NOT NULL AND TRIM(email) != ''
+       AND email_verified_at IS NOT NULL
+       AND news_email_opt_in = 1
+       AND (banned_at IS NULL OR (ban_expires_at IS NOT NULL AND ban_expires_at <= ?))`,
+    [now],
+  );
+  return rows.filter((row) => !isAccountBanned(row, now));
+}
+
+export async function countNewsEmailEligible() {
+  const rows = await listNewsEmailEligibleAccounts();
+  return rows.length;
+}
+
+export async function setNewsEmailOptIn(accountId, optedIn, {
+  source = "profile",
+  ip = null,
+  userAgent = null,
+} = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "bad_account" };
+  const now = Date.now();
+  const on = optedIn ? 1 : 0;
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const account = await execGet(
+        `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
+        [id],
+      );
+      if (!account) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (on) {
+        await execRun(
+          `UPDATE accounts SET
+             news_email_opt_in = 1,
+             news_email_opt_in_at = ?,
+             news_email_consent_source = ?,
+             news_email_consent_ip = ?,
+             updated_at = ?
+           WHERE id = ?`,
+          [now, source || null, ip ? String(ip).slice(0, 64) : null, now, id],
+        );
+      } else {
+        await execRun(
+          `UPDATE accounts SET
+             news_email_opt_in = 0,
+             news_email_opt_out_at = ?,
+             news_email_consent_source = ?,
+             news_email_consent_ip = ?,
+             updated_at = ?
+           WHERE id = ?`,
+          [now, source || null, ip ? String(ip).slice(0, 64) : null, now, id],
+        );
+        await execRun(
+          `UPDATE newsletter_unsub_tokens SET revoked_at = ?
+           WHERE account_id = ? AND revoked_at IS NULL`,
+          [now, id],
+        );
+      }
+      await execRun(
+        `INSERT INTO newsletter_consent_events (account_id, opted_in, source, ip, user_agent, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          on,
+          source || null,
+          ip ? String(ip).slice(0, 64) : null,
+          userAgent ? String(userAgent).slice(0, 200) : null,
+          now,
+        ],
+      );
+      await execRun("COMMIT");
+      return { ok: true, optedIn: !!on };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("setNewsEmailOptIn", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function issueNewsletterUnsubToken(accountId, tokenHash) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const now = Date.now();
+  // Keep prior tokens active so older emails still unsubscribe until used or account opts out.
+  await run(
+    `INSERT INTO newsletter_unsub_tokens (account_id, token_hash, created_at, revoked_at)
+     VALUES (?, ?, ?, NULL)`,
+    [id, tokenHash, now],
+  );
+  return true;
+}
+
+export async function getActiveNewsletterUnsubToken(accountId) {
+  return get(
+    `SELECT id, account_id, token_hash, created_at FROM newsletter_unsub_tokens
+     WHERE account_id = ? AND revoked_at IS NULL
+     ORDER BY id DESC LIMIT 1`,
+    [accountId],
+  );
+}
+
+/** Non-consuming lookup; returns account if token is active. */
+export async function findAccountByNewsletterUnsubToken(tokenHash) {
+  const row = await get(
+    `SELECT t.account_id FROM newsletter_unsub_tokens t
+     WHERE t.token_hash = ? AND t.revoked_at IS NULL`,
+    [tokenHash],
+  );
+  if (!row) return null;
+  return getAccount(row.account_id);
+}
+
+export async function revokeNewsletterUnsubToken(tokenHash) {
+  const row = await get(
+    `SELECT account_id FROM newsletter_unsub_tokens
+     WHERE token_hash = ? AND revoked_at IS NULL`,
+    [tokenHash],
+  );
+  if (!row) return false;
+  const now = Date.now();
+  await run(
+    `UPDATE newsletter_unsub_tokens SET revoked_at = ?
+     WHERE account_id = ? AND revoked_at IS NULL`,
+    [now, row.account_id],
+  );
+  return true;
+}
+
+export async function purgeNewsletterDataForAccount(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  await run("DELETE FROM newsletter_unsub_tokens WHERE account_id = ?", [id]);
+  await run(
+    `UPDATE newsletter_outbox SET status = 'cancelled', last_error = 'account_deleted'
+     WHERE account_id = ? AND status IN ('pending', 'sending')`,
+    [id],
+  );
+  await run(
+    `UPDATE accounts SET
+       news_email_opt_in = 0,
+       news_email_opt_out_at = ?,
+       news_email_consent_source = 'account_deleted',
+       updated_at = ?
+     WHERE id = ?`,
+    [Date.now(), Date.now(), id],
+  );
+}
+
+export async function getActiveCampaignForNews(newsId) {
+  return get(
+    `SELECT * FROM newsletter_campaigns
+     WHERE news_id = ? AND status IN ('queued', 'sending', 'paused')
+     ORDER BY id DESC LIMIT 1`,
+    [String(newsId)],
+  );
+}
+
+export async function getNewsletterCampaign(id) {
+  return get("SELECT * FROM newsletter_campaigns WHERE id = ?", [Number(id)]);
+}
+
+export async function listNewsletterCampaigns(limit = 50) {
+  const n = Math.max(1, Math.min(200, Number(limit) || 50));
+  return all(
+    `SELECT * FROM newsletter_campaigns ORDER BY id DESC LIMIT ?`,
+    [n],
+  );
+}
+
+export async function createNewsletterCampaign({
+  newsId,
+  subject,
+  createdBy,
+  recipients,
+}) {
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const active = await execGet(
+        `SELECT id FROM newsletter_campaigns
+         WHERE news_id = ? AND status IN ('queued', 'sending', 'paused')
+         LIMIT 1`,
+        [String(newsId)],
+      );
+      if (active) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "campaign_active", campaignId: active.id };
+      }
+      const list = Array.isArray(recipients) ? recipients : [];
+      const insert = await execRun(
+        `INSERT INTO newsletter_campaigns (
+          news_id, subject, status, created_by, started_at, completed_at,
+          total, sent, failed, pending, skipped, error_summary, created_at, updated_at
+        ) VALUES (?, ?, 'queued', ?, ?, NULL, ?, 0, 0, ?, 0, NULL, ?, ?)`,
+        [
+          String(newsId),
+          String(subject || "").slice(0, 200),
+          createdBy ?? null,
+          now,
+          list.length,
+          list.length,
+          now,
+          now,
+        ],
+      );
+      const campaignId = insert.lastID;
+      for (const row of list) {
+        const domain = row.email && String(row.email).includes("@")
+          ? String(row.email).split("@").pop()
+          : null;
+        await execRun(
+          `INSERT INTO newsletter_outbox (
+            campaign_id, account_id, email_domain, status, attempts,
+            next_attempt_at, last_error, provider_message_id, claimed_by, claimed_at, sent_at, created_at
+          ) VALUES (?, ?, ?, 'pending', 0, ?, NULL, NULL, NULL, NULL, NULL, ?)`,
+          [campaignId, row.id, domain, now, now],
+        );
+      }
+      await execRun("COMMIT");
+      return { ok: true, campaignId, total: list.length };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("createNewsletterCampaign", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function updateNewsletterCampaignStatus(campaignId, status, extra = {}) {
+  const now = Date.now();
+  const fields = ["status = ?", "updated_at = ?"];
+  const params = [status, now];
+  if (extra.completedAt != null) {
+    fields.push("completed_at = ?");
+    params.push(extra.completedAt);
+  }
+  if (extra.startedAt != null) {
+    fields.push("started_at = ?");
+    params.push(extra.startedAt);
+  }
+  if (extra.errorSummary !== undefined) {
+    fields.push("error_summary = ?");
+    params.push(extra.errorSummary);
+  }
+  params.push(Number(campaignId));
+  await run(
+    `UPDATE newsletter_campaigns SET ${fields.join(", ")} WHERE id = ?`,
+    params,
+  );
+}
+
+export async function refreshNewsletterCampaignCounts(campaignId) {
+  const id = Number(campaignId);
+  const row = await get(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent,
+       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
+       COALESCE(SUM(CASE WHEN status = 'pending' OR status = 'sending' THEN 1 ELSE 0 END), 0) AS pending,
+       COALESCE(SUM(CASE WHEN status = 'skipped' OR status = 'cancelled' THEN 1 ELSE 0 END), 0) AS skipped,
+       COUNT(*) AS total
+     FROM newsletter_outbox WHERE campaign_id = ?`,
+    [id],
+  );
+  const now = Date.now();
+  await run(
+    `UPDATE newsletter_campaigns SET
+       sent = ?, failed = ?, pending = ?, skipped = ?, total = ?, updated_at = ?
+     WHERE id = ?`,
+    [
+      Number(row?.sent || 0),
+      Number(row?.failed || 0),
+      Number(row?.pending || 0),
+      Number(row?.skipped || 0),
+      Number(row?.total || 0),
+      now,
+      id,
+    ],
+  );
+  return row;
+}
+
+export async function pauseNewsletterCampaign(campaignId) {
+  await updateNewsletterCampaignStatus(campaignId, "paused");
+}
+
+export async function resumeNewsletterCampaign(campaignId) {
+  const now = Date.now();
+  await run(
+    `UPDATE newsletter_outbox SET next_attempt_at = ?
+     WHERE campaign_id = ? AND status = 'pending'`,
+    [now, Number(campaignId)],
+  );
+  await updateNewsletterCampaignStatus(campaignId, "queued");
+}
+
+export async function cancelNewsletterCampaign(campaignId) {
+  const now = Date.now();
+  await run(
+    `UPDATE newsletter_outbox SET status = 'cancelled'
+     WHERE campaign_id = ? AND status IN ('pending', 'sending')`,
+    [Number(campaignId)],
+  );
+  await updateNewsletterCampaignStatus(campaignId, "cancelled", {
+    completedAt: now,
+  });
+  await refreshNewsletterCampaignCounts(campaignId);
+}
+
+/**
+ * Claim one pending outbox row for a sending/queued campaign.
+ * Returns row + account email or null.
+ */
+export async function claimNewsletterOutboxRow(workerId, {
+  staleClaimMs = 5 * 60 * 1000,
+} = {}) {
+  const now = Date.now();
+  const claimer = String(workerId || `pid-${process.pid}`).slice(0, 64);
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      // Reclaim stale sending rows
+      await execRun(
+        `UPDATE newsletter_outbox SET status = 'pending', claimed_by = NULL, claimed_at = NULL
+         WHERE status = 'sending' AND claimed_at IS NOT NULL AND claimed_at < ?`,
+        [now - staleClaimMs],
+      );
+      const candidate = await execGet(
+        `SELECT o.* FROM newsletter_outbox o
+         JOIN newsletter_campaigns c ON c.id = o.campaign_id
+         WHERE o.status = 'pending'
+           AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)
+           AND c.status IN ('queued', 'sending')
+         ORDER BY o.id ASC
+         LIMIT 1`,
+        [now],
+      );
+      if (!candidate) {
+        await execRun("COMMIT");
+        return null;
+      }
+      const upd = await execRun(
+        `UPDATE newsletter_outbox
+         SET status = 'sending', claimed_by = ?, claimed_at = ?, attempts = attempts + 1
+         WHERE id = ? AND status = 'pending'`,
+        [claimer, now, candidate.id],
+      );
+      if (!upd.changes) {
+        await execRun("COMMIT");
+        return null;
+      }
+      await execRun(
+        `UPDATE newsletter_campaigns SET status = 'sending', updated_at = ?
+         WHERE id = ? AND status = 'queued'`,
+        [now, candidate.campaign_id],
+      );
+      const account = await execGet(
+        `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
+        [candidate.account_id],
+      );
+      await execRun("COMMIT");
+      return { outbox: { ...candidate, status: "sending", claimed_by: claimer, claimed_at: now }, account };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("claimNewsletterOutboxRow", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function completeNewsletterOutboxSent(outboxId, campaignId, messageId) {
+  const now = Date.now();
+  await run(
+    `UPDATE newsletter_outbox
+     SET status = 'sent', sent_at = ?, provider_message_id = ?, last_error = NULL,
+         claimed_by = NULL, claimed_at = NULL
+     WHERE id = ?`,
+    [now, messageId || null, Number(outboxId)],
+  );
+  await refreshNewsletterCampaignCounts(campaignId);
+  await maybeCompleteNewsletterCampaign(campaignId);
+}
+
+export async function completeNewsletterOutboxSkipped(outboxId, campaignId, reason) {
+  await run(
+    `UPDATE newsletter_outbox
+     SET status = 'skipped', last_error = ?, claimed_by = NULL, claimed_at = NULL
+     WHERE id = ?`,
+    [String(reason || "skipped").slice(0, 200), Number(outboxId)],
+  );
+  await refreshNewsletterCampaignCounts(campaignId);
+  await maybeCompleteNewsletterCampaign(campaignId);
+}
+
+export async function completeNewsletterOutboxFailed(outboxId, campaignId, error, {
+  retryAt = null,
+  permanent = false,
+} = {}) {
+  const msg = String(error || "error").slice(0, 300);
+  if (permanent || retryAt == null) {
+    await run(
+      `UPDATE newsletter_outbox
+       SET status = 'failed', last_error = ?, claimed_by = NULL, claimed_at = NULL
+       WHERE id = ?`,
+      [msg, Number(outboxId)],
+    );
+  } else {
+    await run(
+      `UPDATE newsletter_outbox
+       SET status = 'pending', last_error = ?, next_attempt_at = ?,
+           claimed_by = NULL, claimed_at = NULL
+       WHERE id = ?`,
+      [msg, retryAt, Number(outboxId)],
+    );
+  }
+  await refreshNewsletterCampaignCounts(campaignId);
+  if (permanent || retryAt == null) {
+    await maybeCompleteNewsletterCampaign(campaignId);
+  }
+}
+
+export async function pauseCampaignForQuota(campaignId, resumeAt, summary) {
+  await run(
+    `UPDATE newsletter_outbox SET next_attempt_at = ?
+     WHERE campaign_id = ? AND status = 'pending'`,
+    [resumeAt, Number(campaignId)],
+  );
+  await updateNewsletterCampaignStatus(campaignId, "paused", {
+    errorSummary: String(summary || "SMTP quota exceeded; paused").slice(0, 500),
+  });
+}
+
+async function maybeCompleteNewsletterCampaign(campaignId) {
+  const campaign = await getNewsletterCampaign(campaignId);
+  if (!campaign) return;
+  if (campaign.status !== "queued" && campaign.status !== "sending") return;
+  const counts = await get(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status IN ('pending', 'sending') THEN 1 ELSE 0 END), 0) AS open_count,
+       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
+       COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent
+     FROM newsletter_outbox WHERE campaign_id = ?`,
+    [Number(campaignId)],
+  );
+  if (Number(counts?.open_count || 0) > 0) return;
+  const now = Date.now();
+  const status = Number(counts?.sent || 0) === 0 && Number(counts?.failed || 0) > 0
+    ? "failed"
+    : "completed";
+  await updateNewsletterCampaignStatus(campaignId, status, { completedAt: now });
+  await refreshNewsletterCampaignCounts(campaignId);
+}
+
+export async function listNewsletterOutboxErrors(campaignId, limit = 20) {
+  return all(
+    `SELECT id, account_id, email_domain, status, last_error, attempts
+     FROM newsletter_outbox
+     WHERE campaign_id = ? AND last_error IS NOT NULL
+     ORDER BY id DESC LIMIT ?`,
+    [Number(campaignId), Math.max(1, Math.min(100, limit))],
+  );
 }
 
 export async function topAccounts(limit = 10) {

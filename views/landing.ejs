@@ -31,16 +31,7 @@
         <ul class="list" id="news-list">
           <% news.forEach(function (item) { %>
             <li class="card patch news-item">
-              <p class="hint"><%= item.date %></p>
-              <h3><%= item.title %></h3>
-              <% if (item.summary) { %><p><%= item.summary %></p><% } %>
-              <% if (item.items && item.items.length) { %>
-                <ul class="notes">
-                  <% item.items.forEach(function (line) { %>
-                    <li><%= line %></li>
-                  <% }) %>
-                </ul>
-              <% } %>
+              <%- newsWebsiteHtml(item) %>
             </li>
           <% }) %>
         </ul>

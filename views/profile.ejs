@@ -114,6 +114,22 @@
           </form>
         </section>
         <section>
+          <h2>Email preferences</h2>
+          <% if (!account.email || !accountEmailVerified(account)) { %>
+            <p class="hint">Verify your email to opt in to news emails.</p>
+          <% } else { %>
+            <form method="post" action="/profile/news-email">
+<%- include("csrf-field") %>
+              <label class="check-row">
+                <input type="checkbox" name="newsEmail" value="1" <%= account.news_email_opt_in ? "checked" : "" %>>
+                Send news to my email
+              </label>
+              <p class="hint">Patch notes and announcements only. You can unsubscribe anytime from your profile or the link in each email.</p>
+              <button type="submit" class="action">Save email preference</button>
+            </form>
+          <% } %>
+        </section>
+        <section>
           <h2>Account links</h2>
           <p class="hint">Linking a login that already belongs to another account merges that account’s stats and other logins into this one.</p>
           <ul class="list">

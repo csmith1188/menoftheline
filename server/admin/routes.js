@@ -49,9 +49,22 @@ import {
   ledgerToCsv,
   paypalPurchasesToCsv,
   readNews,
-  saveNews,
   setMaintenance,
 } from "./ops.js";
+import {
+  cancelNewsletterCampaign,
+  deleteNewsEntry,
+  newsAdminEditData,
+  newsAdminIndexData,
+  parseNewsFormBody,
+  pauseNewsletterCampaign,
+  previewNewsEntry,
+  resumeNewsletterCampaign,
+  saveNewsFromForm,
+  saveNewsFromRawJson,
+  sendNewsTestEmail,
+  startNewsCampaign,
+} from "./news.js";
 import {
   adminAdjustTickets,
   adminBan,
@@ -743,31 +756,302 @@ export function createAdminRouter(deps) {
     }
   });
 
-  router.post("/ops/news", async (req, res, next) => {
+  // ----- News / Mailer -----
+  router.get("/news", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const index = await newsAdminIndexData();
+      const data = await baseLocals(req, { ...index, adminSection: "news" });
+      req.session.save(() => res.render("admin/news", data));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/news/new", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const edit = await newsAdminEditData(null);
+      const data = await baseLocals(req, { ...edit, adminSection: "news", isNew: true });
+      req.session.save(() => res.render("admin/news-edit", data));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/news/:id", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const edit = await newsAdminEditData(req.params.id);
+      if (!edit.entry) {
+        req.session.notice = "News entry not found.";
+        req.session.save(() => res.redirect("/admin/news"));
+        return;
+      }
+      const data = await baseLocals(req, { ...edit, adminSection: "news", isNew: false });
+      req.session.save(() => res.render("admin/news-edit", data));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/save", async (req, res, next) => {
     try {
       if (!(await requireAdmin(req, res))) return;
       if (!adminLimited(req)) {
         req.session.notice = "Too many admin actions.";
-        req.session.save(() => res.redirect("/admin/ops"));
+        req.session.save(() => res.redirect("/admin/news"));
         return;
       }
-      let items;
       try {
-        items = JSON.parse(String(req.body.newsJson || "[]"));
-      } catch {
-        req.session.notice = "Invalid JSON.";
-        req.session.save(() => res.redirect("/admin/ops"));
+        const entry = saveNewsFromForm(req.body, req.adminAccount.id);
+        await auditAdmin(req, {
+          action: "news_upsert",
+          targetType: "news",
+          targetId: entry.id,
+          after: { title: entry.title, date: entry.date },
+        });
+        req.session.notice = "News entry saved.";
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(entry.id)}`));
+      } catch (err) {
+        if (err && err.code === "NEWS_INVALID") {
+          req.session.notice = err.message;
+          const id = String(req.body.id || "").trim();
+          req.session.save(() => res.redirect(id ? `/admin/news/${encodeURIComponent(id)}` : "/admin/news/new"));
+          return;
+        }
+        throw err;
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/raw", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions.";
+        req.session.save(() => res.redirect("/admin/news"));
         return;
       }
-      saveNews(items, req.adminAccount.id);
-      await auditAdmin(req, {
-        action: "news_update",
-        targetType: "site",
-        targetId: "news",
-        after: { count: items.length },
+      try {
+        const items = saveNewsFromRawJson(req.body.newsJson, req.adminAccount.id);
+        await auditAdmin(req, {
+          action: "news_raw_update",
+          targetType: "site",
+          targetId: "news",
+          after: { count: items.length },
+        });
+        req.session.notice = `News JSON saved (${items.length} entries).`;
+        req.session.save(() => res.redirect("/admin/news"));
+      } catch (err) {
+        if (err && err.code === "NEWS_INVALID") {
+          req.session.notice = err.message;
+          req.session.save(() => res.redirect("/admin/news"));
+          return;
+        }
+        throw err;
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/preview", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const parsed = parseNewsFormBody(req.body);
+      const preview = previewNewsEntry(parsed);
+      if (!preview.ok) {
+        res.status(400).json({ ok: false, error: preview.error });
+        return;
+      }
+      res.json({
+        ok: true,
+        subject: preview.subject,
+        websiteHtml: preview.websiteHtml,
+        emailHtml: preview.emailHtml,
+        plainText: preview.plainText,
       });
-      req.session.notice = "News updated.";
-      req.session.save(() => res.redirect("/admin/ops"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/:id/delete", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions.";
+        req.session.save(() => res.redirect("/admin/news"));
+        return;
+      }
+      if (!confirmed(req.body)) {
+        req.session.notice = "Confirm delete.";
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+        return;
+      }
+      try {
+        const removed = deleteNewsEntry(req.params.id, req.adminAccount.id);
+        await auditAdmin(req, {
+          action: "news_delete",
+          targetType: "news",
+          targetId: removed.id,
+          after: { title: removed.title },
+        });
+        req.session.notice = "News entry deleted.";
+      } catch (err) {
+        if (err && err.code === "NEWS_NOT_FOUND") {
+          req.session.notice = "News entry not found.";
+        } else {
+          throw err;
+        }
+      }
+      req.session.save(() => res.redirect("/admin/news"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/:id/test-send", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions.";
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+        return;
+      }
+      const result = await sendNewsTestEmail({
+        newsId: req.params.id,
+        account: req.adminAccount,
+      });
+      if (!result.ok) {
+        const messages = {
+          news_not_found: "News entry not found.",
+          no_email: "Your admin account has no email.",
+          unverified: "Verify your admin email before sending a test.",
+          mail_not_ready: "SMTP is not ready.",
+        };
+        req.session.notice = messages[result.error] || `Test send failed: ${result.error}`;
+      } else {
+        await auditAdmin(req, {
+          action: "news_test_send",
+          targetType: "news",
+          targetId: req.params.id,
+        });
+        req.session.notice = "Test email sent to your address.";
+      }
+      req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/:id/send", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions.";
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+        return;
+      }
+      if (!confirmed(req.body)) {
+        req.session.notice = "Confirm bulk send.";
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+        return;
+      }
+      const phrase = String(req.body.confirmPhrase || "").trim().toLowerCase();
+      if (phrase !== "send") {
+        req.session.notice = 'Type "send" to confirm the campaign.';
+        req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+        return;
+      }
+      const result = await startNewsCampaign({
+        newsId: req.params.id,
+        createdBy: req.adminAccount.id,
+      });
+      if (!result.ok) {
+        const messages = {
+          news_not_found: "News entry not found.",
+          mail_not_ready: "SMTP is not ready.",
+          campaign_active: "A campaign is already active for this entry.",
+          no_recipients: "No eligible subscribers.",
+        };
+        req.session.notice = messages[result.error] || `Send failed: ${result.error}`;
+      } else {
+        await auditAdmin(req, {
+          action: "news_campaign_start",
+          targetType: "news",
+          targetId: req.params.id,
+          after: { campaignId: result.campaignId, total: result.total },
+        });
+        req.session.notice = `Campaign queued for ${result.total} recipients.`;
+      }
+      req.session.save(() => res.redirect(`/admin/news/${encodeURIComponent(req.params.id)}`));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/campaigns/:campaignId/pause", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      const campaign = await pauseNewsletterCampaign(Number(req.params.campaignId));
+      void campaign;
+      await auditAdmin(req, {
+        action: "news_campaign_pause",
+        targetType: "newsletter_campaign",
+        targetId: String(req.params.campaignId),
+      });
+      req.session.notice = "Campaign paused.";
+      const nextUrl = String(req.body.newsId || "")
+        ? `/admin/news/${encodeURIComponent(req.body.newsId)}`
+        : "/admin/news";
+      req.session.save(() => res.redirect(nextUrl));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/campaigns/:campaignId/resume", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      await resumeNewsletterCampaign(Number(req.params.campaignId));
+      await auditAdmin(req, {
+        action: "news_campaign_resume",
+        targetType: "newsletter_campaign",
+        targetId: String(req.params.campaignId),
+      });
+      req.session.notice = "Campaign resumed.";
+      const nextUrl = String(req.body.newsId || "")
+        ? `/admin/news/${encodeURIComponent(req.body.newsId)}`
+        : "/admin/news";
+      req.session.save(() => res.redirect(nextUrl));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/news/campaigns/:campaignId/cancel", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!confirmed(req.body)) {
+        req.session.notice = "Confirm cancel.";
+        req.session.save(() => res.redirect("/admin/news"));
+        return;
+      }
+      await cancelNewsletterCampaign(Number(req.params.campaignId));
+      await auditAdmin(req, {
+        action: "news_campaign_cancel",
+        targetType: "newsletter_campaign",
+        targetId: String(req.params.campaignId),
+      });
+      req.session.notice = "Campaign cancelled.";
+      const nextUrl = String(req.body.newsId || "")
+        ? `/admin/news/${encodeURIComponent(req.body.newsId)}`
+        : "/admin/news";
+      req.session.save(() => res.redirect(nextUrl));
     } catch (err) {
       next(err);
     }

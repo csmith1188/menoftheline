@@ -45,18 +45,28 @@ export function mailReady() {
   return authEmailEnabled() && smtpConfigured();
 }
 
-export async function sendMail({ to, subject, text, html }) {
+export async function sendMail({
+  to,
+  subject,
+  text,
+  html,
+  from: fromOverride = null,
+  headers = null,
+  replyTo = null,
+}) {
   if (!authEmailEnabled()) {
     throw new Error("Email auth is disabled");
   }
   if (!smtpConfigured()) {
     throw new Error("SMTP is not configured");
   }
-  const from = String(process.env.SMTP_FROM || "").trim();
+  const from = String(fromOverride || process.env.SMTP_FROM || "").trim();
   if (!from) {
     throw new Error("SMTP_FROM is empty");
   }
   const message = { from, to, subject, text, html };
+  if (replyTo) message.replyTo = replyTo;
+  if (headers && typeof headers === "object") message.headers = headers;
   if (capture || String(process.env.AUTH_MAIL_CAPTURE_PATH || "").trim()) {
     recordMessage(message);
     return { messageId: "capture" };
@@ -85,6 +95,25 @@ export async function sendMail({ to, subject, text, html }) {
     }, "SMTP send failed");
     throw err;
   }
+}
+
+export async function sendNewsEmail({ to, subject, text, html, unsubscribeUrl }) {
+  const from = String(process.env.NEWS_MAIL_FROM || process.env.SMTP_FROM || "").trim();
+  const replyTo = String(process.env.NEWS_MAIL_REPLY_TO || "").trim() || undefined;
+  const headers = {};
+  if (unsubscribeUrl) {
+    headers["List-Unsubscribe"] = `<${unsubscribeUrl}>`;
+    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+  return sendMail({
+    to,
+    subject,
+    text,
+    html,
+    from,
+    replyTo,
+    headers: Object.keys(headers).length ? headers : null,
+  });
 }
 
 export async function sendVerifyEmail({ to, name, verifyUrl }) {

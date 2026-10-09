@@ -558,6 +558,28 @@ select:focus {
   text-transform: none;
 }
 
+.news-category {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+  margin: 0;
+}
+
+.news-summary,
+.news-body {
+  margin: 0.5rem 0 0;
+}
+
+.news-summary p,
+.news-body p {
+  margin: 0 0 0.75rem;
+}
+
+.news-summary p:last-child,
+.news-body p:last-child {
+  margin-bottom: 0;
+}
+
 .notes {
   margin: 0;
   padding-left: 1.15rem;

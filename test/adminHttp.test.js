@@ -133,6 +133,76 @@ test("non-admin is redirected away from /admin", async () => {
   }
 });
 
+test("moderator cannot open /admin/news", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "motl-admin-news-"));
+  const port = 19710 + Math.floor(Math.random() * 80);
+  const child = spawn(process.execPath, ["app.js"], {
+    cwd: path.resolve("."),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      DATA_DIR: dataDir,
+      SKIP_FORMBAR: "1",
+      METRICS_LOG: "0",
+      LOCAL_ACCOUNTS: "1",
+      FORMBAR_LOGIN: "0",
+      AUTH_EMAIL: "0",
+      SESSION_SECRET: "test-admin-news-secret-xxxxxxxx",
+      NODE_ENV: "test",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  await new Promise((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error(buf)), 20000);
+    const onData = (c) => {
+      buf += c.toString();
+      if (/listening on/.test(buf)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+  });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const jar = cookieJar();
+    await signupAndLogin(base, jar, { email: "mod@example.com", name: "Mod User" });
+    // Promote to moderator via sqlite in DATA_DIR
+    const sqlite3 = (await import("sqlite3")).default;
+    await new Promise((resolve, reject) => {
+      const db = new sqlite3.Database(path.join(dataDir, "Men Of The Line.sqlite"));
+      db.run("UPDATE accounts SET role = 'moderator' WHERE email = ?", ["mod@example.com"], (err) => {
+        db.close();
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    await primeCsrf(base, jar);
+    await fetch(`${base}/login`, {
+      method: "POST",
+      headers: { ...jar.header(), "content-type": "application/x-www-form-urlencoded" },
+      redirect: "manual",
+      body: new URLSearchParams({
+        _csrf: jar.csrf,
+        email: "mod@example.com",
+        password: "Password1!",
+      }),
+    }).then((res) => jar.store(res));
+    const res = await fetch(`${base}/admin/news`, {
+      headers: jar.header(),
+      redirect: "manual",
+    });
+    assert.ok(res.status >= 300 && res.status < 400);
+    assert.equal(res.headers.get("location"), "/");
+  } finally {
+    child.kill();
+    await new Promise((r) => child.once("exit", r));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("bootstrap admin can open /admin", async () => {
   // First boot creates account via signup outside; bootstrap needs existing id.
   // Create DB with a pre-promoted admin by starting once, signing up, then

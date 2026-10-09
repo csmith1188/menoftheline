@@ -25,6 +25,8 @@ import readline from "readline";
 import { execFileSync } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 
+import { prependNewsEntry, validateNewsEntry } from "../server/newsStore.js";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NEWS_PATH = path.join(ROOT, "data", "news.json");
 const CONFIG_REL = "shared/config.js";
@@ -504,17 +506,6 @@ function ask(rl, question, fallback) {
   });
 }
 
-function loadNews() {
-  const raw = fs.readFileSync(NEWS_PATH, "utf8");
-  const data = JSON.parse(raw);
-  if (!Array.isArray(data)) throw new Error("news.json must be a JSON array");
-  return data;
-}
-
-function writeNews(entries) {
-  fs.writeFileSync(NEWS_PATH, `${JSON.stringify(entries, null, 2)}\n`);
-}
-
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
@@ -597,7 +588,9 @@ async function main() {
     return;
   }
 
-  const entry = { date, title, summary, items };
+  const draft = { date, title, summary, items };
+  const validated = validateNewsEntry(draft);
+  const entry = validated.ok ? validated.entry : draft;
 
   if (opts.dryRun) {
     console.log("Dry run — would prepend:\n");
@@ -605,10 +598,10 @@ async function main() {
     return;
   }
 
-  const news = loadNews();
-  news.unshift(entry);
-  writeNews(news);
-  console.log(`Prepended "${title}" to ${path.relative(ROOT, NEWS_PATH)}.`);
+  const written = prependNewsEntry(draft, "patch-notes");
+  console.log(
+    `Prepended "${written.title}" (${written.id}) to ${path.relative(ROOT, NEWS_PATH)}.`,
+  );
 }
 
 main().catch((err) => {

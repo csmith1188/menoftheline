@@ -58,6 +58,9 @@ import {
   setLocalCredentials,
   setPlayerBgmVolume,
   setPlayerTooltips,
+  setNewsEmailOptIn,
+  findAccountByNewsletterUnsubToken,
+  revokeNewsletterUnsubToken,
   spendFreeTicket,
   tryLockTicketPurchase,
   unlockTicketPurchase,
@@ -103,6 +106,7 @@ import {
   warnAuthConfig,
 } from "./server/auth.js";
 import { mailReady, sendResetEmail, sendVerifyEmail } from "./server/mail.js";
+import { startNewsMailer } from "./server/newsMailer.js";
 import { ensureMetrics, report as metricsReport, startMetrics } from "./server/metrics.js";
 import { workerCount } from "./server/owners.js";
 import { scheduleSettingWrite } from "./server/settingsWrite.js";
@@ -149,6 +153,7 @@ import {
 } from "./server/discord.js";
 import { Matchmaker } from "./server/matchmaking.js";
 import { loadNews } from "./server/news.js";
+import { renderNewsWebsiteHtml } from "./server/newsRender.js";
 import { renderWikiBody } from "./server/wiki-render.js";
 import { createAdminRouter } from "./server/admin/routes.js";
 import {
@@ -413,6 +418,7 @@ app.locals.maxOpenBugs = MAX_OPEN_BUGS;
 app.locals.maxOpenWikiRevisions = MAX_OPEN_WIKI_REVISIONS;
 app.locals.freeOpenSuggestions = FREE_OPEN_SUGGESTIONS;
 app.locals.formatPlayDuration = formatPlayDuration;
+app.locals.newsWebsiteHtml = renderNewsWebsiteHtml;
 app.use(securityHeadersMiddleware(THIS_URL));
 // Keep www vs apex on one host so lane.sid cookies and Socket.IO Origin match THIS_URL.
 app.use((req, res, next) => {
@@ -1979,6 +1985,84 @@ app.post("/profile/suggestions/:id/delete", async (req, res, next) => {
   }
 });
 
+app.post("/profile/news-email", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!viewer || !viewer.id) {
+      res.redirect("/login");
+      return;
+    }
+    if (!accountEmailVerified(viewer) || !viewer.email) {
+      req.session.notice = "Verify your email before changing news email preferences.";
+      req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+      return;
+    }
+    const optedIn = req.body.newsEmail === "1" || req.body.newsEmail === "on";
+    await setNewsEmailOptIn(viewer.id, optedIn, {
+      source: "profile",
+      ip: requestClientIp(req),
+      userAgent: req.get("user-agent"),
+    });
+    req.session.notice = optedIn
+      ? "You will receive news emails."
+      : "News emails turned off.";
+    req.session.save(() => res.redirect(`/profile/${viewer.id}`));
+  } catch (err) {
+    next(err);
+  }
+});
+
+async function handleNewsUnsubscribe(req, res, next) {
+  try {
+    const token = String(req.query.token || req.body.token || "").trim();
+    if (!token) {
+      res.status(400).render("unsubscribe-news", {
+        ok: false,
+        notice: "Missing unsubscribe token.",
+        nav: "home",
+        viewer: null,
+      });
+      return;
+    }
+    if (!rateLimit(`news-unsub:${requestClientIp(req)}`, { max: 30, windowMs: 60 * 60 * 1000 })) {
+      res.status(429).render("unsubscribe-news", {
+        ok: false,
+        notice: "Too many unsubscribe attempts. Try again later.",
+        nav: "home",
+        viewer: null,
+      });
+      return;
+    }
+    const account = await findAccountByNewsletterUnsubToken(hashToken(token));
+    if (!account) {
+      res.status(400).render("unsubscribe-news", {
+        ok: false,
+        notice: "This unsubscribe link is invalid or already used.",
+        nav: "home",
+        viewer: null,
+      });
+      return;
+    }
+    await setNewsEmailOptIn(account.id, false, {
+      source: "unsubscribe_link",
+      ip: requestClientIp(req),
+      userAgent: req.get("user-agent"),
+    });
+    await revokeNewsletterUnsubToken(hashToken(token));
+    res.render("unsubscribe-news", {
+      ok: true,
+      notice: "You have been unsubscribed from Men Of The Line news emails.",
+      nav: "home",
+      viewer: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+app.get("/unsubscribe/news", handleNewsUnsubscribe);
+app.post("/unsubscribe/news", handleNewsUnsubscribe);
+
 app.post("/profile/name", async (req, res, next) => {
   try {
     const viewer = await pageViewer(req);
@@ -3520,6 +3604,7 @@ if (isMain) {
       mode: paypalMode(),
     }, "PayPal ticket checkout enabled");
   }
+  startNewsMailer();
   if (debugRangesEnabled()) {
     logger.info({
       event: "debug_ranges_enabled",

@@ -4,6 +4,7 @@
 - easy bot doesn't buy upgraded units
 
 # Feature (Will add to game)
+- Red Chat Alert when maintenance scheduled
 - Move/Center Upgrade display
 - 3d should always zoom in to fill screen with map
 - Fog in lanes in 3d
@@ -48,7 +49,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - account deletion
 - ~~delete your own bug reports~~
 - don't fill formbar id's for guest / non-formbar users
-- news mailer
+- ~~news mailer~~ (admin News editor + opt-in drip newsletter)
 - discord bot
 - demo recorder / playback
 - refund based on purchase type (5/20/50)

@@ -8,6 +8,7 @@
   <a href="/admin/games" class="<%= adminSection === 'games' ? 'active' : '' %>">Games</a>
   <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
     <a href="/admin/ops" class="<%= adminSection === 'ops' ? 'active' : '' %>">Ops</a>
+    <a href="/admin/news" class="<%= adminSection === 'news' ? 'active' : '' %>">News</a>
     <a href="/admin/audit" class="<%= adminSection === 'audit' ? 'active' : '' %>">Audit</a>
   <% } %>
   <a href="/admin/suggestions" class="<%= adminSection === 'suggestions' ? 'active' : '' %>">Suggestions</a>

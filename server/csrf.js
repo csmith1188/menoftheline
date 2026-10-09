@@ -51,6 +51,11 @@ export function requireCsrf(req, res, next) {
     next();
     return;
   }
+  // One-click List-Unsubscribe POST has no session CSRF token.
+  if (path === "/unsubscribe/news") {
+    next();
+    return;
+  }
   const expected = req.session && req.session.csrfToken;
   const sent = (req.body && req.body._csrf)
     || req.get("x-csrf-token")

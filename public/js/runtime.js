@@ -205,7 +205,9 @@ export function connectSocket(extra = {}) {
     if (token) auth.token = token;
   }
   const opts = {
-    transports: ["websocket", "polling"],
+    // Polling first: nginx/CDN often breaks the WS upgrade while HTTP long-poll works.
+    // Socket.IO then upgrades to websocket when the proxy allows it.
+    transports: ["polling", "websocket"],
     ...extra,
     auth: { ...auth, ...(extra.auth || {}) },
   };

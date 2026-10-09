@@ -3598,6 +3598,56 @@ export async function countOpenBugs(accountId) {
   return row ? Number(row.n) || 0 : 0;
 }
 
+export async function listOpenBugsForAccount(accountId) {
+  const match = await authorMatch(accountId);
+  if (!match) return [];
+  return all(
+    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at, reward_status
+     FROM suggestions
+     WHERE archived_at IS NULL AND is_bug = 1 AND ${match.sql}
+     ORDER BY created_at DESC, id DESC`,
+    match.params,
+  );
+}
+
+export async function deleteOwnBug(accountId, suggestionId) {
+  const id = Number(suggestionId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const match = await authorMatch(accountId);
+  if (!match) return false;
+  const result = await run(
+    `UPDATE suggestions SET archived_at = ?
+     WHERE id = ? AND archived_at IS NULL AND is_bug = 1 AND ${match.sql}`,
+    [Date.now(), id, ...match.params],
+  );
+  return result.changes > 0;
+}
+
+export async function listOpenSuggestionsForAccount(accountId) {
+  const match = await authorMatch(accountId);
+  if (!match) return [];
+  return all(
+    `SELECT id, formbar_id, account_id, name, body, is_bug, repro, created_at, archived_at, rewarded_at, reward_status
+     FROM suggestions
+     WHERE archived_at IS NULL AND is_bug = 0 AND ${match.sql}
+     ORDER BY created_at DESC, id DESC`,
+    match.params,
+  );
+}
+
+export async function deleteOwnSuggestion(accountId, suggestionId) {
+  const id = Number(suggestionId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const match = await authorMatch(accountId);
+  if (!match) return false;
+  const result = await run(
+    `UPDATE suggestions SET archived_at = ?
+     WHERE id = ? AND archived_at IS NULL AND is_bug = 0 AND ${match.sql}`,
+    [Date.now(), id, ...match.params],
+  );
+  return result.changes > 0;
+}
+
 export async function countOpenWikiRevisions(accountId) {
   const match = await authorMatch(accountId);
   if (!match) return 0;

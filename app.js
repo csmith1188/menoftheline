@@ -19,6 +19,8 @@ import {
   createAuthToken,
   createLocalAccount,
   createSuggestion,
+  deleteOwnBug,
+  deleteOwnSuggestion,
   deleteLocalAccount,
   dataPath,
   ensureGuest,
@@ -36,6 +38,8 @@ import {
   accountPlayStats,
   formatPlayDuration,
   listAccountMmrHistory,
+  listOpenBugsForAccount,
+  listOpenSuggestionsForAccount,
   listPaypalPurchasesForAccount,
   listWikiPages,
   listWikiSlugs,
@@ -1893,12 +1897,20 @@ app.get("/profile/:id", async (req, res, next) => {
     const playStats = account
       ? await accountPlayStats(account.id)
       : { games: 0, totalMs: 0 };
+    const myBugs = isOwner
+      ? await listOpenBugsForAccount(account.id)
+      : [];
+    const mySuggestions = isOwner
+      ? await listOpenSuggestionsForAccount(account.id)
+      : [];
     const body = {
       account,
       viewer,
       isOwner,
       mmrHistory,
       playStats,
+      myBugs,
+      mySuggestions,
       notice: takeNotice(req),
       canLinkFormbar: Boolean(
         isOwner && privileged
@@ -1926,6 +1938,42 @@ app.get("/profile/:id", async (req, res, next) => {
       }
       res.render("profile", body);
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/bugs/:id/delete", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!accountEmailVerified(viewer)) {
+      res.redirect("/login");
+      return;
+    }
+    const back = `/profile/${viewer.id}`;
+    const ok = await deleteOwnBug(viewer.id, req.params.id);
+    req.session.notice = ok
+      ? "Bug report deleted."
+      : "Bug report not found.";
+    req.session.save(() => res.redirect(back));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/profile/suggestions/:id/delete", async (req, res, next) => {
+  try {
+    const viewer = await pageViewer(req);
+    if (!accountEmailVerified(viewer)) {
+      res.redirect("/login");
+      return;
+    }
+    const back = `/profile/${viewer.id}`;
+    const ok = await deleteOwnSuggestion(viewer.id, req.params.id);
+    req.session.notice = ok
+      ? "Suggestion deleted."
+      : "Suggestion not found.";
+    req.session.save(() => res.redirect(back));
   } catch (err) {
     next(err);
   }

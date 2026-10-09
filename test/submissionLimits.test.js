@@ -202,6 +202,89 @@ test("extra unanswered suggestions cost a ticket; bugs cap at 5", async (t) => {
   assert.match(html, /unresolved bug reports/);
 });
 
+test("profile lists and deletes own open suggestions", async (t) => {
+  const server = startServer();
+  t.after(() => stopServer(server));
+  await server.ready;
+  const email = "mysuggest@example.com";
+  const jar = await signupAndLogin(server, email, "My Suggest");
+  const dbFile = path.join(server.dataDir, "Men Of The Line.sqlite");
+  const account = await getSql(dbFile, "SELECT id FROM accounts WHERE email = ?", [email]);
+
+  await postSuggestion(server, jar, { body: "Profile visible idea" });
+  const row = await getSql(
+    dbFile,
+    "SELECT id FROM suggestions WHERE account_id = ? AND is_bug = 0 AND archived_at IS NULL",
+    [account.id],
+  );
+  assert.ok(row);
+
+  const profile = await fetchSession(server.base, `/profile/${account.id}`, jar);
+  assert.equal(profile.status, 200);
+  const profileHtml = await profile.text();
+  assert.match(profileHtml, /Suggestions/);
+  assert.match(profileHtml, /Profile visible idea/);
+
+  const del = await fetchSession(server.base, `/profile/suggestions/${row.id}/delete`, jar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(),
+  });
+  assert.equal(del.status, 302);
+  assert.equal(del.headers.get("location"), `/profile/${account.id}`);
+
+  const after = await fetchSession(server.base, `/profile/${account.id}`, jar);
+  const afterHtml = await after.text();
+  assert.match(afterHtml, /Suggestion deleted|No open suggestions/);
+  assert.doesNotMatch(afterHtml, /Profile visible idea/);
+  const archived = await getSql(dbFile, "SELECT archived_at FROM suggestions WHERE id = ?", [row.id]);
+  assert.ok(archived.archived_at);
+});
+
+test("profile lists and deletes own open bug reports", async (t) => {
+  const server = startServer();
+  t.after(() => stopServer(server));
+  await server.ready;
+  const email = "mybugs@example.com";
+  const jar = await signupAndLogin(server, email, "My Bugs");
+  const dbFile = path.join(server.dataDir, "Men Of The Line.sqlite");
+  const account = await getSql(dbFile, "SELECT id FROM accounts WHERE email = ?", [email]);
+
+  await postSuggestion(server, jar, {
+    body: "Profile visible bug",
+    isBug: true,
+    repro: "open profile",
+  });
+  const bug = await getSql(
+    dbFile,
+    "SELECT id FROM suggestions WHERE account_id = ? AND is_bug = 1 AND archived_at IS NULL",
+    [account.id],
+  );
+  assert.ok(bug);
+
+  const profile = await fetchSession(server.base, `/profile/${account.id}`, jar);
+  assert.equal(profile.status, 200);
+  const profileHtml = await profile.text();
+  assert.match(profileHtml, /Bug reports/);
+  assert.match(profileHtml, /Profile visible bug/);
+  assert.match(profileHtml, /open profile/);
+
+  const del = await fetchSession(server.base, `/profile/bugs/${bug.id}/delete`, jar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(),
+  });
+  assert.equal(del.status, 302);
+  assert.equal(del.headers.get("location"), `/profile/${account.id}`);
+
+  const after = await fetchSession(server.base, `/profile/${account.id}`, jar);
+  const afterHtml = await after.text();
+  assert.match(afterHtml, /Bug report deleted|No open bug reports/);
+  assert.doesNotMatch(afterHtml, /Profile visible bug/);
+  const archived = await getSql(dbFile, "SELECT archived_at FROM suggestions WHERE id = ?", [bug.id]);
+  assert.ok(archived.archived_at);
+});
+
 test("unapproved wiki edits cap at 5 per account", async (t) => {
   const server = startServer();
   t.after(() => stopServer(server));

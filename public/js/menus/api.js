@@ -10,8 +10,8 @@ import {
   loginUrl,
   openExternal,
   showOutdated,
-  watchAssetUpdates,
 } from "../runtime.js";
+import { watchAssetUpdates } from "../assetWatch.js";
 
 export async function bootMenus() {
   consumeAuthQuery();

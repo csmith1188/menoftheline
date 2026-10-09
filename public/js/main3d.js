@@ -37,10 +37,9 @@ import {
   ensureSession,
   goHome,
   isShell,
-  matchSeatBusy,
   showOutdated,
-  watchAssetUpdates,
 } from "./runtime.js";
+import { matchSeatBusy, watchAssetUpdates } from "./assetWatch.js";
 import { syncMatchReview, viewMatchReview } from "./matchReview.js";
 
 consumeAuthQuery();

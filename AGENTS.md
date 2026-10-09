@@ -76,7 +76,8 @@ shared/                Authoritative tunables + geometry used by server, client,
   terrain.js           Terrain rules: move, LOS/fog, cover, range, snapshot helpers
   unitInfo.js          Player-facing unit copy + derived info panels
 public/js/             Browser match client (ES modules, imports ../shared/)
-  runtime.js           Cookie vs shell token, server URL, Socket.IO, openExternal, asset update watch
+  runtime.js           Cookie vs shell token, server URL, Socket.IO, openExternal
+  assetWatch.js        Website deploy freshness poll / match-safe reload banner
   menus/               Shared games / lobby-create / account UI (API-driven)
   main.js              2D match bootstrap: socket, lobby, menus
   main3d.js / scene3d.js   3D match client
@@ -132,7 +133,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js` (static assets before session), `test/security.test.js` / `test/securityHttp.test.js` |
 | Custom listed lobby settings | `shared/matchOptions.js`, `views/lobby-create.ejs` | `GameRoom` / `GameSim.applyMatchOptions`, `listLobbies`, `public/js/mapPreview.js` |
 | Native/mobile client API | `app.js` (`/api/v1/*`, socket `auth.token`) | `test/clientApi.test.js`, `public/js/runtime.js`, `docs/packaging.md` |
-| Website client cache / deploy freshness | `server/assetVersion.js`, `app.js` static mounts | EJS `?v=` + `views/asset-boot.ejs`; `/js` `/css` `/shared` `/vendor` `no-cache`; `runtime.watchAssetUpdates` (skip shells); `deploy/nginx.conf.example`; `test/assetVersion.test.js` |
+| Website client cache / deploy freshness | `server/assetVersion.js`, `app.js` static mounts | EJS `?v=` + `views/asset-boot.ejs`; `/js` `/css` `/shared` `/vendor` `no-cache`; `public/js/assetWatch.js` (skip shells); `deploy/nginx.conf.example`; `test/assetVersion.test.js` |
 | Electron / Capacitor packaging | `docs/packaging.md`, `scripts/export-client.js` | `platforms/electron/`, `platforms/capacitor/` (pocketMOTL Kotlin client retired) |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
 | Admin dashboard (roles, users, analytics, logs, games, ops, news, reports) | `server/admin/` (`routes.js`, `auth.js`, `news.js`, …) | `views/admin/` (incl. `news.ejs`, `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`, newsletter_*), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |

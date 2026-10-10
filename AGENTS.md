@@ -60,7 +60,8 @@ server/
   paypal.js            PayPal Orders v2 (create/capture/webhook verify/settle) + reconcile loop
   paypalPackages.js    Server-only USD ticket package catalog
   community.js         Community funding / development broadcast + `communityFundingEnabled` re-export (off if Formbar-only login)
-  rating.js            MMR/Elo
+  rating.js            MMR/Elo + expanding ranked pair search
+  rankJob.js            Daily officer-rank lease job (UTC); docs/ranked.md + shared/ranks.js
   news.js              Re-exports loadNews from newsStore.js
   wiki-render.js       Markdown → HTML for wiki
   wiki-diff.js         Revision diffs

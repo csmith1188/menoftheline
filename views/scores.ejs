@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <%- include("pwa-head") %>
-  <title>High Scores · Men Of The Line</title>
+  <title>Ranked Officers · Men Of The Line</title>
   <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
 </head>
 <body>
@@ -15,15 +15,17 @@
     <% } %>
 
     <section>
-      <h2>High scores</h2>
+      <h2>Ranked officers</h2>
+      <p class="hint">Active officers who finished placements and played ranked within the last 30 days, ordered by MMR.</p>
       <% if (!leaders.length) { %>
-        <p class="hint">No ranked games yet.</p>
+        <p class="hint">No eligible ranked officers yet.</p>
       <% } else { %>
-        <ol class="scores">
+        <ol class="scores officer-scores">
           <% leaders.forEach(function (row) { %>
             <li>
+              <span class="rank-insignia rank-<%= row.officer_rank || 'ensign' %>" aria-hidden="true"></span>
               <a href="/profile/<%= row.id %>"><%= row.name %></a>
-              <span><%= row.mmr %> MMR</span>
+              <span class="officer-meta"><%= row.officerRankLabel %> · <%= row.mmr %> MMR</span>
             </li>
           <% }) %>
         </ol>

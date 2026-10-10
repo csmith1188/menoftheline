@@ -11,6 +11,7 @@ import {
   getCommunityPublicState,
   listDiscordLinkedEmailAccounts,
   publicDisplayName,
+  rankedDossier,
 } from "./db.js";
 import { workerIndex } from "./owners.js";
 
@@ -102,16 +103,26 @@ export async function buildProfilePayload(discordId, { self = false } = {}) {
     return { linked: false };
   }
   const play = await accountPlayStats(account.id);
+  const dossier = rankedDossier(account);
   const wins = Number(account.wins) || 0;
   const losses = Number(account.losses) || 0;
   const payload = {
     linked: true,
     id: account.id,
     name: publicDisplayName(account),
-    mmr: Number(account.mmr) || 0,
+    mmr: dossier.mmr,
+    mmrHidden: dossier.mmrHidden,
+    officerRank: dossier.officerRank,
+    officerRankLabel: dossier.officerRankLabel,
+    highestRank: dossier.highestRank,
+    highestRankLabel: dossier.highestRankLabel,
+    placementsDone: dossier.placementsDone,
+    placementProgress: dossier.placementProgress,
+    rankPercentile: dossier.rankPercentile,
     wins,
     losses,
-    rankedGames: wins + losses,
+    rankedGames: dossier.rankedGames,
+    winRate: dossier.winRate,
     timePlayedMs: play.totalMs,
     profilePath: `/profile/${account.id}`,
   };

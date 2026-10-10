@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-10-10",
+    "title": "Beta Updates",
+    "summary": "A multitude of upgrades have been made. The msot important to players are highlighted here.",
+    "items": [
+      "War Effort. Decide how your tickets are spent when you play games",
+      "New ranking system. Earn ranks by raising your MMR.",
+      "New Discord Bot",
+      "Unit name changes",
+      "Post-match stat screen"
+    ],
+    "id": "2026-10-10-beta-updates"
+  },
+  {
     "date": "2026-10-05",
     "title": "Cavalry, Skirmishers, and Engineer Balance",
     "summary": "Engineers now see farther while on hills and peaks to better counter \"turtling\" behind your fort. Cavalry works better in packs, and gold now reflects that. Militiamen are now a little more hardy. Rifles were broken in melee but nobody knew because they were too expensive. Skirmishers now have reduced ranged to encourage them being played in front of the line instead of behind.",

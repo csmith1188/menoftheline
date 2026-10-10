@@ -40,6 +40,7 @@ function render(me, queues) {
   const waiting = (queues && queues.waiting) || { unranked: 0, ranked: 0 };
   const lobbies = (queues && queues.lobbies) || [];
   const privileged = Boolean(me && me.account);
+  const account = me && me.account;
   const disabled = rejoin ? "disabled" : null;
   const freePlayOk = !noFree || (canTicket && !rejoin);
   const freeTip = noFree
@@ -48,7 +49,15 @@ function render(me, queues) {
       : "A ticket is required for Play vs bot and Random unranked.")
     : "";
 
-  let html = `<section><h2>Play</h2><div class="stack">`;
+  let rankChip = "";
+  if (account && account.officerRankLabel) {
+    const detail = account.placementsDone
+      ? (account.mmr != null ? `${account.mmr} MMR` : "")
+      : (account.placementProgress && account.placementProgress.label) || "Commission Pending";
+    rankChip = `<p class="officer-chip"><span class="rank-insignia rank-${escapeAttr(account.officerRank || "ensign")}" aria-hidden="true"></span><span>${escape(account.officerRankLabel)}${detail ? ` · ${escape(detail)}` : ""}</span></p>`;
+  }
+
+  let html = `<section><h2>Play</h2>${rankChip}<div class="stack">`;
   if (rejoin) {
     html += `<a class="action" href="${playPath(false)}">Rejoin match</a>`;
   }

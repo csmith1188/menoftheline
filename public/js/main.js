@@ -36,6 +36,15 @@ import {
 } from "./runtime.js";
 import { matchSeatBusy, watchAssetUpdates } from "./assetWatch.js";
 import { syncMatchReview, viewMatchReview } from "./matchReview.js";
+import { formatOfficerTag, rankLabel } from "../shared/ranks.js";
+
+function identityLabel(identity, { botFallback = "Bot" } = {}) {
+  if (!identity) return "";
+  if (identity.kind === "bot") return botFallback;
+  const name = identity.name || "Player";
+  const tag = formatOfficerTag(identity);
+  return tag ? `${name} (${tag})` : name;
+}
 
 consumeAuthQuery();
 await ensureSession().catch(() => {});
@@ -392,10 +401,8 @@ function syncChrome() {
   } else {
     lastUnpauseBeep = null;
   }
-  lobbyYou.textContent = meta.you ? `You are ${meta.you.name}` : "";
-  const oppLabel = meta.opponent && meta.opponent.name
-    ? (meta.opponent.kind === "bot" ? "Bot" : meta.opponent.name)
-    : "";
+  lobbyYou.textContent = meta.you ? `You are ${identityLabel(meta.you)}` : "";
+  const oppLabel = meta.opponent ? identityLabel(meta.opponent) : "";
   const showOpp = matchStarting && Boolean(oppLabel);
   if (lobbyOpp) {
     lobbyOpp.textContent = showOpp ? `vs ${oppLabel}` : "";
@@ -412,9 +419,11 @@ function syncChrome() {
   banner.classList.toggle("hidden", !showBanner);
   if (showBanner) bannerText.textContent = bannerCopy();
   syncMatchReviewPanel(showBanner);
-  menuYou.textContent = meta.you ? meta.you.name : "";
-  oppName.textContent = meta.opponent ? meta.opponent.name : "";
-  oppKind.textContent = meta.opponent ? (meta.opponent.kind === "bot" ? "Bot" : "Player") : "";
+  menuYou.textContent = meta.you ? identityLabel(meta.you) : "";
+  oppName.textContent = meta.opponent ? identityLabel(meta.opponent) : "";
+  oppKind.textContent = meta.opponent
+    ? (meta.opponent.kind === "bot" ? "Bot" : (rankLabel(meta.opponent.officerRank || "ensign")))
+    : "";
   syncReportUi();
   const canConcede = playing && !board.winner;
   const confirming = !confirmBox.classList.contains("hidden");

@@ -175,6 +175,107 @@ describe("preferNearestRowAmongAlignedTargets", () => {
   });
 });
 
+describe("guerrilla break-likelihood targeting", () => {
+  it("prefers the more wounded and fatigued unit over skirmisher type priority", () => {
+    const sim = makeSim();
+    const guerilla = spawn(sim, "player", "guerrilla", "top", {
+      progress: 0.4,
+      sublane: 2,
+      order: "advance",
+    });
+    // Higher enemy progress = closer. Fresh cavalry would win Light priority.
+    const cavalry = spawn(sim, "enemy", "dragoon", "top", {
+      progress: 0.58,
+      sublane: 2,
+      order: "halt",
+      hp: 200,
+      fatigue: 0,
+    });
+    const troop = spawn(sim, "enemy", "regulars", "top", {
+      progress: 0.52,
+      sublane: 2,
+      order: "halt",
+      hp: 100,
+      fatigue: 80,
+    });
+    const range = guerilla.shootRange();
+    assert.ok(guerilla.shotPaces(cavalry) < guerilla.shotPaces(troop));
+    assert.ok(guerilla.inShotRange(cavalry, range));
+    assert.ok(guerilla.inShotRange(troop, range));
+    const aim = guerilla.nearestTarget(
+      sim.enemy.troops,
+      range,
+      sim.player.troops,
+      sim.enemy,
+    );
+    assert.equal(aim, troop);
+  });
+
+  it("among equal break scores prefers the closer unit", () => {
+    const sim = makeSim();
+    const guerilla = spawn(sim, "player", "guerrilla", "top", {
+      progress: 0.35,
+      sublane: 2,
+      order: "advance",
+    });
+    const farther = spawn(sim, "enemy", "regulars", "top", {
+      progress: 0.45,
+      sublane: 2,
+      order: "halt",
+      hp: 100,
+      fatigue: 50,
+    });
+    const nearer = spawn(sim, "enemy", "regulars", "top", {
+      progress: 0.55,
+      sublane: 2,
+      order: "halt",
+      hp: 100,
+      fatigue: 50,
+    });
+    assert.ok(guerilla.shotPaces(nearer) < guerilla.shotPaces(farther));
+    const aim = guerilla.nearestTarget(
+      sim.enemy.troops,
+      guerilla.shootRange(),
+      sim.player.troops,
+      sim.enemy,
+    );
+    assert.equal(aim, nearer);
+  });
+
+  it("shoots the keep only when no enemy unit is in range", () => {
+    const sim = makeSim();
+    const guerilla = spawn(sim, "player", "guerrilla", "top", {
+      progress: 0.92,
+      sublane: 2,
+      order: "advance",
+    });
+    assert.ok(guerilla.inShotRange(sim.enemy, guerilla.shootRange()));
+    const aimEmpty = guerilla.nearestTarget(
+      sim.enemy.troops,
+      guerilla.shootRange(),
+      sim.player.troops,
+      sim.enemy,
+    );
+    assert.equal(aimEmpty, sim.enemy);
+
+    const troop = spawn(sim, "enemy", "regulars", "top", {
+      progress: 0.2,
+      sublane: 2,
+      order: "halt",
+      hp: 200,
+      fatigue: 0,
+    });
+    assert.ok(guerilla.inShotRange(troop, guerilla.shootRange()));
+    const aimUnit = guerilla.nearestTarget(
+      sim.enemy.troops,
+      guerilla.shootRange(),
+      sim.player.troops,
+      sim.enemy,
+    );
+    assert.equal(aimUnit, troop);
+  });
+});
+
 describe("melee flank target preference", () => {
   it("prefers an adjacent-row flank over a same-row contact listed first", () => {
     const sim = makeSim();

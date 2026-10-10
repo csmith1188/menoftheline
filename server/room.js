@@ -29,7 +29,6 @@ import { BotController, DIFFICULTIES, STRATEGY_MODES } from "./bot.js";
 import {
   chargeHeld,
   createPlayerReport,
-  eloK,
   hasPlayerReport,
   recordMatchResult,
   refundTicket,
@@ -37,7 +36,6 @@ import {
   REPORT_BODY_MAX,
 } from "./db.js";
 import { asErr, child as childLogger, createSampler, safeLog } from "./logger.js";
-import { nextMmr } from "./rating.js";
 import { GameSim } from "./sim.js";
 import {
   buildMatchSummary,
@@ -80,12 +78,26 @@ function emptySeat(key, sideId) {
     accountId: null,
     formbarId: null,
     mmr: null,
+    officerRank: null,
+    placementsDone: false,
     socket: null,
     bot: null,
     queue: [],
     chatBucket: null,
     reconnectAt: [],
     alreadyReported: false,
+  };
+}
+
+function publicSeatIdentity(seat) {
+  if (!seat || !seat.userId) return null;
+  const placementsDone = Boolean(seat.placementsDone);
+  return {
+    id: seat.userId,
+    name: seat.name,
+    officerRank: seat.officerRank || "ensign",
+    placementsDone,
+    mmr: placementsDone && Number.isFinite(seat.mmr) ? seat.mmr : null,
   };
 }
 
@@ -223,6 +235,8 @@ export class GameRoom {
     seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
+    seat.officerRank = null;
+    seat.placementsDone = false;
     seat.socket = null;
     seat.bot = null;
     seat.queue = [];
@@ -249,6 +263,8 @@ export class GameRoom {
     seat.accountId = player.accountId || null;
     seat.formbarId = player.formbarId || null;
     seat.mmr = Number.isFinite(player.mmr) ? player.mmr : null;
+    seat.officerRank = player.officerRank || "ensign";
+    seat.placementsDone = Boolean(player.placementsDone);
     seat.bot = null;
     seat.alreadyReported = false;
     if (player.id && this.matchmaker && this.matchmaker.rememberUserRoom) {
@@ -449,6 +465,8 @@ export class GameRoom {
       accountId: player.accountId,
       formbarId: player.formbarId,
       mmr: player.mmr,
+      officerRank: player.officerRank,
+      placementsDone: player.placementsDone,
     });
     seat.socket = null;
     seat.queue = [];
@@ -467,6 +485,8 @@ export class GameRoom {
     seat.accountId = null;
     seat.formbarId = null;
     seat.mmr = null;
+    seat.officerRank = null;
+    seat.placementsDone = false;
     seat.socket = null;
     seat.queue = [];
     seat.alreadyReported = false;
@@ -1245,6 +1265,14 @@ export class GameRoom {
     if (socket.data.replaced || this.status === "dead" || this.closing) return;
     const seat = this.seatBySocket(socket);
     if (!seat || seat.socket !== socket) return;
+    // After tickets are charged, disconnect during countdown is a ranked/casual loss.
+    if (this.status === "countdown" && this.charged) {
+      this.forceConcedeSeat(seat, {
+        chatLine: `${seat.name || "Player"} forfeited (disconnected)`,
+        reason: "disconnect",
+      });
+      return;
+    }
     if (this.status === "waiting" || this.status === "countdown") {
       this.matchmaker.abandonSeat(this, seat, { goHome: false }).catch((err) => {
         safeLog(this.log, "error", {
@@ -1312,7 +1340,16 @@ export class GameRoom {
   opponentOf(seat) {
     const other = seat.key === "a" ? this.seat.b : this.seat.a;
     if (other.bot) return { name: "Bot", kind: "bot" };
-    if (other.userId) return { name: other.name, kind: "human" };
+    if (other.userId) {
+      const id = publicSeatIdentity(other);
+      return {
+        name: other.name,
+        kind: "human",
+        officerRank: id.officerRank,
+        placementsDone: id.placementsDone,
+        mmr: id.mmr,
+      };
+    }
     return null;
   }
 
@@ -1434,7 +1471,7 @@ export class GameRoom {
       text: this.status === "waiting" ? this.waitingText() : "",
       countdownEnds: this.countdownEnds,
       countdownLeft: this.countdownLeftMs(),
-      you: seat.userId ? { id: seat.userId, name: seat.name } : null,
+      you: publicSeatIdentity(seat),
       opponent: this.opponentOf(seat),
       canReport,
       alreadyReported: canReport && Boolean(seat.alreadyReported),
@@ -1462,7 +1499,7 @@ export class GameRoom {
     // Per-seat identity so both clients keep opponent names even if a lobby
     // event was missed (joiner often sees state before/without a clean lobby).
     if (seat) {
-      snap.you = seat.userId ? { id: seat.userId, name: seat.name } : null;
+      snap.you = publicSeatIdentity(seat);
       snap.opponent = this.opponentOf(seat);
     } else {
       snap.you = null;
@@ -1605,34 +1642,20 @@ export class GameRoom {
       userIdA: a.userId,
       userIdB: b.userId,
     }, "match ended");
-    let mmrAAfter = null;
-    let mmrBAfter = null;
     let ranked = null;
-    try {
-      if (
-        this.mode === "ranked"
-        && a.accountId
-        && b.accountId
-        && Number.isFinite(a.mmr)
-        && Number.isFinite(b.mmr)
-      ) {
-        const aScore = winner === "player" ? 1 : 0;
-        const bScore = winner === "enemy" ? 1 : 0;
-        const k = eloK();
-        mmrAAfter = nextMmr(a.mmr, b.mmr, aScore, k);
-        mmrBAfter = nextMmr(b.mmr, a.mmr, bScore, k);
-        ranked = [
-          { accountId: a.accountId, mmr: mmrAAfter, won: aScore === 1 },
-          { accountId: b.accountId, mmr: mmrBAfter, won: bScore === 1 },
-        ];
-      }
-    } catch (err) {
-      safeLog(this.log, "error", {
-        event: "match_record_failed",
-        err: asErr(err),
-        phase: "mmr",
-      }, "MMR calculation failed");
-      ranked = null;
+    if (
+      this.mode === "ranked"
+      && a.accountId
+      && b.accountId
+      && Number.isFinite(a.mmr)
+      && Number.isFinite(b.mmr)
+    ) {
+      const aScore = winner === "player" ? 1 : 0;
+      const bScore = winner === "enemy" ? 1 : 0;
+      ranked = [
+        { accountId: a.accountId, mmrBefore: a.mmr, score: aScore },
+        { accountId: b.accountId, mmrBefore: b.mmr, score: bScore },
+      ];
     }
     recordMatchResult({
       ranked,
@@ -1650,8 +1673,8 @@ export class GameRoom {
         winnerSide: winner,
         mmrABefore: Number.isFinite(a.mmr) ? a.mmr : null,
         mmrBBefore: Number.isFinite(b.mmr) ? b.mmr : null,
-        mmrAAfter,
-        mmrBAfter,
+        mmrAAfter: null,
+        mmrBAfter: null,
         createdAt: this.createdAt,
         startedAt,
         endedAt,
@@ -1662,6 +1685,8 @@ export class GameRoom {
         chatJson: this.chatArchiveJson(),
       },
     }).catch((err) => {
+      // Allow a later broadcast to retry persist if the insert never landed.
+      this.recorded = false;
       safeLog(this.log, "error", {
         event: "match_record_failed",
         err: asErr(err),

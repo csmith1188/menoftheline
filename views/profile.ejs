@@ -20,16 +20,47 @@
         <a class="action" href="/">Back</a>
       </section>
     <% } else { %>
-      <section>
+      <section class="officer-dossier" aria-label="Officer dossier">
         <h2><%= account.name %></h2>
         <% if (typeof deleted !== "undefined" && deleted) { %>
           <p class="hint">This account has been deleted.</p>
         <% } %>
+        <% if (typeof dossier !== "undefined" && dossier) { %>
+          <div class="dossier-rank">
+            <span class="rank-insignia rank-<%= dossier.officerRank %>" aria-hidden="true"></span>
+            <div>
+              <p class="dossier-rank-title"><%= dossier.officerRankLabel %></p>
+              <% if (dossier.mmrHidden) { %>
+                <p class="hint"><%= dossier.placementProgress.label %></p>
+              <% } else { %>
+                <p class="hint">
+                  <%= dossier.mmr %> MMR
+                  <% if (dossier.rankPercentile != null) { %>
+                    · <%= dossier.rankPercentile %>th percentile among active officers
+                  <% } %>
+                </p>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
         <dl class="stats">
-          <div><dt>MMR</dt><dd><%= account.mmr %></dd></div>
-          <div><dt>Wins</dt><dd><%= account.wins %></dd></div>
-          <div><dt>Losses</dt><dd><%= account.losses %></dd></div>
-          <div><dt>Ranked games</dt><dd><%= account.wins + account.losses %></dd></div>
+          <% if (typeof dossier !== "undefined" && dossier && !dossier.mmrHidden) { %>
+            <div><dt>Ranked MMR</dt><dd><%= dossier.mmr %></dd></div>
+          <% } else { %>
+            <div><dt>Ranked MMR</dt><dd>Hidden</dd></div>
+          <% } %>
+          <div><dt>Ranked wins</dt><dd><%= account.wins %></dd></div>
+          <div><dt>Ranked losses</dt><dd><%= account.losses %></dd></div>
+          <div><dt>Ranked matches</dt><dd><%= typeof dossier !== "undefined" && dossier ? dossier.rankedGames : (account.wins + account.losses) %></dd></div>
+          <% if (typeof dossier !== "undefined" && dossier && dossier.winRate != null) { %>
+            <div><dt>Ranked win rate</dt><dd><%= dossier.winRate %>%</dd></div>
+          <% } %>
+          <% if (typeof dossier !== "undefined" && dossier) { %>
+            <div><dt>Highest rank</dt><dd><%= dossier.highestRankLabel %></dd></div>
+          <% } %>
+          <% if (typeof casualStats !== "undefined" && casualStats) { %>
+            <div><dt>Casual W–L</dt><dd><%= casualStats.wins %>–<%= casualStats.losses %></dd></div>
+          <% } %>
           <div><dt>Time played</dt><dd><%= formatPlayDuration(playStats.totalMs) %></dd></div>
           <% if (isOwner) { %>
             <div><dt>Tickets</dt><dd><%= account.tickets %></dd></div>
@@ -37,7 +68,7 @@
         </dl>
       </section>
       <section>
-        <h2>MMR history</h2>
+        <h2>Ranked history</h2>
         <% if (!mmrHistory.total) { %>
           <p class="hint">No ranked games recorded yet.</p>
         <% } else { %>
@@ -65,9 +96,19 @@
                     </td>
                     <td><%= row.won ? "Win" : "Loss" %></td>
                     <td class="<%= row.delta > 0 ? 'mmr-up' : (row.delta < 0 ? 'mmr-down' : '') %>">
-                      <%= row.delta > 0 ? ("+" + row.delta) : String(row.delta) %>
+                      <% if (typeof dossier !== "undefined" && dossier && dossier.mmrHidden) { %>
+                        —
+                      <% } else { %>
+                        <%= row.delta > 0 ? ("+" + row.delta) : String(row.delta) %>
+                      <% } %>
                     </td>
-                    <td><%= row.mmrAfter %></td>
+                    <td>
+                      <% if (typeof dossier !== "undefined" && dossier && dossier.mmrHidden) { %>
+                        —
+                      <% } else { %>
+                        <%= row.mmrAfter %>
+                      <% } %>
+                    </td>
                   </tr>
                 <% }) %>
               </tbody>

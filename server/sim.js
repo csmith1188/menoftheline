@@ -134,6 +134,17 @@ function skirmisherTargetTier(category, dist, closestDist) {
 }
 
 /**
+ * Guerilla aim score: remaining HP × missing HP fraction × fatigue/100.
+ * Higher means more likely to break under fire. Keeps score 0.
+ */
+function guerrillaBreakLikelihood(unit) {
+  if (!unit || unit.keepHP !== undefined) return 0;
+  if (!(unit.maxHp > 0) || !(unit.hp > 0)) return 0;
+  const missingPct = Math.max(0, unit.maxHp - unit.hp) / unit.maxHp;
+  return unit.hp * missingPct * (unit.fatigue / 100);
+}
+
+/**
  * Among the primary pick and other same-priority units In Line with it
  * (same lane), prefer the row nearest the shooter, then closer shot
  * paces. The Keep always counts as the shooter's row (priority paces)
@@ -3408,15 +3419,20 @@ class Unit {
    * when the path back through our keep is under 200 paces and inside
    * maxRange. Officers are skipped while another unit type is in that
    * same range (except skirmishers/rifles, which use a fixed type
-   * priority). The Keep competes using targetPriorityPaces (50 paces
+   * priority, and Guerillas, which pick the highest break-likelihood
+   * score). The Keep competes using targetPriorityPaces (50 paces
    * closer for ranking only) whenever it is within actual weapon range;
-   * melee does not lock the Keep. When
-   * preferNearestRowAmongAlignedTargets is on, a closest pick that
-   * shares an In Line station with other eligible units yields to the
-   * one on the nearest row to this shooter (Keep counts as this row).
+   * melee does not lock the Keep (Guerillas only shoot the Keep when no
+   * unit is in range). When preferNearestRowAmongAlignedTargets is on,
+   * a closest pick that shares an In Line station with other eligible
+   * units yields to the one on the nearest row to this shooter (Keep
+   * counts as this row; Guerillas skip that retarget).
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
+    if (this.unit === "guerrilla") {
+      return this.guerrillaNearestTarget(enemies, range, enemySide);
+    }
     if (this.category === "skirmishers") {
       return this.skirmisherNearestTarget(enemies, range, enemySide);
     }
@@ -3472,6 +3488,33 @@ class Unit {
     }
     if (!best) return null;
     return preferNearestRowAmongAligned(this, best, pool, keepCandidate);
+  }
+
+  /**
+   * Guerilla: among valid units in range, pick the highest
+   * guerrillaBreakLikelihood (remaining HP × missing HP% × fatigue/100).
+   * Equal scores prefer closer shot paces. The Keep is only chosen when
+   * no enemy unit is in range (keeps do not break).
+   */
+  guerrillaNearestTarget(enemies, range, enemySide) {
+    let best = null;
+    let bestScore = -Infinity;
+    let bestD = Infinity;
+    for (let i = 0; i < enemies.length; i += 1) {
+      const other = enemies[i];
+      if (!isValidRangedTarget(other)) continue;
+      if (!this.inShotRange(other, range)) continue;
+      const score = guerrillaBreakLikelihood(other);
+      const d = this.shotPaces(other);
+      if (score > bestScore || (score === bestScore && d < bestD)) {
+        bestScore = score;
+        bestD = d;
+        best = other;
+      }
+    }
+    if (best) return best;
+    if (enemySide && this.inShotRange(enemySide, range)) return enemySide;
+    return null;
   }
 
   /**

@@ -6,7 +6,6 @@
 - Wiki Categories
 
 # Ideas (May add to game)
-- Guerillas target most vulnerable units (most likely to break soon)
 - Fog in lanes in 3d
 - Units also cost men from initial pool?
 - Game mode to play by programming each unit and keep's orders
@@ -17,21 +16,21 @@
 
 # Site
 - demo recorder / playback
-- social accounts: x, insta, discord, reddit, restore iPhone SE
+- social accounts: x, insta, discord, reddit, youtube, restore iPhone SE
 - LLC
-- steam, google, apple, nintendo
-- Payment processing per platform
+- release on steam, google, apple, nintendo with Payment processing per platform
 - refer a friend -> friend gets 5 tickets -> referer gets 5 tickets if referer spends all five, and 5 more if referer makes a purchase
 
+# Cleanup
 - inspect database and migrations
+- inspect/refactor codebase
 - client performance benchmarks
-- review performance
+- review server performance
 - redis + workers
 - spawn new servers?
 - reaudit security
 
 # Campaign / Ranked mode
-
 - Regiments
     - Buy a regiment for X tickets
     - Limited by number of men? X men per unit type (like points from wh40k)

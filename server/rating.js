@@ -1,3 +1,18 @@
+/**
+ * Allowed MMR spread for a pair given the shorter queue wait.
+ */
+export function allowedMmrSpread(minWaitMs, {
+  maxSpread = 200,
+  expandPerMs = 0.003333,
+  expandCap = 800,
+} = {}) {
+  const wait = Math.max(0, Number(minWaitMs) || 0);
+  const base = Number.isFinite(maxSpread) ? maxSpread : 200;
+  const per = Number.isFinite(expandPerMs) ? expandPerMs : 0.003333;
+  const cap = Number.isFinite(expandCap) ? expandCap : 800;
+  return Math.min(cap, base + Math.floor(wait * per));
+}
+
 export function nextMmr(self, opponent, score, k) {
   const expected = 1 / (1 + Math.pow(10, (opponent - self) / 400));
   const value = Math.round(self + k * (score - expected));
@@ -5,43 +20,65 @@ export function nextMmr(self, opponent, score, k) {
 }
 
 /**
- * Closest MMR pair. When that spread is inside maxSpread, take it.
- * Otherwise pair the longest searcher who has waited waitMs with their
- * closest opponent, however wide the gap.
+ * Pick a ranked pair by expanding MMR window and rematch penalty.
+ *
+ * @param {Array<{ mmr: number, joinedAt: number, accountId?: number, recentOpponentIds?: Set<number>|number[] }>} entries
+ * @param {number} now
+ * @param {object} opts
  */
-export function pickRankedPair(entries, now, maxSpread, waitMs) {
+export function pickRankedPair(entries, now, maxSpreadOrOpts, waitMsMaybe) {
+  // Back-compat: pickRankedPair(entries, now, maxSpread, waitMs)
+  const opts = maxSpreadOrOpts && typeof maxSpreadOrOpts === "object"
+    ? maxSpreadOrOpts
+    : {
+      maxSpread: maxSpreadOrOpts,
+      waitMs: waitMsMaybe,
+    };
+  const maxSpread = Number.isFinite(opts.maxSpread) ? opts.maxSpread : 200;
+  const waitMs = Number.isFinite(opts.waitMs) ? opts.waitMs : 60000;
+  const expandPerMs = Number.isFinite(opts.expandPerMs) ? opts.expandPerMs : 0.003333;
+  const expandCap = Number.isFinite(opts.expandCap) ? opts.expandCap : 800;
+  const rematchPenalty = Number.isFinite(opts.rematchPenalty) ? opts.rematchPenalty : 10000;
+
   if (!entries || entries.length < 2) return null;
-  let closest = null;
+
+  let best = null;
   for (let i = 0; i < entries.length; i += 1) {
     for (let j = i + 1; j < entries.length; j += 1) {
-      const spread = Math.abs(entries[i].mmr - entries[j].mmr);
-      if (!closest || spread < closest.spread) {
-        closest = { a: entries[i], b: entries[j], spread };
+      const a = entries[i];
+      const b = entries[j];
+      const spread = Math.abs(a.mmr - b.mmr);
+      const minWait = Math.min(now - a.joinedAt, now - b.joinedAt);
+      const allowed = allowedMmrSpread(minWait, { maxSpread, expandPerMs, expandCap });
+      const rematch = isRecentRematch(a, b);
+      const longWait = minWait >= waitMs;
+      // Within window, or forced after long wait (even rematches / large spreads).
+      if (spread > allowed && !longWait) continue;
+      if (rematch && !longWait) continue;
+
+      const score = spread + (rematch ? rematchPenalty : 0);
+      if (!best || score < best.score) {
+        best = { a, b, spread, score, rematch };
       }
     }
   }
-  if (!closest) return null;
-  if (closest.spread <= maxSpread) return closest;
+  return best;
+}
 
-  let waiter = null;
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i];
-    if (now - entry.joinedAt < waitMs) continue;
-    if (!waiter || entry.joinedAt < waiter.joinedAt) waiter = entry;
-  }
-  if (!waiter) return null;
+function opponentIdSet(entry) {
+  if (!entry) return null;
+  if (entry.recentOpponentIds instanceof Set) return entry.recentOpponentIds;
+  if (Array.isArray(entry.recentOpponentIds)) return new Set(entry.recentOpponentIds);
+  return null;
+}
 
-  let opponent = null;
-  let best = Infinity;
-  for (let i = 0; i < entries.length; i += 1) {
-    const entry = entries[i];
-    if (entry === waiter) continue;
-    const spread = Math.abs(entry.mmr - waiter.mmr);
-    if (spread < best) {
-      best = spread;
-      opponent = entry;
-    }
-  }
-  if (!opponent) return null;
-  return { a: waiter, b: opponent, spread: best };
+function isRecentRematch(a, b) {
+  const aId = a.accountId;
+  const bId = b.accountId;
+  if (!Number.isInteger(aId) || !Number.isInteger(bId)) return false;
+  const aSet = opponentIdSet(a);
+  const bSet = opponentIdSet(b);
+  if (aSet && aSet.has(bId)) return true;
+  if (bSet && bSet.has(aId)) return true;
+  return false;
 }

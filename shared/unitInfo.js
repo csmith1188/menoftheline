@@ -239,9 +239,11 @@ export function unitAbilityLines(type) {
   if (base === "light") {
     lines.push("Full reload whenever firing is allowed, including Fall Back.");
     lines.push("Troop line bonus does not apply when shooting this unit.");
-    lines.push(
-      "Shoots by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
-    );
+    if (type !== "guerrilla") {
+      lines.push(
+        "Shoots by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+      );
+    }
   }
   if ((stats.officerDamageMultiplier || 1) > 1) {
     lines.push(`Deals ${times(stats.officerDamageMultiplier)} damage to Officers.`);
@@ -288,6 +290,9 @@ export function unitAbilityLines(type) {
     lines.push("Woods hide Guerillas unless occupied. Not slowed by terrain.");
     lines.push("Do not volley while Halted in the open except at enemies within stealth range; occupying a terrain feature lets them Halt-shoot at full range.");
     lines.push("Hides in plain site when not shooting or near an enemy.");
+    lines.push(
+      "Shoots the in-range enemy most likely to break (remaining HP × missing HP fraction × fatigue/100); closest wins ties. The keep only when no unit is in range.",
+    );
   }
   if (type === "hussar") {
     lines.push("Not slowed by terrain; still cannot enter peaks.");

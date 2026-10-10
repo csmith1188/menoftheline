@@ -146,12 +146,16 @@ function statusEmbed(snap) {
 
 function profileEmbed(profile, base) {
   // profile.tickets / profile.held still come back for self lookups — kept for later use
+  const mmrValue = profile.mmrHidden || profile.mmr == null
+    ? (profile.placementProgress && profile.placementProgress.label) || "Hidden"
+    : String(profile.mmr);
   return new EmbedBuilder()
     .setTitle(profile.name || "Player")
     .setURL(`${base}${profile.profilePath}`)
     .setColor(0x3a4a6b)
     .addFields(
-      { name: "MMR", value: String(profile.mmr ?? 0), inline: true },
+      { name: "Rank", value: String(profile.officerRankLabel || "Ensign"), inline: true },
+      { name: "MMR", value: mmrValue, inline: true },
       { name: "Wins", value: String(profile.wins ?? 0), inline: true },
       { name: "Losses", value: String(profile.losses ?? 0), inline: true },
       { name: "Ranked games", value: String(profile.rankedGames ?? 0), inline: true },

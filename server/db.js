@@ -18,6 +18,8 @@ import {
 import { asErr, logger } from "./logger.js";
 import { metricsEnabled, noteSqliteBusy, noteSqliteWrite } from "./metrics.js";
 import { ownerBase, pickLeastLoaded, workerCount } from "./owners.js";
+import { isHigherRank, normalizeRankId, placementProgress, rankLabel } from "../shared/ranks.js";
+import { nextMmr } from "./rating.js";
 
 function logRollbackFailed(op, rollbackErr) {
   logger.error({
@@ -112,6 +114,52 @@ export function ticketPack() {
 export function eloK() {
   const n = Number(process.env.ELO_K);
   return Number.isFinite(n) && n > 0 ? n : 32;
+}
+
+function positiveIntEnv(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : fallback;
+}
+
+export function eloKProvisional() {
+  return positiveIntEnv("ELO_K_PROVISIONAL", 48);
+}
+
+export function placementMatches() {
+  return positiveIntEnv("PLACEMENT_MATCHES", 10);
+}
+
+export function rankActiveDays() {
+  return positiveIntEnv("RANK_ACTIVE_DAYS", 30);
+}
+
+export function rankSmallPop() {
+  return positiveIntEnv("RANK_SMALL_POP", 100);
+}
+
+export function rematchSoftK() {
+  return positiveIntEnv("REMATCH_SOFT_K", 16);
+}
+
+export function rematchSoftWindowMs() {
+  return positiveIntEnv("REMATCH_SOFT_WINDOW_MS", 24 * 60 * 60 * 1000);
+}
+
+export function rematchSoftCount() {
+  return positiveIntEnv("REMATCH_SOFT_COUNT", 2);
+}
+
+export function rematchCooldownMs() {
+  return positiveIntEnv("REMATCH_COOLDOWN_MS", 2 * 60 * 60 * 1000);
+}
+
+/** Elo K for a player given placement state and rematch frequency vs this opponent. */
+export function resolveEloK({ placementsDone, rematchCountInWindow = 0 } = {}) {
+  let k = placementsDone ? eloK() : eloKProvisional();
+  if (rematchCountInWindow >= rematchSoftCount()) {
+    k = Math.min(k, rematchSoftK());
+  }
+  return k;
 }
 
 export async function initDb() {
@@ -310,7 +358,7 @@ export async function initDb() {
   logger.info({ event: "db_ready", dbFile: path.basename(dbFile) }, "database ready");
 }
 
-const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, tooltips, bgm_volume, news_email_opt_in, news_email_opt_in_at, news_email_opt_out_at, news_email_consent_source, news_email_consent_ip, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, deleted_at, created_at, updated_at`;
+const ACCOUNT_SELECT = `id, formbar_id, discord_id, email, password_hash, email_verified_at, email_verified_by, email_verified_reason, name, role, mmr, tickets, held, wins, losses, ranked_games, placements_done, officer_rank, highest_rank, rank_percentile, last_ranked_at, tooltips, bgm_volume, news_email_opt_in, news_email_opt_in_at, news_email_opt_out_at, news_email_consent_source, news_email_consent_ip, banned_at, ban_reason, ban_expires_at, banned_by_account_id, last_login_at, last_seen_at, admin_notes, session_epoch, deleted_at, created_at, updated_at`;
 
 export const ACCOUNT_ROLES = Object.freeze(["player", "moderator", "admin"]);
 
@@ -423,6 +471,41 @@ async function ensureAccountColumn(cols, name, ddl) {
   }
 }
 
+/** One-time grandfather: wins+losses → ranked_games / placements / last_ranked_at. */
+async function backfillRankedAccountFields() {
+  const need = await get(
+    `SELECT COUNT(*) AS n FROM accounts
+     WHERE (wins + losses) > 0
+       AND (ranked_games = 0 OR last_ranked_at IS NULL OR (placements_done = 0 AND wins + losses >= ?))`,
+    [placementMatches()],
+  );
+  if (!need || !need.n) return;
+  const threshold = placementMatches();
+  await run(
+    `UPDATE accounts SET
+       ranked_games = CASE WHEN ranked_games < (wins + losses) THEN (wins + losses) ELSE ranked_games END,
+       placements_done = CASE
+         WHEN (CASE WHEN ranked_games < (wins + losses) THEN (wins + losses) ELSE ranked_games END) >= ?
+         THEN 1 ELSE placements_done END,
+       updated_at = ?
+     WHERE (wins + losses) > 0`,
+    [threshold, Date.now()],
+  );
+  // last_ranked_at from latest ranked game with MMR applied
+  await run(
+    `UPDATE accounts SET last_ranked_at = (
+       SELECT MAX(g.ended_at) FROM games g
+       WHERE g.mode = 'ranked'
+         AND (
+           (g.account_a = accounts.id AND g.mmr_a_after IS NOT NULL)
+           OR (g.account_b = accounts.id AND g.mmr_b_after IS NOT NULL)
+         )
+     )
+     WHERE last_ranked_at IS NULL
+       AND ranked_games > 0`,
+  );
+}
+
 async function ensureAdminSchema() {
   const accountCols = await all("PRAGMA table_info(accounts)");
   await ensureAccountColumn(accountCols, "role", "role TEXT NOT NULL DEFAULT 'player'");
@@ -442,6 +525,12 @@ async function ensureAdminSchema() {
   await ensureAccountColumn(accountCols, "news_email_consent_source", "news_email_consent_source TEXT");
   await ensureAccountColumn(accountCols, "news_email_consent_ip", "news_email_consent_ip TEXT");
   await ensureAccountColumn(accountCols, "deleted_at", "deleted_at INTEGER");
+  await ensureAccountColumn(accountCols, "ranked_games", "ranked_games INTEGER NOT NULL DEFAULT 0");
+  await ensureAccountColumn(accountCols, "placements_done", "placements_done INTEGER NOT NULL DEFAULT 0");
+  await ensureAccountColumn(accountCols, "officer_rank", "officer_rank TEXT NOT NULL DEFAULT 'ensign'");
+  await ensureAccountColumn(accountCols, "highest_rank", "highest_rank TEXT NOT NULL DEFAULT 'ensign'");
+  await ensureAccountColumn(accountCols, "rank_percentile", "rank_percentile REAL");
+  await ensureAccountColumn(accountCols, "last_ranked_at", "last_ranked_at INTEGER");
   await run("CREATE INDEX IF NOT EXISTS accounts_role ON accounts (role)");
   await run("CREATE INDEX IF NOT EXISTS accounts_banned_at ON accounts (banned_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_last_seen ON accounts (last_seen_at)");
@@ -449,6 +538,40 @@ async function ensureAdminSchema() {
   await run("CREATE INDEX IF NOT EXISTS accounts_email_verified ON accounts (email_verified_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_news_email ON accounts (news_email_opt_in, email_verified_at)");
   await run("CREATE INDEX IF NOT EXISTS accounts_deleted_at ON accounts (deleted_at)");
+  await run("CREATE INDEX IF NOT EXISTS accounts_officer_rank ON accounts (officer_rank, mmr)");
+  await run("CREATE INDEX IF NOT EXISTS accounts_placements_last_ranked ON accounts (placements_done, last_ranked_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS rank_snapshots (
+    day TEXT NOT NULL,
+    account_id INTEGER NOT NULL,
+    mmr INTEGER NOT NULL,
+    officer_rank TEXT NOT NULL,
+    percentile REAL,
+    eligible INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (day, account_id)
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS rank_snapshots_day ON rank_snapshots (day)");
+
+  await run(`CREATE TABLE IF NOT EXISTS rank_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    from_rank TEXT NOT NULL,
+    to_rank TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    seen_at INTEGER,
+    created_at INTEGER NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS rank_changes_account_unseen ON rank_changes (account_id, seen_at, created_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS job_leases (
+    job TEXT PRIMARY KEY,
+    owner TEXT,
+    expires_at INTEGER,
+    last_ok_day TEXT
+  )`);
+
+  await backfillRankedAccountFields();
 
   await run(`CREATE TABLE IF NOT EXISTS deleted_account_identity (
     account_id INTEGER PRIMARY KEY,
@@ -482,6 +605,8 @@ async function ensureAdminSchema() {
   await run("CREATE INDEX IF NOT EXISTS games_map_ended ON games (map_id, ended_at)");
   await run("CREATE INDEX IF NOT EXISTS games_outcome_ended ON games (outcome, ended_at)");
   await run("CREATE INDEX IF NOT EXISTS games_win_reason_ended ON games (win_reason, ended_at)");
+  await run("CREATE INDEX IF NOT EXISTS games_mode_account_a_ended ON games (mode, account_a, ended_at)");
+  await run("CREATE INDEX IF NOT EXISTS games_mode_account_b_ended ON games (mode, account_b, ended_at)");
   await run("UPDATE games SET win_reason = 'keep' WHERE win_reason = 'capital'");
 
   await run(`CREATE TABLE IF NOT EXISTS admin_audit (
@@ -1753,6 +1878,26 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
   const wins = survivor.wins + donor.wins;
   const losses = survivor.losses + donor.losses;
   const mmr = Math.max(survivor.mmr, donor.mmr);
+  const rankedGames = Math.max(
+    Number(survivor.ranked_games) || 0,
+    Number(donor.ranked_games) || 0,
+    wins + losses,
+  );
+  const placementsDone = rankedGames >= placementMatches()
+    || Boolean(survivor.placements_done)
+    || Boolean(donor.placements_done)
+    ? 1
+    : 0;
+  const survivorHighest = normalizeRankId(survivor.highest_rank || survivor.officer_rank || "ensign");
+  const donorHighest = normalizeRankId(donor.highest_rank || donor.officer_rank || "ensign");
+  const highestRank = isHigherRank(donorHighest, survivorHighest) ? donorHighest : survivorHighest;
+  const survivorRank = normalizeRankId(survivor.officer_rank || "ensign");
+  const donorRank = normalizeRankId(donor.officer_rank || "ensign");
+  const officerRank = isHigherRank(donorRank, survivorRank) ? donorRank : survivorRank;
+  const lastRankedAt = Math.max(
+    Number(survivor.last_ranked_at) || 0,
+    Number(donor.last_ranked_at) || 0,
+  ) || null;
   const now = Date.now();
 
   return withDb(async () => {
@@ -1765,7 +1910,9 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
       await execRun(
         `UPDATE accounts SET
           formbar_id = ?, discord_id = ?, email = ?, password_hash = ?, email_verified_at = ?,
-          tickets = ?, held = ?, wins = ?, losses = ?, mmr = ?, updated_at = ?
+          tickets = ?, held = ?, wins = ?, losses = ?, mmr = ?,
+          ranked_games = ?, placements_done = ?, officer_rank = ?, highest_rank = ?,
+          last_ranked_at = ?, updated_at = ?
          WHERE id = ?`,
         [
           formbarId,
@@ -1778,6 +1925,11 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
           wins,
           losses,
           mmr,
+          rankedGames,
+          placementsDone,
+          officerRank,
+          highestRank,
+          lastRankedAt,
           now,
           survivor.id,
         ],
@@ -4745,24 +4897,19 @@ export async function clearOwner(userId) {
   await run("DELETE FROM match_assignments WHERE user_id = ?", [userId]);
 }
 
-/** Ranked MMR updates and the game row, or just the game row, in one transaction. */
+/**
+ * Insert game first; apply ranked MMR only when the insert is new (idempotent).
+ * `ranked` entries: { accountId, mmrBefore, score } — score 0|1. Optional mmr/won precomputed.
+ */
 export async function recordMatchResult({ ranked, game }) {
-  if (!db) return;
+  if (!db) return { inserted: false, rankedApplied: false };
   return withDb(async () => {
-    await execRun("BEGIN");
+    await execRun("BEGIN IMMEDIATE");
     try {
-      if (ranked && ranked.length) {
-        for (let i = 0; i < ranked.length; i += 1) {
-          const row = ranked[i];
-          const column = row.won ? "wins" : "losses";
-          await execRun(
-            `UPDATE accounts SET mmr = ?, ${column} = ${column} + 1, updated_at = ? WHERE id = ?`,
-            [row.mmr, Date.now(), row.accountId],
-          );
-        }
-      }
-      await execRun(
-        `INSERT INTO games (
+      let mmrAAfter = game.mmrAAfter ?? null;
+      let mmrBAfter = game.mmrBAfter ?? null;
+      const insert = await execRun(
+        `INSERT OR IGNORE INTO games (
           id, mode, player_a, player_b, name_a, name_b, formbar_a, formbar_b,
           account_a, account_b,
           winner_side, mmr_a_before, mmr_b_before, mmr_a_after, mmr_b_after,
@@ -4783,8 +4930,8 @@ export async function recordMatchResult({ ranked, game }) {
           game.winnerSide,
           game.mmrABefore,
           game.mmrBBefore,
-          game.mmrAAfter,
-          game.mmrBAfter,
+          mmrAAfter,
+          mmrBAfter,
           game.createdAt,
           game.startedAt ?? game.createdAt ?? null,
           game.endedAt,
@@ -4795,7 +4942,62 @@ export async function recordMatchResult({ ranked, game }) {
           game.summaryJson ?? null,
         ],
       );
+      const inserted = insert.changes > 0;
+      let rankedApplied = false;
+      if (inserted && ranked && ranked.length === 2) {
+        const rematches = await countRecentRematchesInTx(
+          ranked[0].accountId,
+          ranked[1].accountId,
+          rematchSoftWindowMs(),
+          game.id,
+        );
+        const now = game.endedAt || Date.now();
+        const threshold = placementMatches();
+        const afterById = new Map();
+        for (let i = 0; i < ranked.length; i += 1) {
+          const row = ranked[i];
+          const other = ranked[i === 0 ? 1 : 0];
+          const acct = await execGet(
+            `SELECT id, mmr, ranked_games, placements_done FROM accounts WHERE id = ?`,
+            [row.accountId],
+          );
+          if (!acct) continue;
+          const placementsDone = Boolean(acct.placements_done);
+          const k = resolveEloK({
+            placementsDone,
+            rematchCountInWindow: rematches,
+          });
+          const mmrBefore = Number.isFinite(row.mmrBefore) ? row.mmrBefore : acct.mmr;
+          const score = row.score === 1 || row.won === true ? 1 : 0;
+          const oppBefore = Number.isFinite(other.mmrBefore) ? other.mmrBefore : other.mmr;
+          const mmr = Number.isFinite(row.mmr)
+            ? row.mmr
+            : nextMmr(mmrBefore, oppBefore, score, k);
+          const column = score === 1 ? "wins" : "losses";
+          const nextGames = (Number(acct.ranked_games) || 0) + 1;
+          const nextPlacements = nextGames >= threshold ? 1 : 0;
+          await execRun(
+            `UPDATE accounts SET
+               mmr = ?, ${column} = ${column} + 1,
+               ranked_games = ?, placements_done = ?,
+               last_ranked_at = ?, updated_at = ?
+             WHERE id = ?`,
+            [mmr, nextGames, nextPlacements, now, now, row.accountId],
+          );
+          afterById.set(row.accountId, mmr);
+          rankedApplied = true;
+        }
+        if (rankedApplied) {
+          mmrAAfter = afterById.get(game.accountA) ?? mmrAAfter;
+          mmrBAfter = afterById.get(game.accountB) ?? mmrBAfter;
+          await execRun(
+            `UPDATE games SET mmr_a_after = ?, mmr_b_after = ? WHERE id = ?`,
+            [mmrAAfter, mmrBAfter, game.id],
+          );
+        }
+      }
       await execRun("COMMIT");
+      return { inserted, rankedApplied, mmrAAfter, mmrBAfter };
     } catch (err) {
       try {
         await execRun("ROLLBACK");
@@ -4805,6 +5007,57 @@ export async function recordMatchResult({ ranked, game }) {
       throw err;
     }
   });
+}
+
+/** Rematch count in window excluding the current game id (already inserted). */
+async function countRecentRematchesInTx(accountA, accountB, windowMs, excludeGameId) {
+  const a = Number(accountA);
+  const b = Number(accountB);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a <= 0 || b <= 0) return 0;
+  const since = Date.now() - (Number(windowMs) || 0);
+  const row = await execGet(
+    `SELECT COUNT(*) AS n FROM games
+     WHERE mode = 'ranked'
+       AND ended_at >= ?
+       AND id != ?
+       AND mmr_a_after IS NOT NULL
+       AND (
+         (account_a = ? AND account_b = ?)
+         OR (account_a = ? AND account_b = ?)
+       )`,
+    [since, excludeGameId || "", a, b, b, a],
+  );
+  return Number(row && row.n) || 0;
+}
+
+export async function countRecentRematches(accountA, accountB, windowMs = rematchSoftWindowMs()) {
+  if (!db) return 0;
+  return withDb(() => countRecentRematchesInTx(accountA, accountB, windowMs, ""));
+}
+
+/** Recent ranked opponent account ids for matchmaking deprioritization. */
+export async function recentRankedOpponentIds(accountId, sinceMs = rematchCooldownMs()) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0 || !db) return [];
+  const since = Date.now() - (Number(sinceMs) || 0);
+  const rows = await all(
+    `SELECT CASE WHEN account_a = ? THEN account_b ELSE account_a END AS opp
+     FROM games
+     WHERE mode = 'ranked'
+       AND ended_at >= ?
+       AND (account_a = ? OR account_b = ?)
+       AND mmr_a_after IS NOT NULL`,
+    [id, since, id, id],
+  );
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const opp = Number(row.opp);
+    if (!Number.isInteger(opp) || opp <= 0 || seen.has(opp)) continue;
+    seen.add(opp);
+    out.push(opp);
+  }
+  return out;
 }
 
 export async function setRankedResult(accountId, mmr, won) {
@@ -5419,15 +5672,293 @@ export async function listNewsletterOutboxErrors(campaignId, limit = 20) {
   );
 }
 
-export async function topAccounts(limit = 10) {
+/** Eligible active officers for the public ranked leaderboard. */
+export async function topAccounts(limit = 50) {
+  const since = Date.now() - rankActiveDays() * 24 * 60 * 60 * 1000;
   return all(
-    `SELECT id, formbar_id, name, mmr, wins, losses
+    `SELECT id, formbar_id, name, mmr, wins, losses, officer_rank, highest_rank,
+            rank_percentile, ranked_games, placements_done
      FROM accounts
-     WHERE wins + losses > 0
-     ORDER BY mmr DESC, wins DESC, name ASC
+     WHERE deleted_at IS NULL
+       AND banned_at IS NULL
+       AND placements_done = 1
+       AND last_ranked_at IS NOT NULL
+       AND last_ranked_at >= ?
+     ORDER BY mmr DESC, ranked_games DESC, id ASC
      LIMIT ?`,
-    [limit],
+    [since, limit],
   );
+}
+
+/** Casual W/L derived from games (not stored on accounts). */
+export async function accountCasualStats(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return { wins: 0, losses: 0, games: 0 };
+  const row = await get(
+    `SELECT
+       COALESCE(SUM(CASE
+         WHEN (account_a = ? AND winner_side = 'player')
+           OR (account_b = ? AND winner_side = 'enemy') THEN 1 ELSE 0 END), 0) AS wins,
+       COALESCE(SUM(CASE
+         WHEN (account_a = ? AND winner_side = 'enemy')
+           OR (account_b = ? AND winner_side = 'player') THEN 1 ELSE 0 END), 0) AS losses
+     FROM games
+     WHERE mode = 'casual'
+       AND (account_a = ? OR account_b = ?)
+       AND winner_side IS NOT NULL
+       AND outcome != 'admin_cancel'`,
+    [id, id, id, id, id, id],
+  );
+  const wins = Number(row && row.wins) || 0;
+  const losses = Number(row && row.losses) || 0;
+  return { wins, losses, games: wins + losses };
+}
+
+/** Public dossier fields for profiles / API / Discord. */
+export function rankedDossier(account) {
+  if (!account) return null;
+  const placementsDone = Boolean(account.placements_done);
+  const rankedGames = Number(account.ranked_games) || (Number(account.wins) || 0) + (Number(account.losses) || 0);
+  const progress = placementProgress(rankedGames, placementMatches());
+  const officerRank = normalizeRankId(account.officer_rank || "ensign");
+  const highestRank = normalizeRankId(account.highest_rank || officerRank);
+  const wins = Number(account.wins) || 0;
+  const losses = Number(account.losses) || 0;
+  const total = wins + losses;
+  return {
+    officerRank,
+    officerRankLabel: rankLabel(officerRank),
+    highestRank,
+    highestRankLabel: rankLabel(highestRank),
+    placementsDone,
+    placementProgress: progress,
+    mmr: placementsDone ? (Number(account.mmr) || 0) : null,
+    mmrHidden: !placementsDone,
+    rankPercentile: placementsDone && account.rank_percentile != null
+      ? Number(account.rank_percentile)
+      : null,
+    wins,
+    losses,
+    rankedGames: rankedGames || total,
+    winRate: total > 0 ? Math.round((wins / total) * 1000) / 10 : null,
+    lastRankedAt: account.last_ranked_at || null,
+  };
+}
+
+export async function listUnreadRankChanges(accountId, limit = 5) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return all(
+    `SELECT id, day, from_rank, to_rank, kind, created_at
+     FROM rank_changes
+     WHERE account_id = ? AND seen_at IS NULL
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [id, limit],
+  );
+}
+
+export async function markRankChangesSeen(accountId, ids = null) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const now = Date.now();
+  if (Array.isArray(ids) && ids.length) {
+    const placeholders = ids.map(() => "?").join(",");
+    await run(
+      `UPDATE rank_changes SET seen_at = ? WHERE account_id = ? AND id IN (${placeholders}) AND seen_at IS NULL`,
+      [now, id, ...ids],
+    );
+    return;
+  }
+  await run(
+    `UPDATE rank_changes SET seen_at = ? WHERE account_id = ? AND seen_at IS NULL`,
+    [now, id],
+  );
+}
+
+export function formatRankChangeNotice(change) {
+  if (!change) return null;
+  const from = rankLabel(change.from_rank);
+  const to = rankLabel(change.to_rank);
+  if (change.kind === "promote") return `Promoted to ${to} (from ${from}).`;
+  if (change.kind === "demote") return `Commission adjusted to ${to} (from ${from}).`;
+  if (change.kind === "place") return `Commission posted: ${to}.`;
+  return `Officer rank: ${to}.`;
+}
+
+export async function listEligibleRankedAccounts(sinceMs) {
+  return all(
+    `SELECT id, mmr, wins, losses, ranked_games, officer_rank, highest_rank, last_ranked_at
+     FROM accounts
+     WHERE deleted_at IS NULL
+       AND banned_at IS NULL
+       AND placements_done = 1
+       AND last_ranked_at IS NOT NULL
+       AND last_ranked_at >= ?
+     ORDER BY mmr DESC, ranked_games DESC, id ASC`,
+    [sinceMs],
+  );
+}
+
+/** Test/admin helper to set ranked ladder fields without a match. */
+export async function setAccountRankedState(accountId, fields = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const cols = [];
+  const params = [];
+  const map = [
+    ["mmr", "mmr"],
+    ["wins", "wins"],
+    ["losses", "losses"],
+    ["rankedGames", "ranked_games"],
+    ["placementsDone", "placements_done"],
+    ["officerRank", "officer_rank"],
+    ["highestRank", "highest_rank"],
+    ["rankPercentile", "rank_percentile"],
+    ["lastRankedAt", "last_ranked_at"],
+  ];
+  for (const [key, col] of map) {
+    if (fields[key] !== undefined) {
+      cols.push(`${col} = ?`);
+      params.push(fields[key]);
+    }
+  }
+  if (!cols.length) return getAccount(id);
+  cols.push("updated_at = ?");
+  params.push(Date.now());
+  params.push(id);
+  await run(`UPDATE accounts SET ${cols.join(", ")} WHERE id = ?`, params);
+  return getAccount(id);
+}
+
+const RANK_JOB = "officer_ranks";
+const LEASE_MS = 10 * 60 * 1000;
+
+/** Claim the daily job; returns false if another worker already finished or holds the lease. */
+export async function claimOfficerRankJob(day, owner) {
+  if (!db) return false;
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet("SELECT * FROM job_leases WHERE job = ?", [RANK_JOB]);
+      if (row && row.last_ok_day === day) {
+        await execRun("COMMIT");
+        return false;
+      }
+      if (row && row.expires_at != null && row.expires_at > now && row.owner !== owner) {
+        await execRun("COMMIT");
+        return false;
+      }
+      await execRun(
+        `INSERT INTO job_leases (job, owner, expires_at, last_ok_day)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(job) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at`,
+        [RANK_JOB, owner, now + LEASE_MS, row ? row.last_ok_day : null],
+      );
+      await execRun("COMMIT");
+      return true;
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("claimOfficerRankJob", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function finishOfficerRankJob(day, owner, ok) {
+  if (!db) return;
+  const now = Date.now();
+  if (ok) {
+    await run(
+      `UPDATE job_leases SET last_ok_day = ?, expires_at = ?, owner = ? WHERE job = ?`,
+      [day, now, owner, RANK_JOB],
+    );
+  } else {
+    await run(
+      `UPDATE job_leases SET expires_at = 0 WHERE job = ? AND owner = ?`,
+      [RANK_JOB, owner],
+    );
+  }
+}
+
+/**
+ * Apply daily assignments: update ranks, highest, percentile, snapshots, change notices.
+ * Clears percentile for placed-but-ineligible accounts.
+ */
+export async function applyOfficerRankAssignments(day, assignments, {
+  clearIneligiblePercentile = true,
+  since = 0,
+} = {}) {
+  if (!db) return { changes: 0 };
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      let changes = 0;
+      const now = Date.now();
+      const eligibleIds = new Set();
+      for (let i = 0; i < assignments.length; i += 1) {
+        const a = assignments[i];
+        eligibleIds.add(a.accountId);
+        const prev = normalizeRankId(a.previousRank || "ensign");
+        const next = normalizeRankId(a.officerRank);
+        const highest = normalizeRankId(a.highestRank);
+        await execRun(
+          `UPDATE accounts SET
+             officer_rank = ?, highest_rank = ?, rank_percentile = ?, updated_at = ?
+           WHERE id = ?`,
+          [next, highest, a.percentile, now, a.accountId],
+        );
+        await execRun(
+          `INSERT INTO rank_snapshots (day, account_id, mmr, officer_rank, percentile, eligible)
+           VALUES (?, ?, ?, ?, ?, 1)
+           ON CONFLICT(day, account_id) DO UPDATE SET
+             mmr = excluded.mmr,
+             officer_rank = excluded.officer_rank,
+             percentile = excluded.percentile,
+             eligible = 1`,
+          [day, a.accountId, a.mmr, next, a.percentile],
+        );
+        if (prev !== next) {
+          let kind = "place";
+          if (isHigherRank(next, prev)) kind = "promote";
+          else if (isHigherRank(prev, next)) kind = "demote";
+          await execRun(
+            `INSERT INTO rank_changes (account_id, day, from_rank, to_rank, kind, seen_at, created_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+            [a.accountId, day, prev, next, kind, now],
+          );
+          changes += 1;
+        }
+      }
+      if (clearIneligiblePercentile) {
+        await execRun(
+          `UPDATE accounts SET rank_percentile = NULL, updated_at = ?
+           WHERE placements_done = 1
+             AND deleted_at IS NULL
+             AND (
+               last_ranked_at IS NULL
+               OR last_ranked_at < ?
+               OR banned_at IS NOT NULL
+             )`,
+          [now, since],
+        );
+      }
+      void eligibleIds;
+      await execRun("COMMIT");
+      return { changes };
+    } catch (err) {
+      try {
+        await execRun("ROLLBACK");
+      } catch (rollbackErr) {
+        logRollbackFailed("applyOfficerRankAssignments", rollbackErr);
+      }
+      throw err;
+    }
+  });
 }
 
 export async function systemStats() {

@@ -934,8 +934,9 @@ const howtoPages = [
         kind: "ul",
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
-          "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Infantry.",
+          "Lights and Rifles shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Infantry.",
           "Among same-priority targets In Line across rows, aim at the nearer row (then closer). The keep counts as your row.",
+          "Guerrillas instead shoot the in-range unit most likely to break (remaining HP × missing HP fraction × fatigue/100); closest wins ties. The keep only when no unit is in range.",
           "Infantry line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
           "Infantry line bonus does not apply when shooting Lights or Rifles.",
           "Rifles deal double damage to Officers. Lights have stronger shooting pushback.",

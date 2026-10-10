@@ -5,7 +5,7 @@
   <nav class="site-nav" aria-label="Site">
     <a href="/" class="<%= typeof nav !== 'undefined' && nav === 'home' ? 'active' : '' %>"> [ Home ]</a>
     <a href="/games" class="<%= typeof nav !== 'undefined' && nav === 'games' ? 'active' : '' %>"> [ Games ]</a>
-    <a href="/scores" class="<%= typeof nav !== 'undefined' && nav === 'scores' ? 'active' : '' %>"> [ High Scores ]</a>
+    <a href="/scores" class="<%= typeof nav !== 'undefined' && nav === 'scores' ? 'active' : '' %>"> [ Ranks ]</a>
     <a href="/rules" class="<%= typeof nav !== 'undefined' && nav === 'rules' ? 'active' : '' %>"> [ Rules ]</a>
     <% if (viewer && accountEmailVerified(viewer)) { %>
       <button type="button" class="nav-link" id="suggest-open">[ Suggest ]</button>

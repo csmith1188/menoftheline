@@ -14,4 +14,5 @@ Two players each defend a keep. Destroy the enemy keep to win. The game can be p
 - [[Fatigue and Breaking]]
 - [[Gold, Land, and Banks]]
 - [[Units]]
+- [[Ranked Play]]
 - [[Quick Start]]

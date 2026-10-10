@@ -16,7 +16,7 @@ Movement on terrain uses a separate **mobility** class (foot, mounted, or limber
 
 - **Light (Standard):** Full reload whenever firing is allowed, including while Falling Back. Stronger shooting pushback. Shoots by type priority instead of closest eligible: cavalry if it is the closest target, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Infantry. Infantry line bonus does not apply against them. See [[Shooting]], [[Orders]], and [[Damage]].
 
-- **Guerrillas (Specialist):** Skirmisher stats and specials. Hidden from the enemy unless a viewer is within 50 paces, in melee, or they shot within the last second. Woods hide Guerrillas unless occupied (other units in woods use ordinary fog). Occupying woods or peaks lets them see through those features without being revealed. Not slowed by terrain. Halted in the open they only shoot enemies within 50 paces; occupying a terrain feature lets them Halt-shoot at full range.
+- **Guerrillas (Specialist):** Skirmisher stats and specials, but they do not use Light type priority. Among in-range enemies they always shoot the unit most likely to break: remaining HP × missing HP fraction × fatigue/100 (closest wins ties). The keep is only chosen when no enemy unit is in range. Hidden from the enemy unless a viewer is within 50 paces, in melee, or they shot within the last second. Woods hide Guerrillas unless occupied (other units in woods use ordinary fog). Occupying woods or peaks lets them see through those features without being revealed. Not slowed by terrain. Halted in the open they only shoot enemies within 50 paces; occupying a terrain feature lets them Halt-shoot at full range.
 
 - **Rifles (Elite):** deal double damage to Officers. They share Skirmisher targeting and open-order rules.
 

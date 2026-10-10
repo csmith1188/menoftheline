@@ -85,7 +85,14 @@ import {
   wikiSlug,
   WIKI_BODY_MAX,
   WIKI_TITLE_MAX,
+  rankedDossier,
+  accountCasualStats,
+  listUnreadRankChanges,
+  markRankChangesSeen,
+  formatRankChangeNotice,
 } from "./server/db.js";
+import { startOfficerRankJob } from "./server/rankJob.js";
+import { rankLabel } from "./shared/ranks.js";
 import {
   accountEmailVerified,
   anyLoginEnabled,
@@ -565,16 +572,23 @@ const DEFAULT_APP_RETURN = "motl://auth";
 
 function accountPublic(account) {
   if (!account) return null;
+  const dossier = rankedDossier(account);
   if (isAccountDeleted(account)) {
     return {
       formbarId: null,
       discordId: null,
       name: FALLEN_SOLDIER,
-      mmr: account.mmr,
+      mmr: dossier.mmr,
       tickets: 0,
       held: 0,
       wins: account.wins,
       losses: account.losses,
+      officerRank: dossier.officerRank,
+      officerRankLabel: dossier.officerRankLabel,
+      highestRank: dossier.highestRank,
+      placementsDone: dossier.placementsDone,
+      placementProgress: dossier.placementProgress,
+      rankPercentile: dossier.rankPercentile,
       deleted: true,
     };
   }
@@ -582,11 +596,20 @@ function accountPublic(account) {
     formbarId: account.formbar_id,
     discordId: account.discord_id || null,
     name: publicDisplayName(account),
-    mmr: account.mmr,
+    mmr: dossier.mmr,
     tickets: account.tickets,
     held: account.held,
     wins: account.wins,
     losses: account.losses,
+    officerRank: dossier.officerRank,
+    officerRankLabel: dossier.officerRankLabel,
+    highestRank: dossier.highestRank,
+    highestRankLabel: dossier.highestRankLabel,
+    placementsDone: dossier.placementsDone,
+    placementProgress: dossier.placementProgress,
+    rankPercentile: dossier.rankPercentile,
+    rankedGames: dossier.rankedGames,
+    winRate: dossier.winRate,
   };
 }
 
@@ -778,12 +801,15 @@ async function playerFromSession(sess, options = {}) {
   const account = await resolveSessionAccount(sess);
   if (account && isAccountDeleted(account)) return null;
   if (account && accountEmailVerified(account)) {
+    const dossier = rankedDossier(account);
     return {
       id: `a:${account.id}`,
       name: publicDisplayName(account),
       accountId: account.id,
       formbarId: account.formbar_id || null,
       mmr: account.mmr,
+      officerRank: dossier.officerRank,
+      placementsDone: dossier.placementsDone,
       tooltips: tooltipsEnabled(account),
       bgmVolume: bgmVolumePercent(account),
     };
@@ -1014,12 +1040,24 @@ async function gamesData(req) {
   const player = await playerFromSession(req.session, { createGuest: false });
   const rejoin = player ? matchmaker.isBusy(player.id) : false;
   let notice = takeNotice(req);
+  if (viewer && privileged) {
+    const unread = await listUnreadRankChanges(viewer.id, 3);
+    if (unread.length) {
+      const bits = unread.map((c) => formatRankChangeNotice(c)).filter(Boolean);
+      if (bits.length) {
+        notice = notice ? `${bits.join(" ")} ${notice}` : bits.join(" ");
+      }
+      await markRankChangesSeen(viewer.id, unread.map((c) => c.id));
+    }
+  }
   if (!notice && (await isMatchmakingPaused())) {
     notice = (await getMaintenanceMessage()) || "Matchmaking is temporarily paused.";
   }
+  const dossier = viewer ? rankedDossier(viewer) : null;
   return {
     nav: "games",
     viewer,
+    dossier,
     rejoin,
     canTicket: Boolean(privileged && viewer.tickets > viewer.held && !rejoin),
     waiting: matchmaker.waitingCounts(),
@@ -1029,10 +1067,14 @@ async function gamesData(req) {
 }
 
 async function scoresData(req) {
+  const leaders = await topAccounts(50);
   return {
     nav: "scores",
     viewer: await pageViewer(req),
-    leaders: await topAccounts(10),
+    leaders: leaders.map((row) => ({
+      ...row,
+      officerRankLabel: rankLabel(row.officer_rank || "ensign"),
+    })),
     notice: takeNotice(req),
   };
 }
@@ -2002,6 +2044,21 @@ app.get("/profile/:id", async (req, res, next) => {
     const playStats = account
       ? await accountPlayStats(account.id)
       : { games: 0, totalMs: 0 };
+    const casualStats = account
+      ? await accountCasualStats(account.id)
+      : { wins: 0, losses: 0, games: 0 };
+    const dossier = account ? rankedDossier(account) : null;
+    let notice = takeNotice(req);
+    if (isOwner && account) {
+      const unread = await listUnreadRankChanges(account.id, 3);
+      if (unread.length) {
+        const bits = unread.map((c) => formatRankChangeNotice(c)).filter(Boolean);
+        if (bits.length) {
+          notice = notice ? `${bits.join(" ")} ${notice}` : bits.join(" ");
+        }
+        await markRankChangesSeen(account.id, unread.map((c) => c.id));
+      }
+    }
     const myBugs = isOwner
       ? await listOpenBugsForAccount(account.id)
       : [];
@@ -2012,6 +2069,8 @@ app.get("/profile/:id", async (req, res, next) => {
       account: account
         ? { ...account, name: publicDisplayName(account) }
         : null,
+      dossier,
+      casualStats,
       viewer,
       isOwner,
       deleted,
@@ -2019,7 +2078,7 @@ app.get("/profile/:id", async (req, res, next) => {
       playStats,
       myBugs,
       mySuggestions,
-      notice: takeNotice(req),
+      notice,
       canLinkFormbar: Boolean(
         isOwner && privileged
         && account
@@ -4018,6 +4077,7 @@ if (isMain) {
     }, "PayPal ticket checkout enabled");
   }
   startNewsMailer();
+  startOfficerRankJob();
   if (debugRangesEnabled()) {
     logger.info({
       event: "debug_ranges_enabled",

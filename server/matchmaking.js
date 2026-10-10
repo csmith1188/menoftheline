@@ -3,9 +3,11 @@ import {
   ensureHold,
   holdTicket,
   ownerForUser,
+  recentRankedOpponentIds,
   recordMmEvent,
   refundTicket,
   releaseHold,
+  rematchCooldownMs,
 } from "./db.js";
 import { modeRequiresTicket, noFreePlayEnabled } from "./auth.js";
 import { allowSocketEvent } from "./commandLimit.js";
@@ -50,6 +52,8 @@ export class Matchmaker {
     this.ticker = new MatchTicker(TICK_MS);
     this.maxSpread = numberEnv("MMR_MAX_SPREAD", 200);
     this.waitMs = numberEnv("MATCH_WAIT_MS", 60000);
+    this.expandPerMs = numberEnv("MMR_EXPAND_PER_MS", 0.003333);
+    this.expandCap = numberEnv("MMR_EXPAND_CAP", 800);
     this.queueMaxAgeMs = numberEnv("QUEUE_MAX_AGE_MS", 10 * 60 * 1000);
     this.pairing = false;
     this.timer = setInterval(() => {
@@ -471,6 +475,17 @@ export class Matchmaker {
       await releaseHold(user.accountId);
       return;
     }
+    let recentOpponentIds = [];
+    try {
+      recentOpponentIds = await recentRankedOpponentIds(user.accountId, rematchCooldownMs());
+    } catch (err) {
+      this.log.warn({
+        event: "matchmaking_failed",
+        err: asErr(err),
+        phase: "recent_opponents",
+        accountId: user.accountId,
+      }, "recent opponents lookup failed");
+    }
     const entry = {
       userId: user.id,
       name: user.name,
@@ -480,6 +495,9 @@ export class Matchmaker {
       socket,
       joinedAt: Date.now(),
       mode: "ranked",
+      recentOpponentIds: new Set(recentOpponentIds),
+      officerRank: user.officerRank || "ensign",
+      placementsDone: Boolean(user.placementsDone),
     };
     this.enqueue(this.ranked, entry);
     this.log.info({
@@ -575,6 +593,8 @@ export class Matchmaker {
       entry.socket.data.user.mmr = entry.mmr;
       entry.socket.data.user.accountId = entry.accountId;
       entry.socket.data.user.formbarId = entry.formbarId;
+      entry.socket.data.user.officerRank = entry.officerRank || "ensign";
+      entry.socket.data.user.placementsDone = Boolean(entry.placementsDone);
       room.seatHuman(key, entry.socket);
       return;
     }
@@ -654,7 +674,12 @@ export class Matchmaker {
     try {
       const now = Date.now();
       while (this.ranked.length >= 2) {
-        const pair = pickRankedPair(this.ranked, now, this.maxSpread, this.waitMs);
+        const pair = pickRankedPair(this.ranked, now, {
+          maxSpread: this.maxSpread,
+          waitMs: this.waitMs,
+          expandPerMs: this.expandPerMs,
+          expandCap: this.expandCap,
+        });
         if (!pair) break;
         this.ranked = this.ranked.filter((entry) => entry !== pair.a && entry !== pair.b);
         this.forgetQueue(pair.a);
@@ -948,6 +973,8 @@ export class Matchmaker {
       accountId: other.accountId,
       formbarId: other.formbarId,
       mmr: other.mmr,
+      officerRank: other.officerRank,
+      placementsDone: other.placementsDone,
       socket: other.socket,
       bot: Boolean(other.bot),
     };
@@ -995,6 +1022,14 @@ export class Matchmaker {
       }
       room.clearSeat(other);
       room.destroy();
+      let recentOpponentIds = [];
+      if (mode === "ranked" && otherSnap.accountId) {
+        try {
+          recentOpponentIds = await recentRankedOpponentIds(otherSnap.accountId, rematchCooldownMs());
+        } catch {
+          recentOpponentIds = [];
+        }
+      }
       const entry = {
         userId: otherSnap.userId,
         name: otherSnap.name,
@@ -1004,6 +1039,9 @@ export class Matchmaker {
         socket: otherSnap.socket,
         joinedAt: Date.now(),
         mode,
+        recentOpponentIds: new Set(recentOpponentIds),
+        officerRank: otherSnap.officerRank || "ensign",
+        placementsDone: Boolean(otherSnap.placementsDone),
       };
       this.log.info({
         event: "queue_joined",

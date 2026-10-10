@@ -180,7 +180,8 @@ test("buildProfilePayload returns unlinked and public vs self fields", async () 
 
   const account = await upsertDiscordAccount("112233445566", "Bot Profile");
   await runSql(
-    "UPDATE accounts SET mmr = 1234, tickets = 9, held = 2, wins = 4, losses = 1 WHERE id = ?",
+    `UPDATE accounts SET mmr = 1234, tickets = 9, held = 2, wins = 4, losses = 1,
+       ranked_games = 5, placements_done = 1, officer_rank = 'captain' WHERE id = ?`,
     [account.id],
   );
 
@@ -188,6 +189,8 @@ test("buildProfilePayload returns unlinked and public vs self fields", async () 
   assert.equal(publicView.linked, true);
   assert.equal(publicView.name, "Bot Profile");
   assert.equal(publicView.mmr, 1234);
+  assert.equal(publicView.mmrHidden, false);
+  assert.equal(publicView.officerRankLabel, "Captain");
   assert.equal(publicView.wins, 4);
   assert.equal(publicView.losses, 1);
   assert.equal(publicView.rankedGames, 5);

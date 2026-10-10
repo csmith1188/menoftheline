@@ -1125,6 +1125,16 @@ function nameFromDiscordUser(user) {
   return `Player ${tail}`;
 }
 
+/** Persist Discord email when present; trust Discord verified (or AUTH_EMAIL off). */
+function discordAccountEmailOptions(user) {
+  const email = user && user.email != null ? String(user.email) : "";
+  if (!email) return {};
+  return {
+    email,
+    emailVerified: Boolean(user && user.verified) || !authEmailEnabled(),
+  };
+}
+
 async function beginDiscordOAuth(req, res, { callbackUrl, nextPath = "/" } = {}) {
   if (!discordLoginEnabled()) {
     res.status(404).send("Discord login is disabled.");
@@ -1214,7 +1224,7 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
       req.session.save(() => res.redirect(`/profile/${linkId}`));
       return;
     }
-    await upsertDiscordAccount(user.id, name);
+    await upsertDiscordAccount(user.id, name, discordAccountEmailOptions(user));
     const linked = await getAccount(result.account.id);
     setAccountSession(req.session, linked || result.account);
     logger.info({
@@ -1231,7 +1241,7 @@ async function completeDiscordLogin(req, res, { redirectUri, successRedirect = "
     return;
   }
 
-  const account = await upsertDiscordAccount(user.id, name);
+  const account = await upsertDiscordAccount(user.id, name, discordAccountEmailOptions(user));
   if (!account) {
     res.status(500).send("Could not create account.");
     return;
@@ -3185,7 +3195,11 @@ app.get("/api/v1/login/discord/callback", async (req, res, next) => {
       res.status(400).send("Discord login failed.");
       return;
     }
-    const account = await upsertDiscordAccount(user.id, nameFromDiscordUser(user));
+    const account = await upsertDiscordAccount(
+      user.id,
+      nameFromDiscordUser(user),
+      discordAccountEmailOptions(user),
+    );
     if (!account) {
       res.status(500).send("Could not create account.");
       return;

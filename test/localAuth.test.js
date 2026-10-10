@@ -326,6 +326,8 @@ test("Discord OAuth mock login sets account session and profile link", async (t)
       id: "778899001122",
       username: "cord.user",
       global_name: "Cord Ace",
+      email: "cord.ace@example.com",
+      verified: true,
     }),
   });
   t.after(() => stopServer(server));
@@ -346,6 +348,44 @@ test("Discord OAuth mock login sets account session and profile link", async (t)
   assert.ok(profileMatch);
   const profile = await fetchSession(server.base, `/profile/${profileMatch[1]}`, jar);
   assert.match(await profile.text(), /778899001122/);
+  const row = await getAccountRow(server.dataDir, "discord_id = ?", ["778899001122"]);
+  assert.equal(row.email, "cord.ace@example.com");
+  assert.ok(row.email_verified_at);
+});
+
+test("Discord OAuth skips email already claimed by another account", async (t) => {
+  const server = startServer({
+    AUTH_EMAIL: "0",
+    DISCORD_LOGIN: "1",
+    DISCORD_OAUTH_MOCK: "1",
+    DISCORD_MOCK_USER: JSON.stringify({
+      id: "778899001133",
+      username: "cord.taken",
+      global_name: "Taken Cord",
+      email: "already@example.com",
+      verified: true,
+    }),
+  });
+  t.after(() => stopServer(server));
+  await server.ready;
+
+  const localJar = cookieJar();
+  await fetchSession(server.base, "/signup", localJar, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      name: "Local Owner",
+      email: "already@example.com",
+      password: "password123",
+    }),
+  });
+  const discJar = cookieJar();
+  await followDiscordOAuth(server.base, discJar, "/login?discord=1");
+  const disc = await getAccountRow(server.dataDir, "discord_id = ?", ["778899001133"]);
+  assert.ok(disc);
+  assert.equal(disc.email, null);
+  const local = await getAccountRow(server.dataDir, "email = ?", ["already@example.com"]);
+  assert.equal(local.discord_id, null);
 });
 
 test("Formbar login sets account session; Digipog buy needs formbar; paid play uses accountId", async (t) => {
@@ -481,7 +521,7 @@ async function getAccountRow(dataDir, whereSql, params) {
   return new Promise((resolve, reject) => {
     const db = new sqlite3.Database(dbFile);
     db.get(
-      `SELECT id, formbar_id, discord_id, email, name, tickets, wins, losses, mmr
+      `SELECT id, formbar_id, discord_id, email, email_verified_at, name, tickets, wins, losses, mmr
        FROM accounts WHERE ${whereSql}`,
       params,
       (err, row) => {

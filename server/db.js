@@ -4,6 +4,8 @@ import sqlite3 from "sqlite3";
 import { fileURLToPath } from "url";
 import {
   buildDiscriminatedDisplayName,
+  isValidEmail,
+  normalizeEmail,
   sanitizeDisplayName,
   validateDisplayName,
 } from "./auth.js";
@@ -1173,13 +1175,44 @@ export async function upsertAccount(formbarId, name) {
   return getAccount(result.lastID);
 }
 
-export async function upsertDiscordAccount(discordId, name) {
+/**
+ * Create or load a Discord-linked account. When Discord returns an email, attach
+ * it if the address is free; never overwrite a different existing email or steal
+ * an address already claimed by another account.
+ * @param {string} discordId
+ * @param {string} name
+ * @param {{ email?: string|null, emailVerified?: boolean }} [options]
+ */
+export async function upsertDiscordAccount(discordId, name, options = {}) {
   const did = String(discordId || "").trim();
   if (!did || did.length > 32) return null;
+  const email = normalizeDiscordEmail(options.email);
+  const verifiedAt = email && options.emailVerified ? Date.now() : null;
   const existing = await getAccountByDiscord(did);
-  if (existing) return existing;
+  if (existing) {
+    await attachDiscordEmailIfFree(existing, email, verifiedAt);
+    return getAccount(existing.id);
+  }
   const now = Date.now();
   const { name: uniqueName } = await allocateUniqueDisplayName(name);
+  if (email) {
+    const taken = await getAccountByEmail(email);
+    if (!taken) {
+      try {
+        const result = await run(
+          `INSERT INTO accounts (
+            discord_id, email, email_verified_at, name, mmr, tickets, held, wins, losses,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)`,
+          [did, email, verifiedAt, uniqueName, startingMmr(), now, now],
+        );
+        return getAccount(result.lastID);
+      } catch (err) {
+        if (!err || err.code !== "SQLITE_CONSTRAINT") throw err;
+        // Email race — fall through to Discord-only insert.
+      }
+    }
+  }
   const result = await run(
     `INSERT INTO accounts (
       discord_id, name, mmr, tickets, held, wins, losses, created_at, updated_at
@@ -1187,6 +1220,42 @@ export async function upsertDiscordAccount(discordId, name) {
     [did, uniqueName, startingMmr(), now, now],
   );
   return getAccount(result.lastID);
+}
+
+function normalizeDiscordEmail(raw) {
+  const email = normalizeEmail(raw);
+  return isValidEmail(email) ? email : null;
+}
+
+/** Fill missing email / verification from Discord when the address is free. */
+async function attachDiscordEmailIfFree(account, email, verifiedAt) {
+  if (!account || !email) return;
+  const current = account.email ? String(account.email) : "";
+  if (current && current !== email) return;
+  if (current === email) {
+    if (verifiedAt && !account.email_verified_at) {
+      await run(
+        `UPDATE accounts
+         SET email_verified_at = ?, email_verified_reason = ?, updated_at = ?
+         WHERE id = ? AND email_verified_at IS NULL`,
+        [verifiedAt, "discord", Date.now(), account.id],
+      );
+    }
+    return;
+  }
+  const other = await getAccountByEmail(email);
+  if (other && other.id !== account.id) return;
+  try {
+    await run(
+      `UPDATE accounts
+       SET email = ?, email_verified_at = ?, email_verified_reason = ?, updated_at = ?
+       WHERE id = ? AND email IS NULL`,
+      [email, verifiedAt, verifiedAt ? "discord" : null, Date.now(), account.id],
+    );
+  } catch (err) {
+    if (err && err.code === "SQLITE_CONSTRAINT") return;
+    throw err;
+  }
 }
 
 export async function createLocalAccount({

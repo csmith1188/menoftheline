@@ -3,7 +3,8 @@ import { randomBytes } from "crypto";
 const DISCORD_AUTHORIZE = "https://discord.com/api/oauth2/authorize";
 const DISCORD_TOKEN = "https://discord.com/api/oauth2/token";
 const DISCORD_ME = "https://discord.com/api/users/@me";
-const SCOPES = "identify";
+/** identify for profile; email for accounts.email (Discord may omit if unavailable). */
+const SCOPES = "identify email";
 
 export function discordClientId() {
   return String(process.env.DISCORD_CLIENT_ID || "").trim();
@@ -44,11 +45,13 @@ export async function fetchDiscordUserFromCode(code, redirectUri) {
       const data = JSON.parse(raw);
       const id = data && data.id != null ? String(data.id).trim() : "";
       if (!id) throw new Error("invalid_mock_code");
-      return {
+      return normalizeDiscordProfile({
         id,
         username: String(data.username || "Discord").trim() || "Discord",
         global_name: data.global_name != null ? String(data.global_name).trim() : null,
-      };
+        email: data.email,
+        verified: data.verified,
+      });
     } catch {
       throw new Error("invalid_mock_code");
     }
@@ -84,10 +87,24 @@ export async function fetchDiscordUserFromCode(code, redirectUri) {
   const me = await meRes.json();
   const id = me && me.id != null ? String(me.id).trim() : "";
   if (!id) throw new Error("discord_user_failed");
-  return {
+  return normalizeDiscordProfile({
     id,
     username: String(me.username || "Discord").trim() || "Discord",
     global_name: me.global_name != null ? String(me.global_name).trim() : null,
+    email: me.email,
+    verified: me.verified,
+  });
+}
+
+/** Normalize Discord @me / mock payload into the fields we persist. */
+function normalizeDiscordProfile({ id, username, global_name, email, verified }) {
+  const rawEmail = email != null ? String(email).trim() : "";
+  return {
+    id: String(id),
+    username: String(username || "Discord").trim() || "Discord",
+    global_name: global_name != null ? String(global_name).trim() : null,
+    email: rawEmail || null,
+    verified: verified === true || verified === 1 || verified === "true",
   };
 }
 

@@ -48,13 +48,13 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - don't fill formbar id's for guest / non-formbar users
 - discord bot + login
 - demo recorder / playback
-- refund based on purchase type (5/20/50)
-
 - social accounts: x, insta, discord, reddit, restore iPhone SE
 - LLC
 - steam, google, apple, nintendo
 - Payment processing per platform
 
+- inspect database and migrations
+- client performance benchmarks
 - review performance
 - redis + workers
 - spawn new servers?

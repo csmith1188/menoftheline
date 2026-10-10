@@ -5,6 +5,7 @@ import {
   countOpenPlayerReports,
   findPaypalPurchaseByOrderOrCapture,
   FALLEN_SOLDIER,
+  formatUsdFromCents,
   getAccount,
   getDeletedAccountIdentity,
   isAccountBanned,
@@ -14,7 +15,10 @@ import {
   listPaypalPurchasesForAccount,
   listPlayerReports,
   listTicketLedger,
+  listTicketLotsForAccount,
+  lotRefundCents,
   normalizeAccountRole,
+  paypalRefundValueCents,
   publicDisplayName,
   searchAccounts,
   setAccountDisplayName,
@@ -63,6 +67,8 @@ export async function getUserDetail(accountId) {
     reportsFiled,
     openReportsAgainst,
     paypalPurchases,
+    ticketLots,
+    refundCents,
     deletedIdentity,
   ] = await Promise.all([
     listTicketLedger(account.id, { limit: 50 }),
@@ -76,8 +82,25 @@ export async function getUserDetail(accountId) {
     listPlayerReports({ reporterAccountId: account.id, status: "all", limit: 20 }),
     countOpenPlayerReports(account.id),
     listPaypalPurchasesForAccount(account.id, { limit: 50 }),
+    listTicketLotsForAccount(account.id, { limit: 200 }),
+    paypalRefundValueCents(account.id),
     isAccountDeleted(account) ? getDeletedAccountIdentity(account.id) : null,
   ]);
+  const lots = (ticketLots || []).map((lot) => {
+    const unitCents = lot.tickets_total > 0
+      ? lot.amount_cents / lot.tickets_total
+      : 0;
+    const refundLotCents = lotRefundCents(
+      lot.tickets_remaining,
+      lot.amount_cents,
+      lot.tickets_total,
+    );
+    return {
+      ...lot,
+      unitUsd: formatUsdFromCents(Math.round(unitCents)),
+      refundUsd: formatUsdFromCents(refundLotCents),
+    };
+  });
   return {
     account: publicAccount(account),
     ledger,
@@ -87,6 +110,9 @@ export async function getUserDetail(accountId) {
     reportsFiled,
     openReportsAgainst,
     paypalPurchases,
+    ticketLots: lots,
+    paypalRefundCents: refundCents,
+    paypalRefundUsd: formatUsdFromCents(refundCents),
     banned: isAccountBanned(account),
     deleted: isAccountDeleted(account),
     formerName: deletedIdentity && deletedIdentity.former_name

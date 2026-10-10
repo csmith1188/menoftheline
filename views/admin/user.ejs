@@ -31,6 +31,7 @@
         <div><strong>Discord</strong><div class="admin-mono"><%= a.discord_id || "—" %></div></div>
         <div><strong>MMR</strong><div><%= a.mmr %> (<%= a.wins %>–<%= a.losses %>)</div></div>
         <div><strong>Tickets</strong><div><%= a.tickets %> (<%= a.held %> held)</div></div>
+        <div><strong>Refundable (FIFO)</strong><div>$<%= detail.paypalRefundUsd || "0.00" %> USD</div></div>
         <div><strong>Created</strong><div><%= new Date(a.created_at).toLocaleString() %></div></div>
         <div><strong>Last login</strong><div><%= a.last_login_at ? new Date(a.last_login_at).toLocaleString() : "—" %></div></div>
         <div><strong>Last seen</strong><div><%= a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : "—" %></div></div>
@@ -176,6 +177,36 @@
                       −<%= row.clawback_applied || 0 %><% if (row.clawback_shortfall) { %> / shortfall <%= row.clawback_shortfall %><% } %>
                     <% } else { %>—<% } %>
                   </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Ticket lots (FIFO)</h3>
+        <p class="hint">Refundable remaining: $<%= detail.paypalRefundUsd || "0.00" %> USD (PayPal lots only; $0 lots are Digipog/grant/admin).</p>
+        <% const lotRows = detail.ticketLots || []; %>
+        <% if (!lotRows.length) { %><p class="hint">No ticket lots.</p><% } else { %>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Source</th>
+                <th>Remaining</th>
+                <th>$ / ticket</th>
+                <th>Lot refund</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% lotRows.forEach(function (lot) { %>
+                <tr>
+                  <td><%= new Date(lot.created_at).toLocaleString() %></td>
+                  <td><%= lot.source_type %><% if (lot.source_id) { %> #<%= lot.source_id %><% } %></td>
+                  <td><%= lot.tickets_remaining %> / <%= lot.tickets_total %></td>
+                  <td>$<%= lot.unitUsd %></td>
+                  <td>$<%= lot.refundUsd %></td>
                 </tr>
               <% }) %>
             </tbody>

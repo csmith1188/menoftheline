@@ -63,14 +63,20 @@ Local sandbox testing often needs a tunnel (ngrok, Cloudflare Tunnel, etc.) so P
 3. Server creates a PayPal order for the catalog amount via `payment_source.paypal.experience_context` (brand, shipping, `return_url` / `cancel_url` both `{publicBase}/buy` for App Switch / mobile redirect — not the deprecated top-level `application_context`) and inserts `paypal_purchases` (`status=created`).
 4. Desktop: buyer approves in the PayPal popup. Mobile: PayPal App Switch or full-page redirect when available (`appSwitchWhenAvailable` in `paypalBuy.js`).
 5. After approve, browser `POST /api/paypal/orders/:orderId/capture` (popup `onApprove`, SDK `buttons.resume()` after redirect, or a `token`+`PayerID` fallback on `/buy`).
-6. Server captures, verifies amount/currency/merchant/status, then credits tickets once (`status=credited`) and writes `ticket_ledger` (`kind=purchase`, `ref_type=paypal_purchase`).
+6. Server captures, verifies amount/currency/merchant/status, then credits tickets once (`status=credited`), writes `ticket_ledger` (`kind=purchase`, `ref_type=paypal_purchase`), and creates a `ticket_lots` row with the pack’s USD cost (`amount_cents`).
 7. Cancel returns land on `/buy` with `token` and no `PayerID`; the page shows cancelled and does not credit.
 8. If the browser drops after approve, `CHECKOUT.ORDER.APPROVED` / `PAYMENT.CAPTURE.COMPLETED` webhooks run the same settlement path.
-9. Refunds/reversals claw back free tickets (`kind=paypal_clawback`). If the account has too few free tickets (held for a match), the shortfall is stored on the purchase row for admin review — balances never go below held.
+9. Refunds/reversals claw back free tickets (`kind=paypal_clawback`), preferring that purchase’s lot then other lots FIFO. If the account has too few free tickets (held for a match), the shortfall is stored on the purchase row for admin review — balances never go below held.
+
+## Ticket lots (FIFO cost basis)
+
+Every ticket credit becomes a lot (`ticket_lots`). Spends (`charge`, free spend, admin negative adjust, etc.) burn **oldest lots first**. Digipog packs, grants, and admin grants are `$0.00` lots in the same queue.
+
+Admin refund math sums remaining PayPal lot value: `remaining × (pack USD / pack tickets)`. Example: buy 20 for $5, buy 100 for $20, spend 10 → refundable **$22.50** (10×$0.25 + 100×$0.20). This is a calculator for manual PayPal refunds; the server does not issue capture refunds from this value.
 
 ## Admin
 
-- User detail: PayPal purchases table (order/capture ids, status, clawback shortfall)
+- User detail: **Refundable (FIFO)** USD, ticket lots table (remaining/total, $/ticket, lot refund), PayPal purchases (order/capture ids, clawback shortfall)
 - Ops: lookup by order/capture id, reconcile stale rows, CSV export `paypal_purchases.csv`
 
 ## Sandbox testing checklist

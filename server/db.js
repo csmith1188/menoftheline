@@ -294,6 +294,7 @@ export async function initDb() {
   );
   await run("CREATE INDEX IF NOT EXISTS wiki_revisions_open_account ON wiki_revisions (account_id, confirmed_at, undone_at)");
   await ensureAdminSchema();
+  await backfillTicketLots();
   await run("UPDATE accounts SET held = 0");
   const userCols = await all("PRAGMA table_info(users)");
   if (!userCols.some((col) => col.name === "tooltips")) {
@@ -518,6 +519,20 @@ async function ensureAdminSchema() {
   )`);
   await run("CREATE INDEX IF NOT EXISTS ticket_ledger_account ON ticket_ledger (account_id, created_at)");
   await run("CREATE INDEX IF NOT EXISTS ticket_ledger_created ON ticket_ledger (created_at, kind)");
+
+  await run(`CREATE TABLE IF NOT EXISTS ticket_lots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    tickets_total INTEGER NOT NULL,
+    tickets_remaining INTEGER NOT NULL,
+    amount_cents INTEGER NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    created_at INTEGER NOT NULL
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS ticket_lots_account ON ticket_lots (account_id, created_at, id)");
+  await run("CREATE INDEX IF NOT EXISTS ticket_lots_source ON ticket_lots (source_type, source_id)");
 
   await run(`CREATE TABLE IF NOT EXISTS activity_day (
     account_id INTEGER NOT NULL,
@@ -1021,12 +1036,15 @@ export async function setAccountDisplayName(accountId, name, { spendTicket = fal
         await execRun("ROLLBACK");
         return { ok: false, error: "no_ticket" };
       }
+      const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
         heldAfter: row.held,
         kind: "spend",
+        refType: "ticket_lot",
+        refId: slices[0]?.lotId ?? null,
         reason: "display_name",
         createdAt: now,
       });
@@ -1288,6 +1306,7 @@ export async function deleteAccountSelf(accountId, { via = "self" } = {}) {
       );
 
       if (freeTickets > 0) {
+        await zeroTicketLotsForAccount(execRun, id);
         await insertTicketLedger(execRun, {
           accountId: id,
           delta: -freeTickets,
@@ -1608,6 +1627,22 @@ export async function mergeAccounts(survivorId, donorId, options = {}) {
         "UPDATE wiki_revisions SET account_id = ? WHERE account_id = ?",
         [survivor.id, donor.id],
       );
+      await execRun(
+        "UPDATE ticket_lots SET account_id = ? WHERE account_id = ?",
+        [survivor.id, donor.id],
+      );
+      await execRun(
+        "UPDATE ticket_ledger SET account_id = ? WHERE account_id = ?",
+        [survivor.id, donor.id],
+      );
+      await execRun(
+        "UPDATE paypal_purchases SET account_id = ? WHERE account_id = ?",
+        [survivor.id, donor.id],
+      );
+      await execRun(
+        "UPDATE ticket_purchases SET account_id = ? WHERE account_id = ?",
+        [survivor.id, donor.id],
+      );
       await execRun("DELETE FROM auth_tokens WHERE account_id = ?", [donor.id]);
       await execRun("DELETE FROM accounts WHERE id = ?", [donor.id]);
       await execRun("COMMIT");
@@ -1684,6 +1719,278 @@ async function insertTicketLedger(exec, {
       createdAt,
     ],
   );
+}
+
+const TICKET_LOTS_BACKFILL_KEY = "ticket_lots_backfill_v1";
+
+/** Parse PayPal-style amount strings ("5.00") to integer USD cents. */
+export function amountValueToCents(amountValue) {
+  const s = String(amountValue ?? "").trim();
+  const m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(s);
+  if (!m) return 0;
+  const dollars = Number(m[1]);
+  const frac = (m[2] || "00").padEnd(2, "0").slice(0, 2);
+  return dollars * 100 + Number(frac);
+}
+
+export function formatUsdFromCents(cents) {
+  const n = Number(cents) || 0;
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  return `${sign}${(abs / 100).toFixed(2)}`;
+}
+
+/** Remaining USD cents for one lot (half-up). */
+export function lotRefundCents(remaining, amountCents, ticketsTotal) {
+  const rem = Number(remaining) || 0;
+  const amount = Number(amountCents) || 0;
+  const total = Number(ticketsTotal) || 0;
+  if (rem <= 0 || amount <= 0 || total <= 0) return 0;
+  return Math.round((rem * amount) / total);
+}
+
+async function createTicketLot(exec, {
+  accountId,
+  sourceType,
+  sourceId = null,
+  tickets,
+  amountCents = 0,
+  currency = "USD",
+  createdAt = Date.now(),
+}) {
+  const n = Number(tickets);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  const cents = Math.max(0, Math.round(Number(amountCents) || 0));
+  const result = await exec(
+    `INSERT INTO ticket_lots (
+      account_id, source_type, source_id, tickets_total, tickets_remaining,
+      amount_cents, currency, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      accountId,
+      String(sourceType),
+      sourceId != null ? String(sourceId) : null,
+      n,
+      n,
+      cents,
+      currency || "USD",
+      createdAt,
+    ],
+  );
+  return result.lastID;
+}
+
+/**
+ * Burn n tickets from oldest lots first.
+ * Returns slices { lotId, take, amountCents, ticketsTotal }.
+ */
+async function consumeTicketLotsFifo(execRunFn, execAllFn, accountId, n, { excludeLotId = null } = {}) {
+  const want = Number(n);
+  if (!Number.isInteger(want) || want <= 0) return [];
+  const lots = await execAllFn(
+    `SELECT id, tickets_remaining, amount_cents, tickets_total FROM ticket_lots
+     WHERE account_id = ? AND tickets_remaining > 0
+     ORDER BY created_at ASC, id ASC`,
+    [accountId],
+  );
+  let left = want;
+  const slices = [];
+  for (const lot of lots) {
+    if (left <= 0) break;
+    if (excludeLotId != null && Number(lot.id) === Number(excludeLotId)) continue;
+    const take = Math.min(Number(lot.tickets_remaining), left);
+    if (take <= 0) continue;
+    await execRunFn(
+      "UPDATE ticket_lots SET tickets_remaining = tickets_remaining - ? WHERE id = ?",
+      [take, lot.id],
+    );
+    slices.push({
+      lotId: lot.id,
+      take,
+      amountCents: lot.amount_cents,
+      ticketsTotal: lot.tickets_total,
+    });
+    left -= take;
+  }
+  if (left > 0) {
+    throw new Error(`ticket_lots_shortfall:${left}`);
+  }
+  return slices;
+}
+
+async function restoreTicketLot(execRunFn, execGetFn, lotId, n = 1) {
+  const id = Number(lotId);
+  const count = Number(n);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(count) || count <= 0) {
+    return 0;
+  }
+  const lot = await execGetFn(
+    "SELECT id, tickets_total, tickets_remaining FROM ticket_lots WHERE id = ?",
+    [id],
+  );
+  if (!lot) return 0;
+  const room = Math.max(0, Number(lot.tickets_total) - Number(lot.tickets_remaining));
+  const add = Math.min(room, count);
+  if (add <= 0) return 0;
+  await execRunFn(
+    "UPDATE ticket_lots SET tickets_remaining = tickets_remaining + ? WHERE id = ?",
+    [add, id],
+  );
+  return add;
+}
+
+async function zeroTicketLotsForAccount(execRunFn, accountId) {
+  await execRunFn(
+    "UPDATE ticket_lots SET tickets_remaining = 0 WHERE account_id = ? AND tickets_remaining > 0",
+    [accountId],
+  );
+}
+
+/** One-time: rebuild lots from historical purchases, then reconcile to balances. */
+async function backfillTicketLots() {
+  const flag = await get(
+    "SELECT value FROM site_settings WHERE key = ?",
+    [TICKET_LOTS_BACKFILL_KEY],
+  );
+  if (flag && String(flag.value) === "1") return;
+
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const again = await execGet(
+        "SELECT value FROM site_settings WHERE key = ?",
+        [TICKET_LOTS_BACKFILL_KEY],
+      );
+      if (again && String(again.value) === "1") {
+        await execRun("COMMIT");
+        return;
+      }
+
+      const paypalRows = await execAll(
+        `SELECT id, account_id, amount_value, currency, tickets, clawback_applied,
+                created_at, credited_at, status
+         FROM paypal_purchases
+         WHERE credited_at IS NOT NULL
+            OR status IN ('credited', 'refunded', 'reversed')`,
+      );
+      for (const row of paypalRows) {
+        const total = Number(row.tickets) || 0;
+        const clawed = Math.max(0, Number(row.clawback_applied) || 0);
+        const remaining = Math.max(0, total - clawed);
+        if (total <= 0) continue;
+        await execRun(
+          `INSERT INTO ticket_lots (
+            account_id, source_type, source_id, tickets_total, tickets_remaining,
+            amount_cents, currency, created_at
+          ) VALUES (?, 'paypal_purchase', ?, ?, ?, ?, ?, ?)`,
+          [
+            row.account_id,
+            String(row.id),
+            total,
+            remaining,
+            amountValueToCents(row.amount_value),
+            row.currency || "USD",
+            row.credited_at || row.created_at || Date.now(),
+          ],
+        );
+      }
+
+      const digipogRows = await execAll(
+        `SELECT id, account_id, tickets, created_at FROM ticket_purchases
+         WHERE status = 'completed' AND account_id IS NOT NULL AND tickets > 0`,
+      );
+      for (const row of digipogRows) {
+        const total = Number(row.tickets) || 0;
+        if (total <= 0) continue;
+        await execRun(
+          `INSERT INTO ticket_lots (
+            account_id, source_type, source_id, tickets_total, tickets_remaining,
+            amount_cents, currency, created_at
+          ) VALUES (?, 'ticket_purchase', ?, ?, ?, 0, 'USD', ?)`,
+          [
+            row.account_id,
+            String(row.id),
+            total,
+            total,
+            row.created_at || Date.now(),
+          ],
+        );
+      }
+
+      const accounts = await execAll("SELECT id, tickets FROM accounts");
+      for (const account of accounts) {
+        const sumRow = await execGet(
+          "SELECT COALESCE(SUM(tickets_remaining), 0) AS n FROM ticket_lots WHERE account_id = ?",
+          [account.id],
+        );
+        let sum = Number(sumRow?.n) || 0;
+        const balance = Math.max(0, Number(account.tickets) || 0);
+        if (sum > balance) {
+          let excess = sum - balance;
+          const lots = await execAll(
+            `SELECT id, tickets_remaining FROM ticket_lots
+             WHERE account_id = ? AND tickets_remaining > 0
+             ORDER BY created_at ASC, id ASC`,
+            [account.id],
+          );
+          for (const lot of lots) {
+            if (excess <= 0) break;
+            const take = Math.min(Number(lot.tickets_remaining), excess);
+            await execRun(
+              "UPDATE ticket_lots SET tickets_remaining = tickets_remaining - ? WHERE id = ?",
+              [take, lot.id],
+            );
+            excess -= take;
+          }
+          sum = balance;
+        } else if (sum < balance) {
+          const gap = balance - sum;
+          await execRun(
+            `INSERT INTO ticket_lots (
+              account_id, source_type, source_id, tickets_total, tickets_remaining,
+              amount_cents, currency, created_at
+            ) VALUES (?, 'legacy', NULL, ?, ?, 0, 'USD', ?)`,
+            [account.id, gap, gap, Date.now()],
+          );
+        }
+      }
+
+      const now = Date.now();
+      await execRun(
+        `INSERT INTO site_settings (key, value, updated_at, updated_by)
+         VALUES (?, '1', ?, NULL)
+         ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`,
+        [TICKET_LOTS_BACKFILL_KEY, now],
+      );
+      await execRun("COMMIT");
+      logger.info({ event: "ticket_lots_backfill" }, "ticket lots backfill complete");
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("backfillTicketLots", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function listTicketLotsForAccount(accountId, { limit = 100 } = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return all(
+    `SELECT * FROM ticket_lots WHERE account_id = ?
+     ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [id, Math.min(500, Math.max(1, Number(limit) || 100))],
+  );
+}
+
+/** Sum remaining PayPal lot value in USD cents (FIFO inventory). */
+export async function paypalRefundValueCents(accountId) {
+  const lots = await listTicketLotsForAccount(accountId, { limit: 500 });
+  let sum = 0;
+  for (const lot of lots) {
+    sum += lotRefundCents(lot.tickets_remaining, lot.amount_cents, lot.tickets_total);
+  }
+  return sum;
 }
 
 export async function holdTicket(accountId) {
@@ -1795,12 +2102,15 @@ export async function chargeHeld(accountId) {
         await execRun("ROLLBACK");
         return false;
       }
+      const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
         heldAfter: row.held - 1,
         kind: "charge",
+        refType: "ticket_lot",
+        refId: slices[0]?.lotId ?? null,
         createdAt: now,
       });
       await execRun("COMMIT");
@@ -1833,12 +2143,34 @@ export async function refundTicket(accountId) {
         "UPDATE accounts SET tickets = tickets + 1, updated_at = ? WHERE id = ?",
         [now, id],
       );
+      const lastSpend = await execGet(
+        `SELECT ref_id FROM ticket_ledger
+         WHERE account_id = ? AND kind IN ('charge', 'spend') AND ref_type = 'ticket_lot'
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [id],
+      );
+      let lotId = null;
+      if (lastSpend?.ref_id) {
+        const restored = await restoreTicketLot(execRun, execGet, lastSpend.ref_id, 1);
+        if (restored > 0) lotId = Number(lastSpend.ref_id);
+      }
+      if (lotId == null) {
+        lotId = await createTicketLot(execRun, {
+          accountId: id,
+          sourceType: "match_refund",
+          tickets: 1,
+          amountCents: 0,
+          createdAt: now,
+        });
+      }
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: 1,
         balanceAfter: row.tickets + 1,
         heldAfter: row.held,
         kind: "refund",
+        refType: "ticket_lot",
+        refId: lotId,
         createdAt: now,
       });
       await execRun("COMMIT");
@@ -1877,12 +2209,15 @@ export async function spendFreeTicket(accountId) {
         await execRun("ROLLBACK");
         return false;
       }
+      const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
         heldAfter: row.held,
         kind: "spend",
+        refType: "ticket_lot",
+        refId: slices[0]?.lotId ?? null,
         createdAt: now,
       });
       await execRun("COMMIT");
@@ -1976,6 +2311,14 @@ export async function completeTicketPurchase(purchaseId, accountId, tickets) {
         "UPDATE accounts SET tickets = tickets + ?, updated_at = ? WHERE id = ?",
         [count, now, account],
       );
+      await createTicketLot(execRun, {
+        accountId: account,
+        sourceType: "ticket_purchase",
+        sourceId: id,
+        tickets: count,
+        amountCents: 0,
+        createdAt: now,
+      });
       if (row) {
         await insertTicketLedger(execRun, {
           accountId: account,
@@ -2027,6 +2370,14 @@ export async function addTickets(accountId, tickets, digipogs, formbarId) {
         );
         purchaseId = inserted.lastID;
       }
+      await createTicketLot(execRun, {
+        accountId: id,
+        sourceType: purchaseId != null ? "ticket_purchase" : "grant",
+        sourceId: purchaseId,
+        tickets: count,
+        amountCents: 0,
+        createdAt: now,
+      });
       if (row) {
         await insertTicketLedger(execRun, {
           accountId: id,
@@ -2067,15 +2418,31 @@ export async function grantTickets(accountId, tickets) {
         await execRun("ROLLBACK");
         return false;
       }
+      const nextTickets = row.tickets + n;
+      if (nextTickets < row.held || nextTickets < 0) {
+        await execRun("ROLLBACK");
+        return false;
+      }
       const now = Date.now();
       await execRun(
-        "UPDATE accounts SET tickets = tickets + ?, updated_at = ? WHERE id = ?",
-        [n, now, id],
+        "UPDATE accounts SET tickets = ?, updated_at = ? WHERE id = ?",
+        [nextTickets, now, id],
       );
+      if (n > 0) {
+        await createTicketLot(execRun, {
+          accountId: id,
+          sourceType: "grant",
+          tickets: n,
+          amountCents: 0,
+          createdAt: now,
+        });
+      } else {
+        await consumeTicketLotsFifo(execRun, execAll, id, -n);
+      }
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: n,
-        balanceAfter: row.tickets + n,
+        balanceAfter: nextTickets,
         heldAfter: row.held,
         kind: "grant",
         createdAt: now,
@@ -2366,6 +2733,15 @@ export async function creditPaypalPurchase(purchaseId) {
         "UPDATE accounts SET tickets = ?, updated_at = ? WHERE id = ?",
         [nextTickets, now, row.account_id],
       );
+      await createTicketLot(execRun, {
+        accountId: row.account_id,
+        sourceType: "paypal_purchase",
+        sourceId: id,
+        tickets: row.tickets,
+        amountCents: amountValueToCents(row.amount_value),
+        currency: row.currency || "USD",
+        createdAt: now,
+      });
       await insertTicketLedger(execRun, {
         accountId: row.account_id,
         delta: row.tickets,
@@ -2440,7 +2816,40 @@ export async function clawbackPaypalPurchase(purchaseId, { status = "refunded", 
       const want = row.status === "credited" || row.credited_at
         ? Number(row.tickets)
         : 0;
-      const applied = Math.min(want, free);
+      let applied = 0;
+      if (want > 0 && free > 0) {
+        const packLot = await execGet(
+          `SELECT id, tickets_remaining FROM ticket_lots
+           WHERE account_id = ? AND source_type = 'paypal_purchase' AND source_id = ?
+           ORDER BY id ASC LIMIT 1`,
+          [row.account_id, String(id)],
+        );
+        let fromPack = 0;
+        if (packLot && Number(packLot.tickets_remaining) > 0) {
+          fromPack = Math.min(
+            Number(packLot.tickets_remaining),
+            want,
+            free,
+          );
+          if (fromPack > 0) {
+            await execRun(
+              "UPDATE ticket_lots SET tickets_remaining = tickets_remaining - ? WHERE id = ?",
+              [fromPack, packLot.id],
+            );
+          }
+        }
+        let stillWant = want - fromPack;
+        let stillFree = free - fromPack;
+        let fromOther = 0;
+        if (stillWant > 0 && stillFree > 0) {
+          const take = Math.min(stillWant, stillFree);
+          await consumeTicketLotsFifo(execRun, execAll, row.account_id, take, {
+            excludeLotId: packLot?.id ?? null,
+          });
+          fromOther = take;
+        }
+        applied = fromPack + fromOther;
+      }
       const shortfall = Math.max(0, want - applied);
       const nextTickets = account.tickets - applied;
       if (applied > 0) {
@@ -3525,6 +3934,17 @@ export async function adjustTicketsAdmin(accountId, delta, {
         "UPDATE accounts SET tickets = ?, updated_at = ? WHERE id = ?",
         [nextTickets, now, id],
       );
+      if (n > 0) {
+        await createTicketLot(execRun, {
+          accountId: id,
+          sourceType: "admin_adjust",
+          tickets: n,
+          amountCents: 0,
+          createdAt: now,
+        });
+      } else {
+        await consumeTicketLotsFifo(execRun, execAll, id, -n);
+      }
       await insertTicketLedger(execRun, {
         accountId: id,
         delta: n,

@@ -45,7 +45,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 
 # Site
 - don't fill formbar id's for guest / non-formbar users
-- discord bot + login
+- discord login (done) + bot /status /profile (done; more commands later)
 - demo recorder / playback
 - social accounts: x, insta, discord, reddit, restore iPhone SE
 - LLC

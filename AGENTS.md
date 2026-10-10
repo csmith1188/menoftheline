@@ -17,6 +17,7 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm test` | Node built-in test runner (`test/*.test.js`) |
 | `npm run sim-bench` | One crowded match: step and snapshot times |
 | `npm run mail-test` | SMTP diagnose + optional test send (`--to`, `--verify-only`, `--force`) |
+| `npm run discord-bot` | Separate Discord slash-command bot (`/status`, `/profile`); run exactly one instance |
 | `npm run seed-wiki` | Load `wikidocs/*.md` into the wiki DB (`--dry-run`, `--only-missing`) |
 | `npm run load -- bot` | Socket.IO load (`bot`, `pvp`, or `mixed`). Set `LOAD_DURATION_MS`. |
 | `npm run export-graphics` | Transparent PNGs of lanes/keeps/towns/terrain/units → `public/img/` |
@@ -24,7 +25,7 @@ Node ESM + Express + Socket.IO + SQLite. Match sim is authoritative on the serve
 | `npm run desktop:dev` / `desktop:build` | Electron shell (see `docs/packaging.md`) |
 | `npm run android:dev` / `ios:dev` | Capacitor sync + open IDE |
 
-Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`; scopes `identify email` → `accounts.email`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. In-match chat: `MATCH_CHAT` (default on). `NO_FREE=1` makes Play vs bot and Random unranked cost a ticket (training stays free). HTTPS `THIS_URL` auto-enables Express trust proxy so Secure `lane.sid` cookies work behind Nginx (`TRUST_PROXY`). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
+Env template: `.env.template`. Local data/DB under `data/`. Auth: local email/password (`LOCAL_ACCOUNTS`, `AUTH_EMAIL`, SMTP_*), Formbar OAuth (`FORMBAR_LOGIN`), and/or Discord OAuth (`DISCORD_LOGIN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`; scopes `identify email` → `accounts.email`); Digipog tickets still use Formbar (`server/formbar.js`). PayPal USD ticket packs (`PAYPAL_*`, `server/paypal.js`) for non-Formbar accounts when local or Discord login is on; see `docs/paypal.md`. Discord bot (separate process, one instance): `DISCORD_BOT_TOKEN`, `DISCORD_BOT_API_TOKEN`, `MOTL_API_URL` / `THIS_URL`, optional `DISCORD_BOT_GUILD_ID`; game workers expose `GET /api/v1/bot/status` and `/api/v1/bot/profile` when the API token is set. In-match chat: `MATCH_CHAT` (default on). `NO_FREE=1` makes Play vs bot and Random unranked cost a ticket (training stays free). HTTPS `THIS_URL` auto-enables Express trust proxy so Secure `lane.sid` cookies work behind Nginx (`TRUST_PROXY`). Logging: Pino via `server/logger.js` (`LOG_LEVEL`, default `info`); see `docs/logging.md`.
 
 ## Layout (start here)
 
@@ -65,6 +66,7 @@ server/
   wiki-diff.js         Revision diffs
   formbar.js           Digipog transfers; one outstanding socket transfer at a time
   discord.js           Discord OAuth authorize/token/user helpers
+  discordBotApi.js     Bot HTTP payloads: buildStatusSnapshot / buildProfilePayload (+ token helpers)
   assetVersion.js      Deploy cache-bust id (ASSET_VERSION → git SHA → CLIENT_VERSION)
   load-env.js          dotenv load (imported first by app.js)
 shared/                Authoritative tunables + geometry used by server, client, tests
@@ -103,6 +105,7 @@ docs/packaging.md      Export, deep links, version gate, shell packaging
 wikidocs/              Canonical player-facing rules markdown (wiki source content)
 test/                  Sim/bot/UI metric tests; helpers in test/helpers.js
 scripts/debug-server.js  Sets DEBUG_RANGES then imports app.js
+scripts/discord-bot.js Separate Discord bot (slash /status, /profile → /api/v1/bot/*); one instance
 scripts/export-client.js Static client export for shells
 scripts/load/          socket-load.js (100-player harness), sim-bench.js
 deploy/nginx.conf.example  One Node process behind Nginx; code assets no-cache + ETag
@@ -130,6 +133,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Bot behavior | `server/bot/controller.js` | `assess.js`, `tactics.js`, `formations.js`, `economy.js`, `commands.js` |
 | Matchmaking / ranked / tickets | `server/matchmaking.js` | `server/db.js`, `server/rating.js`, `app.js` routes |
 | Local signup / verify / reset / Formbar / Discord login flags | `server/auth.js`, `server/mail.js`, `server/discord.js` | `server/db.js` accounts (`formbar_id` / `discord_id`), `app.js` routes, `views/login.ejs` / signup / forgot / reset / profile. Profile link merges when the identity is already taken (union providers; refuse same-provider conflicts). New accounts take the provider/local display name; collisions get `Name 2`…; owners can rename on profile (1 ticket, 3/hour). |
+| Discord bot (`/status`, `/profile`) | `scripts/discord-bot.js`, `server/discordBotApi.js` | Game: `GET /api/v1/bot/status` + `/api/v1/bot/profile` (Bearer `DISCORD_BOT_API_TOKEN`). Bot process: `npm run discord-bot` (exactly one; not inside game workers). |
 | Self-service account deletion | `server/db.js` (`deleteAccountSelf`, `FALLEN_SOLDIER`), `docs/account-deletion.md` | `GET/POST /account/delete`, `POST /api/v1/account/delete`; soft-delete + PII scrub; public name Fallen Soldier; staff `former_name` via `deleted_account_identity`; tickets forfeited when confirmed |
 | Tooltips / BGM prefs (guest cookies vs account DB) | `server/prefsCookie.js`, `shared/prefs.js`, `public/js/prefs.js` | Guests: cookies only. Logged-in: `accounts` via `settingsWrite` / `setPlayer*`; login and `/play` overwrite cookies from DB. |
 | Formbar token check, CSRF, request limits | `server/formbarAuth.js`, `server/csrf.js`, `server/hardening.js` | `server/formbar.js`, `app.js` (static assets before session), `test/security.test.js` / `test/securityHttp.test.js` |
@@ -158,7 +162,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 - Pause: human vs human mutual pause via settings `pause` (chat request + red chat alert until `pauseSeen` or both pause); both pause freezes sim; unpause votes or `UNPAUSE_MS` (60s) countdown resumes. Bot/training-vs-bot: `settingsOpen` freezes while the settings menu is open. Mid-match disconnect: `DISCONNECT_GRACE_MS` (5s) then `RECONNECT_WAIT_MS` (60s) frozen wait (“Waiting for opponent to reconnect”); timeout auto-concedes the disconnected seat.
 - Pre-game lobby overlay (`#lobby`): logo; once an opponent is seated (waiting or countdown) show them and two-click Concede; alone waiting uses Leave (abandon). Leave/concede with both seats filled forfeits (tickets stay charged if already charged).
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`. Chat is not a sim command.
-- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `GET /api/v1/version`, `GET /api/v1/queues`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `GET /api/v1/community`, `GET /api/v1/community/history`, `POST /api/v1/community/select`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). `/api/v1` accepts Bearer token or cookie session. Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie; packaged clients also send `auth.protocol`. Deep-link returns allow `motl://auth`.
+- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `GET /api/v1/version`, `GET /api/v1/queues`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `GET /api/v1/community`, `GET /api/v1/community/history`, `POST /api/v1/community/select`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). Bot (Bearer `DISCORD_BOT_API_TOKEN`): `GET /api/v1/bot/status`, `GET /api/v1/bot/profile?discordId=&self=`. `/api/v1` accepts Bearer token or cookie session. Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie; packaged clients also send `auth.protocol`. Deep-link returns allow `motl://auth`.
 - PayPal (browser): `POST /api/paypal/orders` `{ packageId }`, `POST /api/paypal/orders/:orderId/capture`, webhook `POST /webhooks/paypal` (signature-verified).
 
 ### Shared code rule

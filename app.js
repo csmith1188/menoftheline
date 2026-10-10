@@ -192,6 +192,11 @@ import {
   parseProtocol,
 } from "./shared/protocol.js";
 import { resolveAssetVersion } from "./server/assetVersion.js";
+import {
+  buildProfilePayload,
+  buildStatusSnapshot,
+  discordBotApiToken,
+} from "./server/discordBotApi.js";
 
 const require = createRequire(import.meta.url);
 const connectSqlite3 = require("connect-sqlite3");
@@ -3041,6 +3046,41 @@ app.get("/api/v1/version", (req, res) => {
     clientVersion: CLIENT_VERSION,
     assetVersion: app.locals.assetVersion,
   });
+});
+
+app.get("/api/v1/bot/status", async (req, res) => {
+  const token = discordBotApiToken();
+  if (!token || !bearerMatches(req.headers.authorization, token)) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    res.json(await buildStatusSnapshot(matchmaker, io));
+  } catch (err) {
+    logger.error({ event: "bot_status_failed", err: asErr(err) }, "bot status failed");
+    res.status(500).json({ error: "status unavailable" });
+  }
+});
+
+app.get("/api/v1/bot/profile", async (req, res) => {
+  const token = discordBotApiToken();
+  if (!token || !bearerMatches(req.headers.authorization, token)) {
+    res.status(404).end();
+    return;
+  }
+  const discordId = String(req.query.discordId || "").trim();
+  if (!discordId) {
+    res.status(400).json({ error: "discordId required" });
+    return;
+  }
+  const selfRaw = String(req.query.self || "").trim().toLowerCase();
+  const self = selfRaw === "1" || selfRaw === "true";
+  try {
+    res.json(await buildProfilePayload(discordId, { self }));
+  } catch (err) {
+    logger.error({ event: "bot_profile_failed", err: asErr(err) }, "bot profile failed");
+    res.status(500).json({ error: "profile unavailable" });
+  }
 });
 
 app.post("/api/v1/session", async (req, res, next) => {

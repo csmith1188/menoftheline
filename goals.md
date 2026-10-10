@@ -9,36 +9,15 @@
 One Node process still owns each match. `METRICS=1` and `npm run load -- bot` measure it. Sim steps stay at 50 ms; snapshots go out about every 100 ms. A crowded 20-vs-20 bench is too heavy for 100 rooms on one core (see `npm run sim-bench`), so `WORKER_COUNT` can pin each match to one owner process. That does not copy GameSim through Redis. Leave PM2 at one instance until you set workers on purpose.
 
 # Ideas (May add to game)
+- Guerillas target most vulnerable units (msot likely to break soon)
 - Fog in lanes in 3d
 - Units also cost men from initial pool?
 - Game mode to play by programming each unit and keep's orders
 
-- Sort metrics by bot, casual, training, ranked
 - Earn ranks by MMR brankets
 - tip of the day
 
 - Towns produce food/men/horses/steel? strategic capturing of towns?
-
-- Teams battles
-    - Colonel brings two battalions to the battle
-    - Colonel only controls buttons, buys by battalion
-    - majors are spawned for free on cooldown?
-    - Majors control one battalion each
-    - Line bonus capped at (3) of the same major, but can chain with battalions
-    - Tax seperately and non-linearly to encourage balancing units
-    - OR limited number of units per battalion
-
-- War
-    - Purchase a commission?
-    - Buy a regiment. Get X battalions (number of games expected to play)
-    - Pick a Battalion to enter a match
-    - Battalions have limited number of specific units
-    - Casualties are counted and permanent across the war
-    - Events in the war can replenish them
-    - or they can be restructured at a cohesion penalty
-    - top players qualify for/must play higher ranked players
-
-- regimental colours (for tickets?)
 
 - officers make order sounds when near lines given orders
 - Reinforced Learning player
@@ -61,3 +40,32 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - redis + workers
 - spawn new servers?
 - reaudit security
+
+# Campaign / Ranked mode
+
+- Regiments
+    - Buy a regiment for X tickets
+    - Design regimental colors for them
+    - Comes with 10 battalions
+    - Battalions have a specific number of each unit, but can be editted before used in a game
+    - Select a Battalion when entering a ranked match
+    - Units that die are removed from battalion forever
+    - Units that live gain veterancy
+    - Can enter matches with under strengthed battalions
+    - This gives incentive to concede when sustained play will result in more casualties
+    - Also provides new ways to win (kill units to break opponent's will to fight)
+    - But may introduce pay-to-win (rich players will not care about casualties)
+    - Tickets, or war campaign goals, can replenish battalions
+    - or battalions can be combined
+
+- Teams battles
+    - Colonel brings two battalions to the battle
+    - Colonel only controls buttons, buys by battalion
+    - Lt Cnl are spawned for free on cooldown?
+    - Lt Cnl control one battalion each
+    - Line bonus capped at (3) of the same major, but can chain with battalions
+    - Tax seperately and non-linearly to encourage balancing units
+    - OR limited number of units per battalion
+
+- War
+    - Seasonal event

@@ -15,7 +15,7 @@
     <%- include("_nav") %>
     <section>
       <h2>Analytics</h2>
-      <form class="admin-filters" method="get">
+      <form class="admin-filters" method="get" action="/admin/analytics">
         <label>Range
           <select name="range" onchange="this.form.submit()">
             <% ["24h","7d","30d","90d","all"].forEach(function (r) { %>
@@ -23,6 +23,16 @@
             <% }) %>
           </select>
         </label>
+        <fieldset class="admin-category-set">
+          <legend>Games</legend>
+          <% analyticsCategories.forEach(function (c) { %>
+            <label class="admin-check">
+              <input type="checkbox" name="cat" value="<%= c.id %>" <%= categoryIds.has(c.id) ? "checked" : "" %>>
+              <%= c.label %>
+            </label>
+          <% }) %>
+        </fieldset>
+        <button type="submit">Apply</button>
       </form>
       <p class="admin-muted"><%= analytics.trackingNote %></p>
 

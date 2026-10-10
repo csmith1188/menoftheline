@@ -6176,11 +6176,27 @@ function rangeStartMs(range) {
   return null;
 }
 
-export async function analyticsSnapshot(range = "30d") {
+/**
+ * @param {string} range
+ * @param {{ modes?: string[] | null }} [opts] DB games.mode allowlist; null/empty = all modes.
+ */
+export async function analyticsSnapshot(range = "30d", opts = {}) {
   const since = rangeStartMs(range);
   const sinceClause = since != null ? "AND created_at >= ?" : "";
   const endedClause = since != null ? "AND ended_at >= ?" : "";
   const sinceParams = since != null ? [since] : [];
+  const modeList = Array.isArray(opts?.modes)
+    ? [...new Set(opts.modes.map((m) => String(m)).filter(Boolean))]
+    : [];
+  const modeClause = modeList.length
+    ? `AND mode IN (${modeList.map(() => "?").join(",")})`
+    : "";
+  const gModeClause = modeList.length
+    ? `AND g.mode IN (${modeList.map(() => "?").join(",")})`
+    : "";
+  const modeParams = modeList.length ? modeList : [];
+  const endedModeParams = [...sinceParams, ...modeParams];
+  const sinceModeParams = [...sinceParams, ...modeParams];
 
   const accountTotals = await get(
     `SELECT
@@ -6202,17 +6218,17 @@ export async function analyticsSnapshot(range = "30d") {
     `SELECT mode, COUNT(*) AS n,
             AVG(${GAME_DURATION_SQL}) AS avg_ms
      FROM games
-     WHERE 1=1 ${endedClause}
+     WHERE 1=1 ${endedClause} ${modeClause}
      GROUP BY mode
      ORDER BY n DESC`,
-    sinceParams,
+    endedModeParams,
   );
 
   const durations = await all(
     `SELECT ${GAME_DURATION_SQL} AS ms FROM games
-     WHERE ended_at > COALESCE(started_at, created_at) ${endedClause}
+     WHERE ended_at > COALESCE(started_at, created_at) ${endedClause} ${modeClause}
      ORDER BY ms`,
-    sinceParams,
+    endedModeParams,
   );
   const durationMs = durations.map((r) => Number(r.ms)).filter((n) => Number.isFinite(n) && n > 0);
   const medianMs = durationMs.length
@@ -6225,22 +6241,22 @@ export async function analyticsSnapshot(range = "30d") {
 
   const sideWins = await all(
     `SELECT winner_side AS side, COUNT(*) AS n FROM games
-     WHERE winner_side IS NOT NULL ${endedClause}
+     WHERE winner_side IS NOT NULL ${endedClause} ${modeClause}
      GROUP BY winner_side`,
-    sinceParams,
+    endedModeParams,
   );
 
   const outcomeRows = await all(
     `SELECT COALESCE(outcome, 'unknown') AS outcome, COUNT(*) AS n FROM games
-     WHERE 1=1 ${endedClause}
+     WHERE 1=1 ${endedClause} ${modeClause}
      GROUP BY outcome`,
-    sinceParams,
+    endedModeParams,
   );
   const winReasonRows = await all(
     `SELECT COALESCE(win_reason, 'unknown') AS win_reason, COUNT(*) AS n FROM games
-     WHERE 1=1 ${endedClause}
+     WHERE 1=1 ${endedClause} ${modeClause}
      GROUP BY win_reason`,
-    sinceParams,
+    endedModeParams,
   );
   const outcomes = {
     completed: 0,
@@ -6267,25 +6283,25 @@ export async function analyticsSnapshot(range = "30d") {
 
   const winByMode = await all(
     `SELECT mode, winner_side AS side, COUNT(*) AS n FROM games
-     WHERE winner_side IS NOT NULL ${endedClause}
+     WHERE winner_side IS NOT NULL ${endedClause} ${modeClause}
      GROUP BY mode, winner_side
      ORDER BY mode, side`,
-    sinceParams,
+    endedModeParams,
   );
 
   const winByMap = await all(
     `SELECT COALESCE(map_id, 'unknown') AS map_id, winner_side AS side, COUNT(*) AS n
      FROM games
-     WHERE winner_side IS NOT NULL ${endedClause}
+     WHERE winner_side IS NOT NULL ${endedClause} ${modeClause}
      GROUP BY COALESCE(map_id, 'unknown'), winner_side
      ORDER BY n DESC`,
-    sinceParams,
+    endedModeParams,
   );
 
   const summaryRows = await all(
     `SELECT winner_side, summary_json FROM games
-     WHERE summary_json IS NOT NULL ${endedClause}`,
-    sinceParams,
+     WHERE summary_json IS NOT NULL ${endedClause} ${modeClause}`,
+    endedModeParams,
   );
   const balanceAgg = aggregateBalanceFromSummaries(summaryRows);
 
@@ -6404,14 +6420,14 @@ export async function analyticsSnapshot(range = "30d") {
        COALESCE(SUM(CASE WHEN event = 'expired' THEN 1 ELSE 0 END), 0) AS expired,
        COALESCE(SUM(CASE WHEN event = 'abandoned' THEN 1 ELSE 0 END), 0) AS abandoned,
        AVG(CASE WHEN event = 'paired' AND wait_ms IS NOT NULL THEN wait_ms END) AS avg_wait_ms
-     FROM mm_events WHERE 1=1 ${sinceClause}`,
-    sinceParams,
+     FROM mm_events WHERE 1=1 ${sinceClause} ${modeClause}`,
+    sinceModeParams,
   );
   const waitRows = await all(
     `SELECT wait_ms AS ms FROM mm_events
-     WHERE event = 'paired' AND wait_ms IS NOT NULL AND wait_ms > 0 ${sinceClause}
+     WHERE event = 'paired' AND wait_ms IS NOT NULL AND wait_ms > 0 ${sinceClause} ${modeClause}
      ORDER BY wait_ms`,
-    sinceParams,
+    sinceModeParams,
   );
   const waitMs = waitRows.map((r) => Number(r.ms)).filter((n) => Number.isFinite(n) && n > 0);
   const waitPct = durationPercentiles(waitMs);
@@ -6427,20 +6443,20 @@ export async function analyticsSnapshot(range = "30d") {
   const gamesPerDay = await all(
     `SELECT date(ended_at / 1000, 'unixepoch') AS day, COUNT(*) AS n
      FROM games
-     WHERE 1=1 ${endedClause}
+     WHERE 1=1 ${endedClause} ${modeClause}
      GROUP BY day ORDER BY day`,
-    sinceParams,
+    endedModeParams,
   );
 
   const uniquePlayersPerDay = await all(
     `SELECT day, COUNT(DISTINCT account_id) AS unique_players FROM (
        SELECT date(ended_at / 1000, 'unixepoch') AS day, account_a AS account_id
-       FROM games WHERE account_a IS NOT NULL ${endedClause}
+       FROM games WHERE account_a IS NOT NULL ${endedClause} ${modeClause}
        UNION
        SELECT date(ended_at / 1000, 'unixepoch') AS day, account_b AS account_id
-       FROM games WHERE account_b IS NOT NULL ${endedClause}
+       FROM games WHERE account_b IS NOT NULL ${endedClause} ${modeClause}
      ) GROUP BY day ORDER BY day`,
-    [...sinceParams, ...sinceParams],
+    [...endedModeParams, ...endedModeParams],
   );
   const uniqueByDay = new Map(
     uniquePlayersPerDay.map((r) => [r.day, Number(r.unique_players) || 0]),
@@ -6454,38 +6470,41 @@ export async function analyticsSnapshot(range = "30d") {
   const playsInRange = await all(
     `SELECT account_id, COUNT(*) AS n FROM (
        SELECT account_a AS account_id FROM games
-       WHERE account_a IS NOT NULL ${endedClause}
+       WHERE account_a IS NOT NULL ${endedClause} ${modeClause}
        UNION ALL
        SELECT account_b AS account_id FROM games
-       WHERE account_b IS NOT NULL ${endedClause}
+       WHERE account_b IS NOT NULL ${endedClause} ${modeClause}
      ) GROUP BY account_id`,
-    [...sinceParams, ...sinceParams],
+    [...endedModeParams, ...endedModeParams],
   );
   const matchesPerActive = matchesPerPlayerStats(playsInRange.map((r) => Number(r.n) || 0));
 
+  const lifetimeModeSql = modeClause;
+  const lifetimeModeParams = modeParams;
   const lifetimeRows = dayStart
     ? await all(
       `SELECT a.account_id AS id, COALESCE(g.n, 0) AS n
        FROM (SELECT DISTINCT account_id FROM activity_day WHERE day >= ?) a
        LEFT JOIN (
          SELECT account_id, COUNT(*) AS n FROM (
-           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL
+           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL ${lifetimeModeSql}
            UNION ALL
-           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL
+           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL ${lifetimeModeSql}
          ) GROUP BY account_id
        ) g ON g.account_id = a.account_id`,
-      [dayStart],
+      [dayStart, ...lifetimeModeParams, ...lifetimeModeParams],
     )
     : await all(
       `SELECT a.account_id AS id, COALESCE(g.n, 0) AS n
        FROM (SELECT DISTINCT account_id FROM activity_day) a
        LEFT JOIN (
          SELECT account_id, COUNT(*) AS n FROM (
-           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL
+           SELECT account_a AS account_id FROM games WHERE account_a IS NOT NULL ${lifetimeModeSql}
            UNION ALL
-           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL
+           SELECT account_b AS account_id FROM games WHERE account_b IS NOT NULL ${lifetimeModeSql}
          ) GROUP BY account_id
        ) g ON g.account_id = a.account_id`,
+      [...lifetimeModeParams, ...lifetimeModeParams],
     );
   const lifetimeCounts = lifetimeRows.map((r) => Number(r.n) || 0);
   const { funnel, segments } = funnelAndSegments(lifetimeCounts);
@@ -6532,9 +6551,9 @@ export async function analyticsSnapshot(range = "30d") {
      WHERE a.created_at >= COALESCE(?, 0)
        AND EXISTS (
          SELECT 1 FROM games g
-         WHERE g.account_a = a.id OR g.account_b = a.id
+         WHERE (g.account_a = a.id OR g.account_b = a.id) ${gModeClause}
        )`,
-    [since || 0],
+    [since || 0, ...modeParams],
   );
   const newAccounts = Number(accountTotals.new_in_range) || 0;
 
@@ -6543,7 +6562,8 @@ export async function analyticsSnapshot(range = "30d") {
   return {
     range,
     since,
-    trackingNote: "DAU/WAU/MAU are calendar windows (not the range filter). Retention excludes cohorts younger than 30 days. Balance tables need summary_json (new matches only). Platform is unknown until clients send auth.platform. Associations are not causation.",
+    modes: modeList.length ? modeList : null,
+    trackingNote: "Game category filter applies to match, engagement, balance, and matchmaking stats. DAU/WAU/MAU are calendar windows (not the range filter). Retention excludes cohorts younger than 30 days. Balance tables need summary_json (new matches only). Platform is unknown until clients send auth.platform. Associations are not causation.",
     accounts: accountTotals,
     activity: {
       activeInRange,

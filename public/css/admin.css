@@ -85,6 +85,38 @@
   align-self: end;
 }
 
+.admin-category-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.85rem;
+  flex: 1 1 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+
+.admin-category-set legend {
+  font-size: 0.85rem;
+  padding: 0 0.3rem;
+}
+
+.admin-filters .admin-category-set label.admin-check {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  max-width: none;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.admin-filters .admin-category-set input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
 .admin-filter-form {
   display: block;
   margin-bottom: 1rem;

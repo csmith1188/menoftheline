@@ -246,6 +246,67 @@ test("analyticsSnapshot paypal gross net and package breakdown", async () => {
   assert.ok(Number.isFinite(snap.economy.paypal.net));
 });
 
+test("analyticsSnapshot modes filter limits game aggregates", async () => {
+  const a = await makeAccount("ModeA");
+  const b = await makeAccount("ModeB");
+  const t0 = Date.now();
+  await recordGame({
+    id: `mode-ranked-${a.id}`,
+    a,
+    b,
+    mode: "ranked",
+    createdAt: t0 - 90_000,
+    endedAt: t0 - 50_000,
+  });
+  await recordGame({
+    id: `mode-bot-${a.id}`,
+    a,
+    mode: "bot",
+    createdAt: t0 - 80_000,
+    endedAt: t0 - 40_000,
+  });
+  await recordGame({
+    id: `mode-listed-${a.id}`,
+    a,
+    b,
+    mode: "listed",
+    createdAt: t0 - 70_000,
+    endedAt: t0 - 30_000,
+  });
+
+  const all = await analyticsSnapshot("all");
+  const allN = (all.games.byMode || []).reduce((s, r) => s + (Number(r.n) || 0), 0);
+
+  const rankedOnly = await analyticsSnapshot("all", { modes: ["ranked"] });
+  assert.ok(rankedOnly.games.byMode.every((r) => r.mode === "ranked"));
+  assert.ok((Number(rankedOnly.games.byMode[0]?.n) || 0) >= 1);
+  assert.ok(rankedOnly.engagement.outcomes.n < all.engagement.outcomes.n);
+
+  const botCustom = await analyticsSnapshot("all", { modes: ["bot", "listed"] });
+  const modes = new Set(botCustom.games.byMode.map((r) => r.mode));
+  assert.ok(modes.has("bot"));
+  assert.ok(modes.has("listed"));
+  assert.ok(!modes.has("ranked"));
+  const filteredN = (botCustom.games.byMode || []).reduce((s, r) => s + (Number(r.n) || 0), 0);
+  assert.ok(filteredN < allN);
+  assert.ok(filteredN >= 2);
+});
+
+test("parseAnalyticsCategories maps UI ids to DB modes", async () => {
+  const {
+    parseAnalyticsCategories,
+    analyticsModeLabel,
+  } = await import("../server/admin/analytics.js");
+  const all = parseAnalyticsCategories(undefined);
+  assert.equal(all.all, true);
+  assert.equal(all.modes, null);
+  const some = parseAnalyticsCategories(["tutorials", "custom", "ranked"]);
+  assert.equal(some.all, false);
+  assert.deepEqual(some.modes, ["training", "listed", "ranked"]);
+  assert.equal(analyticsModeLabel("training"), "Tutorials");
+  assert.equal(analyticsModeLabel("listed"), "Custom");
+});
+
 test("durationPercentiles empty is nulls not zeros", () => {
   const empty = durationPercentiles([]);
   assert.equal(empty.p50, null);

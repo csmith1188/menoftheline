@@ -33,7 +33,14 @@ import { wikiLineDiff } from "../wiki-diff.js";
 import { requireAdmin, requireStaff } from "./auth.js";
 import { auditAdmin } from "./audit.js";
 import { communityFundingEnabled } from "../auth.js";
-import { buildAnalytics, barRows, formatRate, formatUsd } from "./analytics.js";
+import {
+  ANALYTICS_CATEGORIES,
+  buildAnalytics,
+  barRows,
+  formatRate,
+  formatUsd,
+  parseAnalyticsCategories,
+} from "./analytics.js";
 import { eventsToCsv, listAdminEvents, retainAdminEvents } from "./events.js";
 import {
   enrichActiveList,
@@ -514,7 +521,8 @@ export function createAdminRouter(deps) {
     try {
       if (!(await requireAdmin(req, res))) return;
       const range = String(req.query.range || "30d");
-      const analytics = await buildAnalytics(range);
+      const categoryFilter = parseAnalyticsCategories(req.query.cat);
+      const analytics = await buildAnalytics(range, req.query.cat);
       const dailyGames = (analytics.engagement?.daily || analytics.games.daily || []).map((d) => ({
         day: d.day,
         n: d.games,
@@ -526,6 +534,8 @@ export function createAdminRouter(deps) {
       const data = await baseLocals(req, {
         analytics,
         range,
+        categoryIds: new Set(categoryFilter.ids),
+        analyticsCategories: ANALYTICS_CATEGORIES,
         formatRate,
         formatUsd,
         charts: {

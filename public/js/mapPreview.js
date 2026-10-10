@@ -30,22 +30,22 @@ function strokeLaneInterval(ctx, lane, sublane, minPaces, maxPaces) {
 function drawKeeps(ctx) {
   const board = Path.activeBoard();
   const keeps = [
-    { c: board.playerCapital, color: CONFIG.colors.player },
-    { c: board.enemyCapital, color: CONFIG.colors.enemy },
+    { c: board.playerKeep, color: CONFIG.colors.player },
+    { c: board.enemyKeep, color: CONFIG.colors.enemy },
   ];
   for (let i = 0; i < keeps.length; i += 1) {
     const { c, color } = keeps[i];
     ctx.beginPath();
     ctx.fillStyle = color;
-    ctx.arc(c.x, c.y, board.capitalRadius * 0.7, 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, board.keepRadius * 0.7, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawLanes(ctx) {
   const board = Path.activeBoard();
-  const left = board.playerCapital;
-  const right = board.enemyCapital;
+  const left = board.playerKeep;
+  const right = board.enemyKeep;
   const ids = Path.laneIds();
   for (let i = 0; i < ids.length; i += 1) {
     const def = Path.laneDef(ids[i]);

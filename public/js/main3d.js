@@ -364,8 +364,8 @@ function sideLine(side) {
 
 function syncScore() {
   if (!board.player) return;
-  const pHp = Math.round(Math.max(0, board.player.capitalHP));
-  const eHp = Math.round(Math.max(0, board.enemy.capitalHP));
+  const pHp = Math.round(Math.max(0, board.player.keepHP));
+  const eHp = Math.round(Math.max(0, board.enemy.keepHP));
   scoreEl.innerHTML = [
     `<div class="side">${sideLine(board.player)}</div>`,
     `<div class="keeps"><span class="you">${pHp}</span> — <span class="them">${eHp}</span></div>`,

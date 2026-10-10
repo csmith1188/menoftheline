@@ -14,9 +14,9 @@ export function applyTrainingRules(room) {
   room.speedScale = TRAINING_SPEED;
   room.speedAccum = 0;
   if (room.sim && room.sim.player) {
-    room.sim.player.capitalHP = TRAINING_KEEP_HP;
+    room.sim.player.keepHP = TRAINING_KEEP_HP;
   }
   if (room.sim && room.sim.enemy) {
-    room.sim.enemy.capitalHP = TRAINING_KEEP_HP;
+    room.sim.enemy.keepHP = TRAINING_KEEP_HP;
   }
 }

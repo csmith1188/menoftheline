@@ -1,5 +1,15 @@
 import { CONFIG, pointerHitReach } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, cycleVariantPick, massTaxOf, unitStats, variantOptions } from "../shared/units.js";
+import {
+  BUY_UNITS,
+  UNIT_LABELS,
+  UNIT_STATS,
+  categoryOf,
+  cycleVariantPick,
+  massTaxOf,
+  unitIdOf,
+  unitStats,
+  variantOptions,
+} from "../shared/units.js";
 import {
   Path,
   distance,
@@ -227,17 +237,17 @@ export const sideStateMethods = {
     const gap = ui.bankGap * scale;
     const count = CONFIG.bankCount;
     const total = count * size + (count - 1) * gap;
-    const edge = CONFIG.capitalRadius;
+    const edge = CONFIG.keepRadius;
     let x;
     if (this.id === "player") {
-      x = this.capital.x - edge + index * (size + gap);
+      x = this.keep.x - edge + index * (size + gap);
     } else {
       const gearCss = 48;
       const reserve = Math.max(
         CONFIG.gearReserve,
         gearCss / (this.board.cssScale || 1),
       );
-      const right = Math.min(this.capital.x + edge, CONFIG.canvasWidth - reserve);
+      const right = Math.min(this.keep.x + edge, CONFIG.canvasWidth - reserve);
       x = right - total + index * (size + gap);
     }
     const y = 8;
@@ -526,7 +536,7 @@ export const boardStateMethods = {
     const row = BUY_UNITS.length * ui.buyW + (BUY_UNITS.length - 1) * ui.buyGap;
     const x = CONFIG.canvasWidth / 2 - row / 2;
     const pad = 0;
-    const minY = CONFIG.playerCapital.y + CONFIG.topLaneHeight / 2 + pad;
+    const minY = CONFIG.playerKeep.y + CONFIG.topLaneHeight / 2 + pad;
     const c = Path.bottomCenter();
     const rIn = Path.bottomRadius(CONFIG.bottomSublaneCount - 1);
     const dx = Math.min(row / 2, rIn - 8);
@@ -668,8 +678,8 @@ export const boardStateMethods = {
    */
   laneAt(point) {
     const board = Path.activeBoard();
-    const left = board.playerCapital;
-    const right = board.enemyCapital;
+    const left = board.playerKeep;
+    const right = board.enemyKeep;
     const ids = Path.laneIds();
     for (let i = 0; i < ids.length; i += 1) {
       const lane = ids[i];
@@ -1171,7 +1181,7 @@ function lineIsPerfect(group) {
 }
 
 function inLineWith(member, ally) {
-  if (ally.hp <= 0 || ally.lane !== member.lane || ally.type !== member.type) return false;
+  if (ally.hp <= 0 || ally.lane !== member.lane || categoryOf(ally) !== categoryOf(member)) return false;
   if (Math.abs(member.sublane - ally.sublane) !== 1) return false;
   return Math.abs(troopStation(member) - troopStation(ally)) <= lineSlack(member);
 }
@@ -1182,7 +1192,7 @@ function lineMateOnRow(troop, sublane, allies) {
     const ally = allies[i];
     if (ally === troop || ally.hp <= 0 || ally.broken) continue;
     if (ally.lane !== troop.lane || ally.sublane !== sublane) continue;
-    if (ally.type !== troop.type) continue;
+    if (categoryOf(ally) !== categoryOf(troop)) continue;
     if (Math.abs(troopStation(troop) - troopStation(ally)) > lineSlack(troop)) continue;
     return ally;
   }
@@ -1261,7 +1271,7 @@ function lineSize(troop, allies) {
 }
 
 function troopKindStats(troop) {
-  return unitStats(troop.variant || troop.type);
+  return unitStats(unitIdOf(troop));
 }
 
 function flankSlack(troop) {
@@ -1335,10 +1345,10 @@ function inMeleeContact(troop, enemies) {
   return false;
 }
 
-function inCapitalRange(troop) {
-  const capital = troop.side && troop.side.capital;
-  if (!capital) return false;
-  return distance(troop, capital) <= CONFIG.capitalCannonRange;
+function inKeepRange(troop) {
+  const keepPos = troop.side && troop.side.keep;
+  if (!keepPos) return false;
+  return distance(troop, keepPos) <= CONFIG.keepCannonRange;
 }
 
 /**
@@ -1374,7 +1384,7 @@ function activeBonuses(board, troop, allies) {
 
   const line = lineGroup(troop, allies);
   const mates = line.length - 1;
-  if (troop.type === "troop" && CONFIG.troopLineBonus > 0 && mates > 0) {
+  if (troop.category === "infantry" && CONFIG.troopLineBonus > 0 && mates > 0) {
     const pct = mates * CONFIG.troopLineBonus * lineNeighborQuality(troop, line);
     labels.push(`Line +${Math.round(pct * 100)}%`);
   }
@@ -1455,7 +1465,7 @@ function activeBonuses(board, troop, allies) {
   if (restore === "officer") {
     labels.push("Officer restore");
   }
-  if (restore !== "color" && restore !== "officer" && inCapitalRange(troop)) {
+  if (restore !== "color" && restore !== "officer" && inKeepRange(troop)) {
     labels.push("Recovering");
   } else if (restore !== "color" && restore !== "officer" && troop.order === "halt") {
     labels.push("Recovering");
@@ -1582,6 +1592,9 @@ function writeTroop(troop, data, side, mx) {
   troop.id = data.id;
   troop.lane = data.lane;
   troop.sublane = data.sublane;
+  troop.category = data.category || categoryOf(data);
+  troop.unit = data.unit || unitIdOf(data);
+  troop.variety = data.variety || null;
   troop.type = data.type;
   troop.variant = data.variant || null;
   troop.alternate = Boolean(data.alternate);
@@ -1762,7 +1775,7 @@ const KEEP_HIT_PUFF_RGB = [
 function spawnKeepHitSmoke(board, x, y) {
   if (!board.smokePuffs) board.smokePuffs = [];
   const count = 7;
-  const keepR = CONFIG.capitalRadius || 18;
+  const keepR = CONFIG.keepRadius || 18;
   const base = Math.max(6, keepR * 0.42);
   // Random impact point inside the keep disc (uniform by area).
   const hitAng = Math.random() * Math.PI * 2;
@@ -1877,13 +1890,13 @@ function syncTroops(side, dataTroops, mx) {
 function writeSideFields(side, data, viewId, board) {
   side.board = board;
   side.id = viewId;
-  side.capital = viewId === "player" ? CONFIG.playerCapital : CONFIG.enemyCapital;
+  side.keep = viewId === "player" ? CONFIG.playerKeep : CONFIG.enemyKeep;
   side.gold = data.gold;
   side.income = data.income;
   side.land = data.land;
   side.landIncome = data.landIncome;
   side.landInvestRate = data.landInvestRate || 0;
-  side.capitalHP = data.capitalHP;
+  side.keepHP = data.keepHP;
   side.banks = data.banks;
   side.speedMultiplier = data.speedMultiplier;
   side.upgrades = { ...data.upgrades };
@@ -2104,8 +2117,8 @@ export function applySnapshot(board, snap, seat, controlSide) {
       if (!sound || sound.type !== "keep" || !sound.sideId) continue;
       const attackerView = viewOwner(sound.sideId);
       const target = attackerView === "player" ? board.enemy : board.player;
-      if (!target || !target.capital) continue;
-      spawnKeepHitSmoke(board, target.capital.x, target.capital.y);
+      if (!target || !target.keep) continue;
+      spawnKeepHitSmoke(board, target.keep.x, target.keep.y);
     }
   }
   board._keepFxReady = true;
@@ -2168,9 +2181,9 @@ export function inspectReadout(board) {
   const line = lineSize(troop, allies);
   const hp = Math.max(0, Math.round(troop.hp));
   const fatigue = Math.max(0, Math.round(troop.fatigue || 0));
-  const maxFatigue = troop.maxFatigue || unitStats(troop.variant || troop.type).fatigue;
+  const maxFatigue = troop.maxFatigue || unitStats(unitIdOf(troop)).fatigue;
   const status = troop.broken ? "   Broken" : "";
-  const main = `${unitTypeLabel(troop.variant || troop.type)}   Line x ${line}   ${hp}/${troop.maxHP()}   ${fatigue}/${maxFatigue}${status}`;
+  const main = `${unitTypeLabel(unitIdOf(troop))}   Line x ${line}   ${hp}/${troop.maxHP()}   ${fatigue}/${maxFatigue}${status}`;
   const bonuses = activeBonuses(board, troop, allies);
   return { main, bonuses, order: orderStatus(troop.order, troop.broken) };
 }

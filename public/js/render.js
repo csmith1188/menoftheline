@@ -1,5 +1,15 @@
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_STATS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
+import {
+  BUY_UNITS,
+  UNIT_LABELS,
+  UNIT_STATS,
+  UNIT_VARIANTS,
+  categoryOf,
+  unitIdOf,
+  unitStats,
+  unitLandCost,
+  variantBadgeFill,
+} from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_TINT } from "../shared/terrain.js";
 import { drawDebugRanges } from "./debugRanges.js";
@@ -137,7 +147,7 @@ const viewTroopMethods = {
     ctx.lineWidth = ordered ? 3 : 2;
 
     const r = this.bodyRadius();
-    const badge = variantBadgeFill(this.variant || this.type);
+    const badge = variantBadgeFill(unitIdOf(this));
     if (badge) {
       const pad = r - 1;
       ctx.fillStyle = badge;
@@ -159,18 +169,19 @@ const viewTroopMethods = {
       ctx.stroke();
       ctx.restore();
     };
-    if (this.type === "cannon") {
+    const cat = this.category || categoryOf(this);
+    if (cat === "artillery") {
       ctx.beginPath();
       ctx.arc(this.x, this.y, r * 0.8, 0, Math.PI * 2);
       paintClosed();
-    } else if (this.type === "skirmisher") {
+    } else if (cat === "skirmishers") {
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
       ctx.lineTo(this.x + r, this.y + r);
       ctx.lineTo(this.x - r, this.y + r);
       ctx.closePath();
       paintClosed();
-    } else if (this.type === "dragoon") {
+    } else if (cat === "cavalry") {
       ctx.beginPath();
       ctx.moveTo(this.x, this.y - r);
       ctx.lineTo(this.x + r, this.y);
@@ -178,7 +189,7 @@ const viewTroopMethods = {
       ctx.lineTo(this.x - r, this.y);
       ctx.closePath();
       paintClosed();
-    } else if (this.type === "officer") {
+    } else if (cat === "officer") {
       const s = r * 0.75;
       const outer = ordered ? 5 : 4;
       // Broken: keep outer size, shrink the fill so the black rim grows inward.
@@ -256,7 +267,7 @@ const viewTroopMethods = {
     ctx.fillStyle = CONFIG.colors.gold;
     ctx.fillRect(fillX, barY, fillW, barH);
 
-    const maxFatigue = this.maxFatigue || unitStats(this.variant || this.type).fatigue || 100;
+    const maxFatigue = this.maxFatigue || unitStats(unitIdOf(this)).fatigue || 100;
     const fatigueRatio = Math.max(0, Math.min(1, (this.fatigue || 0) / maxFatigue));
     const fatY = barY + barH + barGap;
     const fatW = barW * fatigueRatio;
@@ -347,13 +358,13 @@ const viewSideMethods = {
   ...sideStateMethods,
 
   /** Draw the capital city and the remaining keep HP beneath it. */
-  drawCapital(ctx) {
+  drawKeep(ctx) {
     const color = this.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
     const dark = this.id === "player" ? CONFIG.colors.playerDark : CONFIG.colors.enemyDark;
-    const { x, y } = this.capital;
+    const { x, y } = this.keep;
 
     ctx.beginPath();
-    ctx.arc(x, y, CONFIG.capitalRadius, 0, Math.PI * 2);
+    ctx.arc(x, y, CONFIG.keepRadius, 0, Math.PI * 2);
     ctx.fillStyle = dark;
     ctx.fill();
     ctx.lineWidth = 4;
@@ -455,11 +466,11 @@ const boardMethods = {
     this.cssScale = cssW / CONFIG.canvasWidth;
     const left = (availW - cssW) / 2;
     const top = (availH - cssH) / 2;
-    const laneTop = CONFIG.playerCapital.y - CONFIG.topLaneHeight / 2;
+    const laneTop = CONFIG.playerKeep.y - CONFIG.topLaneHeight / 2;
     // Inset past each keep so the tutorial sits in the gap between capitals.
-    const keepClear = CONFIG.capitalRadius + 8;
-    const laneLeft = CONFIG.playerCapital.x + keepClear;
-    const laneRight = CONFIG.enemyCapital.x - keepClear;
+    const keepClear = CONFIG.keepRadius + 8;
+    const laneLeft = CONFIG.playerKeep.x + keepClear;
+    const laneRight = CONFIG.enemyKeep.x - keepClear;
     const laneWidth = Math.max(0, laneRight - laneLeft);
     stage.style.setProperty("--board-left", `${left}px`);
     stage.style.setProperty("--board-top", `${top}px`);
@@ -545,8 +556,8 @@ const boardMethods = {
    */
   paintMapUnderlay(ctx) {
     const boardGeo = Path.activeBoard();
-    const left = boardGeo.playerCapital;
-    const right = boardGeo.enemyCapital;
+    const left = boardGeo.playerKeep;
+    const right = boardGeo.enemyKeep;
     const lineIds = Path.laneIds().filter((id) => !isArcLane(id));
     for (let i = 0; i < lineIds.length; i += 1) {
       const def = Path.laneDef(lineIds[i]);
@@ -727,8 +738,8 @@ const boardMethods = {
 
   drawLineLaneCenter(ctx, laneId, def, t, res) {
     const board = Path.activeBoard();
-    const left = board.playerCapital;
-    const right = board.enemyCapital;
+    const left = board.playerKeep;
+    const right = board.enemyKeep;
     const x = left.x + (right.x - left.x) * t;
     const height = def.geometry.height || CONFIG.topLaneHeight;
     const top = left.y - height / 2;
@@ -850,8 +861,8 @@ const boardMethods = {
     for (let i = 0; i < this.checkpoints.length; i += 1) {
       this.checkpoints[i].draw(ctx);
     }
-    this.player.drawCapital(ctx);
-    this.enemy.drawCapital(ctx);
+    this.player.drawKeep(ctx);
+    this.enemy.drawKeep(ctx);
     const everyone = this.everyoneTroops();
     for (let i = 0; i < everyone.length; i += 1) {
       everyone[i].draw(ctx);
@@ -1100,13 +1111,13 @@ const boardMethods = {
     ctx.textBaseline = "middle";
     ctx.font = this.uiFont(18);
     ctx.fillStyle = CONFIG.colors.player;
-    ctx.fillText(String(Math.round(Math.max(0, this.player.capitalHP))), mid - 28 * CONFIG.uiScale, midY);
+    ctx.fillText(String(Math.round(Math.max(0, this.player.keepHP))), mid - 28 * CONFIG.uiScale, midY);
     ctx.fillStyle = CONFIG.colors.text;
     ctx.font = this.uiFont(14);
     ctx.fillText("—", mid, midY);
     ctx.fillStyle = CONFIG.colors.enemy;
     ctx.font = this.uiFont(18);
-    ctx.fillText(String(Math.round(Math.max(0, this.enemy.capitalHP))), mid + 28 * CONFIG.uiScale, midY);
+    ctx.fillText(String(Math.round(Math.max(0, this.enemy.keepHP))), mid + 28 * CONFIG.uiScale, midY);
     ctx.restore();
   },
 

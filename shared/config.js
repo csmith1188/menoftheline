@@ -7,11 +7,11 @@ export const CONFIG = {
   /** Match canvas height, in pixels. */
   canvasHeight: 620,
   /** Player keep, left side of the top band. */
-  playerCapital: { x: 72, y: 150 },
+  playerKeep: { x: 72, y: 150 },
   /** Enemy keep, right side of the top band. */
-  enemyCapital: { x: 888, y: 150 },
+  enemyKeep: { x: 888, y: 150 },
   /** Keep circle radius, in pixels. */
-  capitalRadius: 34,
+  keepRadius: 34,
 
   // Top lane
 
@@ -52,7 +52,7 @@ export const CONFIG = {
    * also glides the drawn line between snapshots using this pace.
    */
   laneCenterEase: 1.0,
-  /** How many banks sit above each capital. */
+  /** How many banks sit above each keep. */
   bankCount: 3,
   /** Gold to unlock the first bank. */
   bankBaseCost: 240,
@@ -81,9 +81,11 @@ export const CONFIG = {
   armorPerUpgrade: 0.05,
   /** Armor cannot reduce incoming damage below this remainder. */
   armorCap: 0.7,
-  /** Elite (yellow) alternate land price as a fraction of its gold cost. */
+  /** Elite (yellow) variety land price as a fraction of its gold cost. */
   unitLandCostRatio: 0.2,
-  /** Light (white) alternate land price as a fraction of its gold cost. */
+  /** Specialist (white) variety land price as a fraction of its gold cost. */
+  specialistUnitLandCostRatio: 0.1,
+  /** @deprecated Use specialistUnitLandCostRatio */
   lightUnitLandCostRatio: 0.1,
   /** Hussar melee pack bonus per other Hussar in melee reach. */
   cavalryPackBonus: 0.25,
@@ -120,13 +122,13 @@ export const CONFIG = {
   // Keeps
 
   /** Hit points of a keep. */
-  capitalHP: 500,
+  keepHP: 500,
   /** Farthest the keep gun can shoot, in pixels. */
-  capitalCannonRange: 200,
+  keepCannonRange: 200,
   /** Shell damage of the keep gun before falloff. */
-  capitalCannonDamage: 30,
+  keepCannonDamage: 30,
   /** Seconds between keep-gun shots. */
-  capitalCannonAttackCooldown: 1,
+  keepCannonAttackCooldown: 1,
   /** Paces subtracted from Keep distance when ranking ranged targets only. */
   keepTargetDistanceOffsetPaces: 50,
   /**
@@ -235,12 +237,12 @@ export const CONFIG = {
   fortColorSlow: 0.5,
   /** Move speed multiplier while on woods. */
   woodsSlow: 0.5,
-  /** Move speed multiplier for infantry on peaks (cavalry/artillery blocked). */
+  /** Move speed multiplier for foot units on peaks (mounted/limbered blocked). */
   peakSlow: 0.5,
-  /** Move speed multiplier for infantry crossing a river. */
-  riverInfantrySlow: 0.5,
-  /** Move speed multiplier for cavalry crossing a river (artillery blocked). */
-  riverCavalrySlow: 0.25,
+  /** Move speed multiplier for foot units crossing a river. */
+  riverFootSlow: 0.5,
+  /** Move speed multiplier for mounted units crossing a river (limbered blocked). */
+  riverMountedSlow: 0.25,
   /** Seconds a damage number stays on screen. */
   splatLife: 0.7,
   /** Pixels per second the splat rises. */
@@ -338,15 +340,15 @@ export const CONFIG = {
   botSurvivalClear: 0.4,
   /** Hard contact-band weights. Support range uses 1 for every role. */
   botRoleContact: {
-    troop: 1,
+    regulars: 1,
     grenadier: 1.1,
-    skirmisher: 0.6,
+    light: 0.6,
     rifle: 0.55,
     dragoon: 1.25,
     lancer: 1.35,
-    cannon: 0.4,
+    fieldGun: 0.4,
     howitzer: 0.45,
-    officer: 0.25,
+    major: 0.25,
     colorGuard: 0.25,
     militia: 0.9,
     guerrilla: 0.5,
@@ -357,20 +359,20 @@ export const CONFIG = {
 
   // Bot — composition
 
-  /** Desired share of army gold by base type. Must sum to 1. */
+  /** Desired share of army gold by category. Must sum to 1. */
   botComposition: {
-    troop: 0.42,
-    skirmisher: 0.18,
-    dragoon: 0.18,
-    cannon: 0.12,
+    infantry: 0.42,
+    skirmishers: 0.18,
+    cavalry: 0.18,
+    artillery: 0.12,
     officer: 0.10,
   },
   /**
-   * Until the army is worth this much gold, cannon demand is zero and that
-   * share goes to skirmishers and dragoons. Field guns wait for a formed army.
+   * Until the army is worth this much gold, artillery demand is zero and that
+   * share goes to skirmishers and cavalry. Field guns wait for a formed army.
    */
   botCannonArmyValue: 900,
-  /** Fraction of the early cannon share that becomes skirmishers; the rest is dragoons. */
+  /** Fraction of the early artillery share that becomes skirmishers; the rest is cavalry. */
   botEarlyCannonToSkirmisher: 0.55,
   /** Largest add to one desired fraction before renormalizing. */
   botCounterCap: 0.12,

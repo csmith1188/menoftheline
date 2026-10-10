@@ -1,4 +1,4 @@
-import { isAlternateUnit } from "../shared/units.js";
+import { isAlternateUnit, resolveUnitId } from "../shared/units.js";
 
 /**
  * Guided overlay for training matches. Mounted over the top-lane region.
@@ -263,7 +263,7 @@ export function createTutorial(root) {
     if (!active || !cmd || typeof cmd !== "object") return;
 
     if (cmd.type === "buy") {
-      if (cmd.unit === "troop") {
+      if (resolveUnitId(cmd.unit) === "regulars") {
         troopBuys += 1;
         if (troopBuys >= 2) mark("buyTroops");
       }
@@ -335,7 +335,7 @@ export function createTutorial(root) {
     if (producing) mark("research");
 
     if (board.winner === "player") mark("keep");
-    if (board.enemy && board.enemy.capitalHP <= 0) mark("keep");
+    if (board.enemy && board.enemy.keepHP <= 0) mark("keep");
 
     const mine = seatKey === "a" ? "player" : "enemy";
     const sounds = snap && snap.sounds;
@@ -374,7 +374,7 @@ export function createTutorial(root) {
 
     if (snap && snap.sides) {
       const foe = seatFoeSide(snap);
-      if (foe && foe.capitalHP <= 0) mark("keep");
+      if (foe && foe.keepHP <= 0) mark("keep");
     }
   }
 

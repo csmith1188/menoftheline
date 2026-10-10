@@ -12,24 +12,24 @@ function placeGap(base, unit, paces) {
 
 /** Line of three player troops plus one enemy in shoot range. */
 function lineWithFoe(sim, gaps) {
-  const a = spawn(sim, "player", "troop", "top", {
+  const a = spawn(sim, "player", "regulars", "top", {
     progress: 0.4,
     sublane: 1,
     order: "halt",
   });
-  const b = spawn(sim, "player", "troop", "top", {
+  const b = spawn(sim, "player", "regulars", "top", {
     progress: 0.4,
     sublane: 2,
     order: "halt",
   });
-  const c = spawn(sim, "player", "troop", "top", {
+  const c = spawn(sim, "player", "regulars", "top", {
     progress: 0.4,
     sublane: 3,
     order: "halt",
   });
   placeGap(b, a, gaps.left);
   placeGap(b, c, gaps.right);
-  spawn(sim, "enemy", "troop", "top", {
+  spawn(sim, "enemy", "regulars", "top", {
     progress: 0.55,
     sublane: 2,
     order: "halt",

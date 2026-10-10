@@ -26,7 +26,7 @@ function digest(sim) {
   const sides = [sim.player, sim.enemy];
   for (let s = 0; s < sides.length; s += 1) {
     const side = sides[s];
-    parts.push(`${side.id}:${Math.round(side.capitalHP)}:${Math.round(side.gold)}`);
+    parts.push(`${side.id}:${Math.round(side.keepHP)}:${Math.round(side.gold)}`);
     const troops = side.troops.filter((troop) => troop.hp > 0);
     for (let i = 0; i < troops.length; i += 1) {
       const troop = troops[i];
@@ -49,17 +49,17 @@ function crowd() {
   sim.player.gold = 50000;
   sim.enemy.gold = 50000;
   const buys = [
-    ["player", "top", "troop"],
-    ["player", "top", "troop"],
-    ["player", "top", "skirmisher"],
-    ["player", "top", "officer"],
-    ["player", "bottom", "troop"],
-    ["player", "bottom", "troop"],
-    ["enemy", "top", "troop"],
-    ["enemy", "top", "troop"],
-    ["enemy", "top", "skirmisher"],
-    ["enemy", "bottom", "troop"],
-    ["enemy", "bottom", "officer"],
+    ["player", "top", "regulars"],
+    ["player", "top", "regulars"],
+    ["player", "top", "light"],
+    ["player", "top", "major"],
+    ["player", "bottom", "regulars"],
+    ["player", "bottom", "regulars"],
+    ["enemy", "top", "regulars"],
+    ["enemy", "top", "regulars"],
+    ["enemy", "top", "light"],
+    ["enemy", "bottom", "regulars"],
+    ["enemy", "bottom", "major"],
   ];
   for (let i = 0; i < buys.length; i += 1) {
     const [side, lane, unit] = buys[i];

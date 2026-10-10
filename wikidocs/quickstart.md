@@ -1,7 +1,7 @@
 # Quick How To Play
 
 ## Main Objective
-- Build units to attack the enemy Capital. See [[Men of the Line]].
+- Build units to attack the enemy Keep. See [[Men of the Line]].
 ## Secondary Objectives
 - Push the line in the top lane to gain more gold and build more units. See [[The Middle Line]] and [[Gold, Land, and Banks]].
 - Push the line in the bottom lane to gain more land and build better units and upgrades. See [[Towns]].
@@ -25,6 +25,6 @@
 - Swipe forward to Charge
 - Swipe back to Fall Back
 - Long press or right-click a single unit to issue orders to only that unit (ignore lines)
-- Advancing Troops that walk into Perfect Line with a Halted or Reforming Troop next door take that order alone. See [[Orders]].
+- Advancing Regulars that walk into Perfect Line with a Halted or Reforming infantry unit next door take that order alone. See [[Orders]].
 
 What each order does is on [[Orders]].

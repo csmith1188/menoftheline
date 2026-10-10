@@ -6,11 +6,11 @@ import {
   moveSpeedFactor,
   shootRangeFactor,
 } from "../../shared/terrain.js";
-import { UNIT_STATS, unitStats } from "../../shared/units.js";
+import { UNIT_STATS, unitStats, categoryOf, unitIdOf } from "../../shared/units.js";
 
 /** Classic fallback when a sim has no GameMap bound yet. */
 const LANES = ["top", "bottom"];
-const BASE_TYPES = ["troop", "skirmisher", "dragoon", "cannon", "officer"];
+const BASE_TYPES = ["infantry", "skirmishers", "cavalry", "artillery", "officer"];
 
 /** Active lane ids from the sim map (1+). */
 export function laneIdsOf(sim) {
@@ -22,12 +22,12 @@ export function laneIdsOf(sim) {
 
 /** Gold price of the body on the field, including alternates. */
 export function goldCost(unit) {
-  return unitStats(unit.variant || unit.type).cost;
+  return unitStats(unitIdOf(unit)).cost;
 }
 
 /** Keep-gun reach in paces, then the wider band used for threat. */
 export function keepThreatReach() {
-  return Path.pacesFromPx(CONFIG.capitalCannonRange) * CONFIG.botKeepThreatReachScale;
+  return Path.pacesFromPx(CONFIG.keepCannonRange) * CONFIG.botKeepThreatReachScale;
 }
 
 /**
@@ -68,7 +68,7 @@ export function combatValue(unit, profile, band) {
   const brokenFactor = unit.broken ? CONFIG.botBrokenFactor : 1;
   let role = 1;
   if (profile && profile.useRole && band === "contact") {
-    const key = unit.variant || unit.type;
+    const key = unitIdOf(unit);
     role = CONFIG.botRoleContact[key] != null ? CONFIG.botRoleContact[key] : 1;
   }
   return goldCost(unit) * hp * fatigueFactor * brokenFactor * role;
@@ -140,7 +140,8 @@ function frontProgress(units) {
   let bestP = -1;
   for (let i = 0; i < units.length; i += 1) {
     const unit = units[i];
-    if (unit.type !== "troop" && unit.type !== "skirmisher") continue;
+    const cat = categoryOf(unit);
+    if (cat !== "infantry" && cat !== "skirmishers") continue;
     if (unit.progress > bestP) {
       bestP = unit.progress;
       best = unit;
@@ -156,7 +157,7 @@ function frontProgress(units) {
 export function assessBattlefield(sim, sideId, profile) {
   const self = sim.side(sideId);
   const foe = sim.side(sideId === "player" ? "enemy" : "player");
-  const hpFrac = self.capitalHP / CONFIG.capitalHP;
+  const hpFrac = self.keepHP / CONFIG.keepHP;
   const troopsBySide = { player: sim.player.troops, enemy: sim.enemy.troops };
   const mapId = sim.mapId || CONFIG.defaultMapId;
   const laneIds = laneIdsOf(sim);
@@ -186,7 +187,7 @@ export function assessBattlefield(sim, sideId, profile) {
     let troopFront = null;
     for (let f = 0; f < friendlies.length; f += 1) {
       const unit = friendlies[f];
-      if (unit.type !== "troop") continue;
+      if (categoryOf(unit) !== "infantry") continue;
       if (!troopFront || unit.progress > troopFront.progress) troopFront = unit;
     }
     lanes[lane].troopFront = troopFront;
@@ -300,7 +301,8 @@ export function localSituation(unit, laneSnap, profile, fog = null) {
   for (let i = 0; i < friendlies.length; i += 1) {
     const ally = friendlies[i];
     if (ally === unit) continue;
-    if (ally.type !== "troop" && ally.type !== "skirmisher") continue;
+    const cat = categoryOf(ally);
+    if (cat !== "infantry" && cat !== "skirmishers") continue;
     if (isAhead(unit, ally)) infantryAhead = true;
     else infantryBehind = true;
     if (alongPaces(unit, ally) <= support) infantrySupport = true;
@@ -317,8 +319,8 @@ export function localSituation(unit, laneSnap, profile, fog = null) {
     shootableInRange,
     losBlocked,
     moveFactor: moveSpeedFactor(unit, mapId),
-    enemyTroopContact: bandSum(enemies, unit, contact, profile, "support", (u) => u.type === "troop"),
-    enemyCavalryContact: bandSum(enemies, unit, contact, profile, "support", (u) => u.type === "dragoon"),
+    enemyTroopContact: bandSum(enemies, unit, contact, profile, "support", (u) => categoryOf(u) === "infantry"),
+    enemyCavalryContact: bandSum(enemies, unit, contact, profile, "support", (u) => categoryOf(u) === "cavalry"),
     infantryAhead,
     infantryBehind,
     infantrySupport,
@@ -337,9 +339,10 @@ export function typeGold(units) {
     const unit = units[i];
     if (!unit || unit.hp <= 0) continue;
     const cost = goldCost(unit);
-    if (by[unit.type] != null) by[unit.type] += cost;
+    const cat = categoryOf(unit);
+    if (by[cat] != null) by[cat] += cost;
     total += cost;
-    if (unit.type === "troop") troops += 1;
+    if (cat === "infantry") troops += 1;
   }
   return { by, total, troops };
 }
@@ -349,9 +352,9 @@ export function enemyShares(units) {
   const total = Math.max(tally.total, 1);
   return {
     total: tally.total,
-    cavalry: tally.by.dragoon / total,
-    troop: tally.by.troop / total,
-    support: (tally.by.cannon + tally.by.officer) / total,
+    cavalry: tally.by.cavalry / total,
+    troop: tally.by.infantry / total,
+    support: (tally.by.artillery + tally.by.officer) / total,
     troops: tally.troops,
   };
 }

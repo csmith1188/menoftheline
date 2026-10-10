@@ -1,12 +1,11 @@
 import { CONFIG } from "../shared/config.js";
-import { UNIT_LABELS, unitStats, variantBadgeFill } from "../shared/units.js";
+import { UNIT_LABELS, unitStats, variantBadgeFill, categoryOf } from "../shared/units.js";
 import {
   UNIT_SUMMARIES,
   unitAbilityLines,
   unitArtType,
   unitBasicStats,
   unitEconomy,
-  unitIconType,
 } from "../shared/unitInfo.js";
 import { buyBgSrc } from "./buyArt.js";
 
@@ -44,13 +43,13 @@ export function bindUnitInfo(options) {
     const ctx = icon.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, css, css);
-    const boardType = unitIconType(type);
     const stats = unitStats(type);
     const r = Math.min(22, stats.radius * 1.8);
     const x = css / 2;
     const y = css / 2;
     const color = CONFIG.colors.player;
     const badge = variantBadgeFill(type);
+    const cat = categoryOf(type);
     if (badge) {
       const pad = r + 4;
       ctx.fillStyle = badge;
@@ -61,12 +60,12 @@ export function bindUnitInfo(options) {
     ctx.strokeStyle = "#0d1218";
     ctx.lineWidth = 2;
 
-    if (boardType === "cannon") {
+    if (cat === "artillery") {
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-    } else if (boardType === "skirmisher") {
+    } else if (cat === "skirmishers") {
       ctx.beginPath();
       ctx.moveTo(x, y - r);
       ctx.lineTo(x + r, y + r);
@@ -74,7 +73,7 @@ export function bindUnitInfo(options) {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-    } else if (boardType === "dragoon") {
+    } else if (cat === "cavalry") {
       ctx.beginPath();
       ctx.moveTo(x, y - r);
       ctx.lineTo(x + r, y);
@@ -83,7 +82,7 @@ export function bindUnitInfo(options) {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-    } else if (boardType === "officer") {
+    } else if (cat === "officer") {
       const s = r * 0.75;
       ctx.save();
       ctx.lineCap = "round";

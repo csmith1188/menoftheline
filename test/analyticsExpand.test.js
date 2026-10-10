@@ -59,7 +59,7 @@ async function recordGame(opts) {
     endedAt,
     mode = "bot",
     outcome = "completed",
-    winReason = "capital",
+    winReason = "keep",
     winnerSide = "player",
     mapId = null,
     summaryJson = null,
@@ -115,7 +115,7 @@ test("funnelAndSegments and outcome helpers", () => {
   assert.equal(segments.regular, 1);
   assert.equal(segments.zeroGames, 1);
   assert.equal(outcomeFromWinReason("disconnect"), "forfeit");
-  assert.equal(outcomeFromWinReason("capital"), "completed");
+  assert.equal(outcomeFromWinReason("keep"), "completed");
   assert.equal(normalizeClientPlatform("Android"), "android");
 });
 
@@ -133,6 +133,7 @@ test("aggregateBalanceFromSummaries counts unit wins with sample size", () => {
       },
       enemy: {
         bought: { cannon: 1 },
+
         survived: {},
         upgrades: { speed: 0, armor: 0, damage: 0 },
         dmgDealtByType: {},
@@ -145,7 +146,8 @@ test("aggregateBalanceFromSummaries counts unit wins with sample size", () => {
     { winner_side: "player", summary_json: summary },
   ]);
   assert.equal(agg.withSummary, 1);
-  const troop = agg.units.find((u) => u.type === "troop");
+  // Legacy summary keys (troop) normalize to canonical unit ids (regulars).
+  const troop = agg.units.find((u) => u.type === "regulars");
   assert.ok(troop);
   assert.equal(troop.n, 1);
   assert.equal(troop.wins, 1);
@@ -167,7 +169,7 @@ test("analyticsSnapshot engagement outcomes and duration percentiles", async () 
     startedAt: t0 - 100_000,
     endedAt: t0 - 40_000,
     outcome: "completed",
-    winReason: "capital",
+    winReason: "keep",
     mapId: "classic",
   });
   await recordGame({
@@ -300,5 +302,5 @@ test("summary_json persisted on recordMatchResult", async () => {
   });
   const snap = await analyticsSnapshot("all");
   assert.ok(snap.balance.withSummary >= 1);
-  assert.ok(snap.balance.units.some((u) => u.type === "troop"));
+  assert.ok(snap.balance.units.some((u) => u.type === "regulars"));
 });

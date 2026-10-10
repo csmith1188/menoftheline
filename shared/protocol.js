@@ -4,7 +4,7 @@
  * Additive JSON fields do not require a bump; older clients ignore unknown keys.
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Semver string for packaged client builds (also written into dist/client/boot.json). */
 export const CLIENT_VERSION = "0.1.0";

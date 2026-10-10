@@ -92,11 +92,11 @@ export function collectDebugMarks(board) {
     pushBox(marks, troop.lane, troop.sublane, foot0, foot1, "#ffffff", 0.28);
     pushBox(marks, troop.lane, troop.sublane, line0, line1, "#7ec8ff", 0.4);
     pushBox(marks, troop.lane, troop.sublane, perfect0, perfect1, "#ff6ad5", 0.7);
-    if (troop.type === "officer") {
-      const color = troop.variant === "colorGuard" ? "#7dffb2" : "#7ec8ff";
+    if (troop.category === "officer" || troop.type === "officer") {
+      const color = troop.unit === "colorGuard" ? "#7dffb2" : "#7ec8ff";
       const rows = Path.sublaneCount(troop.lane);
       const auraPaces =
-        troop.variant === "engineer"
+        troop.unit === "engineer"
           ? engineerAuraPaces(troop, board.mapId)
           : CONFIG.officerRestorePaces;
       const [r0, r1] = clampSpan(troop.lane, t, auraPaces);

@@ -1,6 +1,15 @@
 import * as THREE from "three";
 import { CONFIG } from "../shared/config.js";
-import { BUY_UNITS, UNIT_LABELS, UNIT_VARIANTS, unitStats, unitLandCost, variantBadgeFill } from "../shared/units.js";
+import {
+  BUY_UNITS,
+  UNIT_LABELS,
+  UNIT_VARIANTS,
+  categoryOf,
+  unitIdOf,
+  unitStats,
+  unitLandCost,
+  variantBadgeFill,
+} from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { TERRAIN_EMOJI, TERRAIN_TINT } from "../shared/terrain.js";
 import { canvasFont, presentTroopMotion, showTerrainLabels, uiFontsReady } from "./board.js";
@@ -201,7 +210,7 @@ function orderShell(mesh) {
   return outline;
 }
 
-function makeUnit(type) {
+function makeUnit(category) {
   const group = new THREE.Group();
   const mat = std("#ffffff");
   const outlines = [];
@@ -210,19 +219,19 @@ function makeUnit(type) {
     outlines.push(outline);
     group.add(outline, mesh);
   }
-  if (type === "cannon") {
+  if (category === "artillery") {
     const body = new THREE.Mesh(new THREE.CylinderGeometry(10, 12, 14, 18), mat);
     body.position.y = 9;
     addBody(body);
-  } else if (type === "skirmisher") {
+  } else if (category === "skirmishers") {
     const body = new THREE.Mesh(new THREE.ConeGeometry(11, 22, 3), mat);
     body.position.y = 12;
     addBody(body);
-  } else if (type === "dragoon") {
+  } else if (category === "cavalry") {
     const body = new THREE.Mesh(new THREE.OctahedronGeometry(11), mat);
     body.position.y = 12;
     addBody(body);
-  } else if (type === "officer") {
+  } else if (category === "officer") {
     const a = new THREE.Mesh(new THREE.BoxGeometry(3.2, 20, 3.2), mat);
     const b = new THREE.Mesh(new THREE.BoxGeometry(3.2, 20, 3.2), mat);
     a.rotation.z = Math.PI / 4;
@@ -268,7 +277,7 @@ function makeUnit(type) {
 }
 
 function makeKeep(sideId) {
-  const capital = sideId === "player" ? CONFIG.playerCapital : CONFIG.enemyCapital;
+  const keepPos = sideId === "player" ? CONFIG.playerKeep : CONFIG.enemyKeep;
   const color = sideId === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
   const dark = sideId === "player" ? CONFIG.colors.playerDark : CONFIG.colors.enemyDark;
   const group = new THREE.Group();
@@ -279,7 +288,7 @@ function makeKeep(sideId) {
   towerMat.transparent = true;
   towerMat.depthWrite = true;
   const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(CONFIG.capitalRadius, CONFIG.capitalRadius + 4, 26, 24),
+    new THREE.CylinderGeometry(CONFIG.keepRadius, CONFIG.keepRadius + 4, 26, 24),
     baseMat,
   );
   base.position.y = 13;
@@ -291,14 +300,14 @@ function makeKeep(sideId) {
   const hp = barMesh(color);
   hp.position.y = 58;
   group.add(base, tower, hp);
-  group.position.set(capital.x, 0, capital.y);
+  group.position.set(keepPos.x, 0, keepPos.y);
   group.traverse((obj) => {
     if (obj.isMesh) {
       obj.castShadow = true;
       obj.receiveShadow = true;
     }
   });
-  group.userData = { hp, base, tower, capital };
+  group.userData = { hp, base, tower, keep: keepPos };
   return group;
 }
 
@@ -368,8 +377,8 @@ export function createScene(canvas) {
   ground.receiveShadow = true;
   world.add(ground);
 
-  const left = CONFIG.playerCapital;
-  const right = CONFIG.enemyCapital;
+  const left = CONFIG.playerKeep;
+  const right = CONFIG.enemyKeep;
   const span = right.x - left.x;
   const band = new THREE.Mesh(
     new THREE.BoxGeometry(span, 8, CONFIG.topLaneHeight),
@@ -670,16 +679,18 @@ export function createScene(canvas) {
 
   function syncUnit(troop, board) {
     let mesh = units.get(troop.id);
-    if (!mesh || mesh.userData.type !== troop.type) {
+    const unitCat = troop.category || categoryOf(troop);
+    if (!mesh || mesh.userData.type !== unitCat) {
       if (mesh) world.remove(mesh);
-      mesh = makeUnit(troop.type);
+      mesh = makeUnit(unitCat);
+      mesh.userData.type = unitCat;
       units.set(troop.id, mesh);
       world.add(mesh);
     }
     mesh.position.set(troop.x, 12, troop.y);
     mesh.userData.troopId = troop.id;
     const tan = troop.laneTangent();
-    const facing = Math.atan2(tan.x, tan.y) + (troop.type === "officer" ? Math.PI / 2 : 0);
+    const facing = Math.atan2(tan.x, tan.y) + (unitCat === "officer" ? Math.PI / 2 : 0);
     mesh.rotation.set(0, facing, 0);
     mesh.userData.hp.rotation.y = -mesh.rotation.y;
     mesh.userData.fat.rotation.y = -mesh.rotation.y;
@@ -688,8 +699,8 @@ export function createScene(canvas) {
       : troop.side.id === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
     // Keep team color when broken; the black outline carries the state.
     mesh.userData.mat.color.set(color);
-    mesh.userData.plate.visible = Boolean(variantBadgeFill(troop.variant || troop.type));
-    const plateFill = variantBadgeFill(troop.variant || troop.type);
+    mesh.userData.plate.visible = Boolean(variantBadgeFill(unitIdOf(troop)));
+    const plateFill = variantBadgeFill(unitIdOf(troop));
     if (plateFill) mesh.userData.plate.material.color.set(plateFill);
     const shown = troop.givenOrder === undefined ? troop.order : troop.givenOrder;
     const ordered = shown === "halt" || shown === "reform"
@@ -1010,16 +1021,16 @@ export function createScene(canvas) {
     }
   }
 
-  function keepOccupied(board, capital) {
+  function keepOccupied(board, keepPos) {
     const sides = [board.player, board.enemy];
     for (let s = 0; s < sides.length; s += 1) {
       const troops = sides[s] ? sides[s].troops : [];
       for (let i = 0; i < troops.length; i += 1) {
         const troop = troops[i];
         if (troop.hp <= 0) continue;
-        const reach = CONFIG.capitalRadius + troop.bodyRadius();
-        const dx = troop.x - capital.x;
-        const dy = troop.y - capital.y;
+        const reach = CONFIG.keepRadius + troop.bodyRadius();
+        const dx = troop.x - keepPos.x;
+        const dy = troop.y - keepPos.y;
         if (dx * dx + dy * dy <= reach * reach) return true;
       }
     }
@@ -1036,11 +1047,11 @@ export function createScene(canvas) {
   }
 
   function syncKeeps(board) {
-    const max = CONFIG.capitalHP || 1;
-    setBar(keeps.player.userData.hp, board.player.capitalHP / max);
-    setBar(keeps.enemy.userData.hp, board.enemy.capitalHP / max);
-    setKeepFade(keeps.player, keepOccupied(board, keeps.player.userData.capital));
-    setKeepFade(keeps.enemy, keepOccupied(board, keeps.enemy.userData.capital));
+    const max = CONFIG.keepHP || 1;
+    setBar(keeps.player.userData.hp, board.player.keepHP / max);
+    setBar(keeps.enemy.userData.hp, board.enemy.keepHP / max);
+    setKeepFade(keeps.player, keepOccupied(board, keeps.player.userData.keep));
+    setKeepFade(keeps.enemy, keepOccupied(board, keeps.enemy.userData.keep));
   }
 
   function placePad(mesh, box, lift) {
@@ -1399,10 +1410,10 @@ export function createScene(canvas) {
   const fieldBounds = (() => {
     const outer = Path.bottomRadius(0) + CONFIG.bottomSublaneWidth * 0.5;
     const c = Path.bottomCenter();
-    const top = CONFIG.playerCapital.y - CONFIG.topLaneHeight / 2;
+    const top = CONFIG.playerKeep.y - CONFIG.topLaneHeight / 2;
     return {
-      minX: CONFIG.playerCapital.x - CONFIG.capitalRadius,
-      maxX: CONFIG.enemyCapital.x + CONFIG.capitalRadius,
+      minX: CONFIG.playerKeep.x - CONFIG.keepRadius,
+      maxX: CONFIG.enemyKeep.x + CONFIG.keepRadius,
       minZ: Math.min(8, top - 6),
       maxZ: c.y + outer,
     };

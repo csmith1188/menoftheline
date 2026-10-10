@@ -3,12 +3,22 @@ import { Path } from "./path.js";
 import {
   UNIT_STATS,
   VARIANT_OF_BASE,
+  buyBaseOf,
+  resolveUnitId,
   unitLandCost,
   unitStats,
 } from "./units.js";
 
 /** Short real-life role + tactical purpose for each spawn key. */
 export const UNIT_SUMMARIES = {
+  regulars:
+    "Line infantry — the backbone of the army. Trade fire with weight of numbers.",
+  light:
+    "Light infantry that fights in open order. Harass, screen, and pick at the enemy from flexible positions.",
+  fieldGun:
+    "Field artillery that shoots a solid iron ball that bounces through files of enemies.",
+  major:
+    "A Major keeps battalions together — restoring fatigue and casualties nearby.",
   troop:
     "Line infantry — the backbone of the army. Trade fire with weight of numbers.",
   skirmisher:
@@ -43,7 +53,7 @@ export const UNIT_SUMMARIES = {
 
 /** Base buy type for art (alternates share the base SVG). */
 export function unitArtType(type) {
-  return VARIANT_OF_BASE[type] || type;
+  return buyBaseOf(resolveUnitId(type));
 }
 
 /** In-play board type used for the geometric icon. */
@@ -207,9 +217,9 @@ function splashHits(splash) {
 export function unitAbilityLines(type) {
   const stats = unitStats(type);
   const lines = [];
-  const base = unitIconType(type);
+  const base = buyBaseOf(type);
 
-  if (base === "troop" && CONFIG.troopLineBonus > 0) {
+  if (base === "regulars" && CONFIG.troopLineBonus > 0) {
     lines.push(
       `Line shooting bonus: +${pct(CONFIG.troopLineBonus)} per other eligible troop in the line, scaled by how Perfect you are with adjacent-row neighbors (not vs Skirmishers/Rifles).`,
     );
@@ -226,7 +236,7 @@ export function unitAbilityLines(type) {
   if ((stats.shootingPushback || 0) > 1) {
     lines.push(`Shooting pushback: ${fmtNum(stats.shootingPushback)}.`);
   }
-  if (base === "skirmisher") {
+  if (base === "light") {
     lines.push("Full reload whenever firing is allowed, including Fall Back.");
     lines.push("Troop line bonus does not apply when shooting this unit.");
     lines.push(
@@ -242,13 +252,13 @@ export function unitAbilityLines(type) {
   if (type === "lancer" && (stats.chargeMultiplier || 1) > 1.2) {
     lines.push(`Charge hit bonus: ${times(stats.chargeMultiplier)} (normal flank otherwise).`);
   }
-  if (base === "cannon" && type !== "howitzer" && stats.splash > 0) {
+  if (base === "fieldGun" && type !== "howitzer" && stats.splash > 0) {
     const hits = splashHits(stats.splash);
     lines.push(
       `Shell penetrates along the row: up to ${hits} bodies (full / half / quarter damage).`,
     );
   }
-  if (base === "cannon") {
+  if (base === "fieldGun") {
     lines.push(
       `Firing recoils this gun by its shooting pushback (${fmtNum(stats.shootingPushback)}).`,
     );
@@ -256,7 +266,7 @@ export function unitAbilityLines(type) {
   if (type === "howitzer") {
     lines.push("Fires one shell at a target in every in-range row of its lane (no penetration).");
   }
-  if (base === "officer" && (stats.restoreRange > 0 || stats.restoreRate > 0)) {
+  if (base === "major" && (stats.restoreRange > 0 || stats.restoreRate > 0)) {
     const paces = CONFIG.officerRestorePaces;
     const rate = stats.restoreRate || 1;
     lines.push(
@@ -302,7 +312,7 @@ export function unitAbilityLines(type) {
       `On a hill or peak, Officer-range aura is ×${CONFIG.engineerElevationAuraFactor}.`,
     );
   }
-  if (base === "officer") {
+  if (base === "major") {
     lines.push("Most units avoid shooting Officers while another unit type is in range.");
   }
 

@@ -480,6 +480,7 @@ async function ensureAdminSchema() {
   await run("CREATE INDEX IF NOT EXISTS games_map_ended ON games (map_id, ended_at)");
   await run("CREATE INDEX IF NOT EXISTS games_outcome_ended ON games (outcome, ended_at)");
   await run("CREATE INDEX IF NOT EXISTS games_win_reason_ended ON games (win_reason, ended_at)");
+  await run("UPDATE games SET win_reason = 'keep' WHERE win_reason = 'capital'");
 
   await run(`CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6183,7 +6184,8 @@ export async function analyticsSnapshot(range = "30d") {
     }
   }
   for (const row of winReasonRows) {
-    outcomes.byWinReason[row.win_reason] = Number(row.n) || 0;
+    const key = row.win_reason === "capital" ? "keep" : row.win_reason;
+    outcomes.byWinReason[key] = (outcomes.byWinReason[key] || 0) + (Number(row.n) || 0);
   }
 
   const winByMode = await all(

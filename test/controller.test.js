@@ -6,8 +6,8 @@ describe("decision clock and command ownership", () => {
   it("does not act again before the think interval", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
-    const front = spawn(sim, "player", "troop", "top", { progress: 0.3, sublane: 0 });
-    spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 1 });
+    const front = spawn(sim, "player", "regulars", "top", { progress: 0.3, sublane: 0 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: 1 });
     quiet(sim.player);
     let calls = 0;
     const apply = sim.applyCommand.bind(sim);
@@ -26,8 +26,8 @@ describe("decision clock and command ownership", () => {
   it("gives a forming troop one command, not a move as well", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
-    const front = spawn(sim, "player", "troop", "top", { progress: 0.3, sublane: 0 });
-    spawn(sim, "player", "troop", "top", { progress: 0.22, sublane: 1 });
+    const front = spawn(sim, "player", "regulars", "top", { progress: 0.3, sublane: 0 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.22, sublane: 1 });
     quiet(sim.player);
     const orders = [];
     const apply = sim.applyCommand.bind(sim);
@@ -44,8 +44,8 @@ describe("decision clock and command ownership", () => {
   it("drops locks for units that are gone", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
-    const troop = spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 0 });
-    spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 0 });
+    const troop = spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: 0 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: 0 });
     quiet(sim.player);
     bot.act(sim);
     assert.ok(bot.locks.has(troop.id));

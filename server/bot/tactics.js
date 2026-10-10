@@ -1,5 +1,6 @@
 import { CONFIG } from "../../shared/config.js";
 import { Path } from "../../shared/path.js";
+import { categoryOf } from "../../shared/units.js";
 import { combatValue, isAhead, localSituation, alongPaces } from "./assess.js";
 import { formationFix } from "./formations.js";
 
@@ -182,13 +183,14 @@ function bestChargeScore(unit, enemies, local) {
     const dist = alongPaces(unit, foe);
     if (dist > support) continue;
     let score = 0;
-    if (foe.type === "cannon" || foe.type === "officer") score += CONFIG.botChargeSupportBonus;
+    const foeCat = categoryOf(foe);
+    if (foeCat === "artillery" || foeCat === "officer") score += CONFIG.botChargeSupportBonus;
     if (foe.maxHp > 0 && foe.hp / foe.maxHp < 0.5) score += CONFIG.botChargeWeakBonus;
     if (foe.order === "fallback" || foe.order === "retreat") score += CONFIG.botChargeRetreatBonus;
     let supported = false;
     for (let j = 0; j < enemies.length; j += 1) {
       const other = enemies[j];
-      if (other === foe || other.type !== "troop") continue;
+      if (other === foe || categoryOf(other) !== "infantry") continue;
       if (alongPaces(foe, other) <= support) supported = true;
     }
     if (!supported) score += CONFIG.botChargeIsolatedBonus;
@@ -216,7 +218,8 @@ function cavalryIntent(unit, local, info, profile, mem) {
   let hasInfantry = false;
   for (let i = 0; i < info.friendlies.length; i += 1) {
     const ally = info.friendlies[i];
-    if (ally !== unit && (ally.type === "troop" || ally.type === "skirmisher")) hasInfantry = true;
+    const allyCat = categoryOf(ally);
+    if (ally !== unit && (allyCat === "infantry" || allyCat === "skirmishers")) hasInfantry = true;
   }
   if (!hasInfantry) return { intent: "fallback", reason: "leash" };
   if (!local.infantrySupport && local.infantryBehind) return { intent: "fallback", reason: "leash" };
@@ -296,7 +299,7 @@ export function decideIntents(bot, snapshot, profile) {
     const troopDecisions = [];
     for (let i = 0; i < info.friendlies.length; i += 1) {
       const unit = info.friendlies[i];
-      if (unit.broken || unit.type !== "troop") continue;
+      if (unit.broken || categoryOf(unit) !== "infantry") continue;
       const local = localSituation(unit, info, profile, fog);
       const mem = memoryOf(bot, unit);
       const decision = blank(unit, "advance", "march");
@@ -319,24 +322,24 @@ export function decideIntents(bot, snapshot, profile) {
     }
     for (let i = 0; i < info.friendlies.length; i += 1) {
       const unit = info.friendlies[i];
-      if (unit.broken || unit.type === "troop") continue;
+      if (unit.broken || unit.category === "infantry") continue;
       const local = localSituation(unit, info, profile, fog);
       const mem = memoryOf(bot, unit);
       let decision;
-      if (unit.type === "skirmisher") {
+      if (unit.category === "skirmishers") {
         const next = skirmisherIntent(unit, local, info, mem, troopDecisions);
         decision = blank(unit, next.intent, next.reason);
         decision.armClear = Boolean(next.armClear);
         decision.solo = true;
-      } else if (unit.type === "dragoon") {
+      } else if (unit.category === "cavalry") {
         const next = cavalryIntent(unit, local, info, profile, mem);
         decision = blank(unit, next.intent, next.reason);
         decision.solo = true;
-      } else if (unit.type === "cannon") {
+      } else if (unit.category === "artillery") {
         const next = cannonIntent(unit, local, mem);
         decision = blank(unit, next.intent, next.reason);
         decision.solo = true;
-      } else if (unit.type === "officer") {
+      } else if (unit.category === "officer") {
         const next = officerIntent(unit, local, info, mem);
         decision = blank(unit, next.intent, next.reason);
         decision.solo = true;

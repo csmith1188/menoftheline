@@ -12,7 +12,7 @@ import { canOccupy, playerPacesOf } from "../../shared/terrain.js";
  * is stacked behind a same-row friendly — clear the row first.
  */
 export function formationFix(troop, troops) {
-  if (!troop || troop.type !== "troop") return null;
+  if (!troop || troop.category !== "infantry") return null;
   if (troop.order === "charge" || troop.order === "fallback" || troop.order === "retreat") {
     return null;
   }
@@ -24,7 +24,7 @@ export function formationFix(troop, troops) {
     const other = troops[i];
     if (other.hp <= 0 || other.lane !== troop.lane) continue;
     occupants.push(other);
-    if (other.type === "troop" && !other.broken) units.push(other);
+    if (other.category === "infantry" && !other.broken) units.push(other);
   }
   if (units.length < 2) return null;
 
@@ -128,7 +128,7 @@ function walkUpClear(front, group, occupants) {
       if (ally === unit || ally.hp <= 0) continue;
       if (ally.sublane !== unit.sublane || ally.lane !== unit.lane) continue;
       if (lineHas(group, ally)) continue;
-      if (ally.type === "troop" && !ally.broken) return false;
+      if (ally.category === "infantry" && !ally.broken) return false;
       if (typeof unit.blocksAlly === "function" && !unit.blocksAlly(ally)) continue;
       if (ally.progress <= unit.progress) continue;
       if (ally.progress <= front.progress + 1e-9) return false;

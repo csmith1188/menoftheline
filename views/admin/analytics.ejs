@@ -80,7 +80,7 @@
         <p class="admin-muted">
           Win reasons:
           <% var reasons = outc.byWinReason || {}; %>
-          capital <%= reasons.capital || 0 %>
+          keep <%= (reasons.keep || 0) + (reasons.capital || 0) %>
           · concede <%= reasons.concede || 0 %>
           · disconnect <%= reasons.disconnect || 0 %>
           · reconnect_spam <%= reasons.reconnect_spam || 0 %>

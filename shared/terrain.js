@@ -7,7 +7,7 @@ import {
   terrainFootprintPaces,
   troopLaneT,
 } from "./path.js";
-import { mobilityClass, unitStats } from "./units.js";
+import { mobilityClass, unitIdOf, unitStats } from "./units.js";
 
 /** Kinds that block line of sight (fort is asymmetric). */
 const LOS_KINDS = new Set(["hill", "peak", "woods", "fort"]);
@@ -185,8 +185,8 @@ export function playerPacesOf(unit) {
 
 /** Unit type key for mobility (variant preferred). */
 function unitTypeKey(unit) {
-  if (!unit) return "troop";
-  return unit.variant || unit.type || "troop";
+  if (!unit) return "regulars";
+  return unitIdOf(unit);
 }
 
 function living(list) {
@@ -261,8 +261,8 @@ export function canOccupy(unitType, lane, sublane, paces, mapId) {
   const at = featuresAt(lane, sublane, paces, mapId);
   for (let i = 0; i < at.length; i += 1) {
     const kind = at[i].kind;
-    if (kind === "peak" && mob !== "infantry") return false;
-    if (kind === "river" && mob === "artillery" && !riverIsPontoon(at[i])) return false;
+    if (kind === "peak" && mob !== "foot") return false;
+    if (kind === "river" && mob === "limbered" && !riverIsPontoon(at[i])) return false;
   }
   return true;
 }
@@ -319,10 +319,10 @@ export function moveSpeedFactor(unit, mapId, backward = false) {
       factor *= CONFIG.woodsSlow;
     } else if (f.kind === "river") {
       if (riverIsPontoon(f)) continue;
-      if (mob === "infantry") factor *= CONFIG.riverInfantrySlow;
-      else if (mob === "cavalry") factor *= CONFIG.riverCavalrySlow;
+      if (mob === "foot") factor *= CONFIG.riverFootSlow;
+      else if (mob === "mounted") factor *= CONFIG.riverMountedSlow;
     } else if (f.kind === "peak") {
-      if (mob === "infantry") factor *= CONFIG.peakSlow;
+      if (mob === "foot") factor *= CONFIG.peakSlow;
     } else if (f.kind === "hill" && paces != null && sideId) {
       const center = f.centerPaces;
       const fromOwn =
@@ -501,7 +501,7 @@ export function hasShotLos(observer, target, viewerSideId, troopsBySide, mapId) 
   let targetLane = target.lane;
   let targetSublane = target.sublane;
   let targetPaces = playerPacesOf(target);
-  const isKeepTarget = target.capitalHP !== undefined || (target.capital && target.id);
+  const isKeepTarget = target.keepHP !== undefined || (target.keep && target.id);
 
   if (isKeepTarget) {
     // Keep sits on every row; for LOS it is this shooter's lane/row.
@@ -917,8 +917,8 @@ export function clampPaceMove(unitType, lane, sublane, fromPaces, toPaces, mapId
     const f = features[i];
     if (f.lane !== lane || f.sublanes.indexOf(sublane) < 0) continue;
     const blocked =
-      (f.kind === "peak" && mob !== "infantry") ||
-      (f.kind === "river" && mob === "artillery" && !riverIsPontoon(f));
+      (f.kind === "peak" && mob !== "foot") ||
+      (f.kind === "river" && mob === "limbered" && !riverIsPontoon(f));
     if (!blocked) continue;
     const { minPaces, maxPaces } = featureInterval(f);
     // Edge just outside the footprint in the approach direction.
@@ -936,8 +936,8 @@ export function clampPaceMove(unitType, lane, sublane, fromPaces, toPaces, mapId
       const f = features[i];
       if (f.lane !== lane || f.sublanes.indexOf(sublane) < 0) continue;
       const blocked =
-        (f.kind === "peak" && mob !== "infantry") ||
-        (f.kind === "river" && mob === "artillery" && !riverIsPontoon(f));
+        (f.kind === "peak" && mob !== "foot") ||
+        (f.kind === "river" && mob === "limbered" && !riverIsPontoon(f));
       if (!blocked) continue;
       const { minPaces, maxPaces } = featureInterval(f);
       if (fromPaces < minPaces || fromPaces > maxPaces) continue;
@@ -966,7 +966,7 @@ export function playerPacesFromProgress(sideId, lane, progress) {
 
 /** True when artillery is standing on a river that is not currently a pontoon. */
 export function unitOnClosedRiver(unit, mapId) {
-  if (!unit || mobilityClass(unitTypeKey(unit)) !== "artillery") return false;
+  if (!unit || mobilityClass(unitTypeKey(unit)) !== "limbered") return false;
   const under = featuresUnder(unit, mapId);
   for (let i = 0; i < under.length; i += 1) {
     if (under[i].kind === "river" && !riverIsPontoon(under[i])) return true;

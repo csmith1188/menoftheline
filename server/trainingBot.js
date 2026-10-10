@@ -23,7 +23,7 @@ export class TrainingBotController {
       const bought = sim.applyCommand(this.sideId, {
         type: "buy",
         lane: "bottom",
-        unit: "troop",
+        unit: "regulars",
       });
       if (bought) {
         this.nextBuyAt = sim.elapsed + TRAINING_BOT_BUY_INTERVAL_SEC;

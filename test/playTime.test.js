@@ -62,7 +62,7 @@ async function recordGame({
       createdAt,
       startedAt,
       endedAt,
-      winReason: "capital",
+      winReason: "keep",
       outcome: "completed",
       chatJson: null,
     },

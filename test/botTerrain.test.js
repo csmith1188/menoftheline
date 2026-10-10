@@ -29,7 +29,7 @@ function woodsFeature() {
 function setupWoodsLosBlock(sim) {
   const woods = woodsFeature();
   const half = terrainFootprintPaces();
-  const grappler = spawn(sim, "player", "troop", "bottom", {
+  const grappler = spawn(sim, "player", "regulars", "bottom", {
     progress: progressFromPlayerPaces("player", "bottom", woods.centerPaces - half - 2),
     sublane: 0,
     order: "halt",
@@ -41,7 +41,7 @@ function setupWoodsLosBlock(sim) {
   });
   foe.progress = progressFromPlayerPaces("enemy", "bottom", woods.centerPaces - half + 2);
   foe.syncPosition();
-  const shooter = spawn(sim, "player", "troop", "bottom", {
+  const shooter = spawn(sim, "player", "regulars", "bottom", {
     progress: progressFromPlayerPaces("player", "bottom", woods.centerPaces - half - 80),
     sublane: 0,
     order: "halt",
@@ -86,7 +86,7 @@ describe("bot terrain awareness", () => {
   it("reports a reduced moveFactor while standing in woods", () => {
     const sim = makeSim({ mapId: "default" });
     const woods = woodsFeature();
-    const unit = spawn(sim, "player", "troop", "bottom", {
+    const unit = spawn(sim, "player", "regulars", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", woods.centerPaces),
       sublane: 0,
     });

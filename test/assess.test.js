@@ -14,8 +14,8 @@ import { makeSim, spawn } from "./helpers.js";
 describe("battlefield assessment", () => {
   it("ignores an enemy outside the local radius", () => {
     const sim = makeSim();
-    const friend = spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 2 });
-    spawn(sim, "enemy", "troop", "top", { progress: 0.2, sublane: 2 });
+    const friend = spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: 2 });
+    spawn(sim, "enemy", "regulars", "top", { progress: 0.2, sublane: 2 });
     const snap = assessBattlefield(sim, "player", botProfile("simple"));
     const far = localSituation(friend, snap.lanes.top, botProfile("simple"));
     assert.equal(far.supportEnemy, 0);
@@ -31,9 +31,9 @@ describe("battlefield assessment", () => {
 
   it("strength falls with missing HP and, on Hard, with fatigue", () => {
     const sim = makeSim();
-    const healthy = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 1 });
-    const wounded = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 2, hp: 100 });
-    const tired = spawn(sim, "player", "troop", "bottom", {
+    const healthy = spawn(sim, "player", "regulars", "top", { progress: 0.4, sublane: 1 });
+    const wounded = spawn(sim, "player", "regulars", "top", { progress: 0.4, sublane: 2, hp: 100 });
+    const tired = spawn(sim, "player", "regulars", "bottom", {
       progress: 0.4,
       sublane: 1,
       fatigue: 100,
@@ -51,15 +51,15 @@ describe("battlefield assessment", () => {
     const sim = makeSim();
     const hard = botProfile("hard");
     const rimPaces = keepThreatReach() - 20;
-    spawn(sim, "enemy", "skirmisher", "top", {
+    spawn(sim, "enemy", "light", "top", {
       progress: 1 - rimPaces / 1000,
       sublane: 2,
     });
     const rim = assessBattlefield(sim, "player", hard).lanes.top.threat;
 
     const close = makeSim();
-    spawn(close, "enemy", "troop", "top", { progress: 0.98, sublane: 1 });
-    spawn(close, "enemy", "troop", "top", { progress: 0.98, sublane: 2 });
+    spawn(close, "enemy", "regulars", "top", { progress: 0.98, sublane: 1 });
+    spawn(close, "enemy", "regulars", "top", { progress: 0.98, sublane: 2 });
     const mass = assessBattlefield(close, "player", hard).lanes.top.threat;
 
     assert.ok(mass > rim * 5);

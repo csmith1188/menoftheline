@@ -1,7 +1,7 @@
 /**
  * Compact end-of-match summary for admin balance analytics (no PII).
  */
-import { UNIT_STATS } from "../shared/units.js";
+import { UNIT_STATS, resolveUnitId } from "../shared/units.js";
 
 function countByType(troops) {
   const out = {};
@@ -9,7 +9,7 @@ function countByType(troops) {
   for (let i = 0; i < troops.length; i += 1) {
     const t = troops[i];
     if (!t || !(t.hp > 0)) continue;
-    const type = t.type || "troop";
+    const type = resolveUnitId(t.unit || t.variant || t.type || "regulars");
     out[type] = (out[type] || 0) + 1;
   }
   return out;
@@ -21,7 +21,8 @@ function goldSpentFromBought(bought) {
   for (const [type, n] of Object.entries(bought)) {
     const count = Number(n) || 0;
     if (count <= 0) continue;
-    const cost = Number(UNIT_STATS[type]?.cost) || 0;
+    const id = resolveUnitId(type);
+    const cost = Number(UNIT_STATS[id]?.cost) || 0;
     gold += cost * count;
   }
   return gold;

@@ -11,12 +11,12 @@ function step(sim, dt = 1 / 30) {
 describe("fallback engaged in melee", () => {
   it("halts instead of auto-retreating when a falling-back unit enters melee", () => {
     const sim = makeSim();
-    const friend = spawn(sim, "player", "troop", "top", {
+    const friend = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "fallback",
     });
-    const foe = spawn(sim, "enemy", "troop", "top", {
+    const foe = spawn(sim, "enemy", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "charge",
@@ -30,12 +30,12 @@ describe("fallback engaged in melee", () => {
 
   it("still becomes retreat when Fall Back is ordered while already in melee", () => {
     const sim = makeSim();
-    const friend = spawn(sim, "player", "troop", "top", {
+    const friend = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const foe = spawn(sim, "enemy", "troop", "top", {
+    const foe = spawn(sim, "enemy", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "charge",

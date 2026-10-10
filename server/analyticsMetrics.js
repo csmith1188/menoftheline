@@ -1,7 +1,7 @@
 /**
  * Pure helpers for /admin/analytics aggregates (no DB I/O).
  */
-import { UNIT_STATS } from "../shared/units.js";
+import { UNIT_STATS, resolveUnitId } from "../shared/units.js";
 
 /** Percentile from a sorted ascending numeric array. p in 0–100. */
 export function percentileSorted(sorted, p) {
@@ -170,15 +170,16 @@ export function aggregateBalanceFromSummaries(rows) {
         const type = types[t];
         const count = Number(bought[type]) || 0;
         if (count <= 0) continue;
-        const u = unitRow(type);
+        const u = unitRow(resolveUnitId(type));
         u.deploys += 1;
         u.n += 1;
         u.bought += count;
-        u.survived += Number(side.survived?.[type]) || 0;
-        u.dmgDealt += Number(side.dmgDealtByType?.[type]) || 0;
-        u.dmgTaken += Number(side.dmgTakenByType?.[type]) || 0;
-        u.kills += Number(side.killsByType?.[type]) || 0;
-        const cost = Number(UNIT_STATS[type]?.cost) || 0;
+        const id = resolveUnitId(type);
+        u.survived += Number(side.survived?.[type]) || Number(side.survived?.[id]) || 0;
+        u.dmgDealt += Number(side.dmgDealtByType?.[type]) || Number(side.dmgDealtByType?.[id]) || 0;
+        u.dmgTaken += Number(side.dmgTakenByType?.[type]) || Number(side.dmgTakenByType?.[id]) || 0;
+        u.kills += Number(side.killsByType?.[type]) || Number(side.killsByType?.[id]) || 0;
+        const cost = Number(UNIT_STATS[id]?.cost) || 0;
         u.goldSpent += cost * count;
         if (won) u.wins += 1;
       }

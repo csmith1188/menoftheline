@@ -2,11 +2,19 @@ import { CONFIG } from "../../shared/config.js";
 import {
   UNIT_STATS,
   UNIT_VARIANTS,
-  isLightAlternate,
+  isSpecialistVariety,
   unitLandCost,
+  categoryOf,
+  resolveUnitId,
 } from "../../shared/units.js";
 import { featuresOnMap } from "../../shared/terrain.js";
-import { BASE_TYPES, LANES, enemyRowCount, enemyShares, typeGold } from "./assess.js";
+import {
+  BASE_TYPES,
+  LANES,
+  enemyRowCount,
+  enemyShares,
+  typeGold,
+} from "./assess.js";
 
 function lanesOf(snapshot) {
   return snapshot.laneIds || LANES;
@@ -25,12 +33,20 @@ function cappedShare(share, weight) {
   return Math.min(CONFIG.botCounterCap, Math.max(0, share) * weight);
 }
 
+const CATEGORY_SPAWN = {
+  infantry: "regulars",
+  skirmishers: "light",
+  cavalry: "dragoon",
+  artillery: "fieldGun",
+  officer: "major",
+};
+
 export function desiredComposition(profile, friendUnits, enemyUnits) {
   const desired = {
-    troop: CONFIG.botComposition.troop,
-    skirmisher: CONFIG.botComposition.skirmisher,
-    dragoon: CONFIG.botComposition.dragoon,
-    cannon: CONFIG.botComposition.cannon,
+    infantry: CONFIG.botComposition.infantry,
+    skirmishers: CONFIG.botComposition.skirmishers,
+    cavalry: CONFIG.botComposition.cavalry,
+    artillery: CONFIG.botComposition.artillery,
     officer: CONFIG.botComposition.officer,
   };
   const enemy = enemyShares(enemyUnits);
@@ -44,19 +60,19 @@ export function desiredComposition(profile, friendUnits, enemyUnits) {
   };
 
   if (early) {
-    const freed = desired.cannon;
-    desired.cannon = 0;
-    desired.skirmisher += freed * CONFIG.botEarlyCannonToSkirmisher;
-    desired.dragoon += freed * (1 - CONFIG.botEarlyCannonToSkirmisher);
+    const freed = desired.artillery;
+    desired.artillery = 0;
+    desired.skirmishers += freed * CONFIG.botEarlyCannonToSkirmisher;
+    desired.cavalry += freed * (1 - CONFIG.botEarlyCannonToSkirmisher);
   }
 
   if (profile.dynamicComposition && enemy.total > 0) {
     const cav = cappedShare(enemy.cavalry, CONFIG.botCounterCavalry);
     const inf = early ? 0 : cappedShare(enemy.troop, CONFIG.botCounterInfantry);
     const sup = cappedShare(enemy.support, CONFIG.botCounterSupport);
-    desired.skirmisher += cav;
-    desired.cannon += inf;
-    desired.dragoon += sup;
+    desired.skirmishers += cav;
+    desired.artillery += inf;
+    desired.cavalry += sup;
     if (friends.troops >= CONFIG.botOfficerLineCount) {
       desired.officer += Math.min(CONFIG.botCounterCap, CONFIG.botCounterOfficer);
       mods.officerFromLine = true;
@@ -65,7 +81,7 @@ export function desiredComposition(profile, friendUnits, enemyUnits) {
     mods.cannonFromInfantry = inf > 0;
     mods.dragoonFromSupport = sup > 0 && enemy.troop < CONFIG.botTroopWallShare;
   } else if (!early && enemy.total > 0 && enemy.troop >= CONFIG.botSimpleCannonTroopShare) {
-    desired.cannon += CONFIG.botSimpleCannonBump;
+    desired.artillery += CONFIG.botSimpleCannonBump;
     mods.cannonFromInfantry = true;
   }
 
@@ -103,10 +119,13 @@ function upgradeReserve(side) {
   return best === Infinity ? 0 : best;
 }
 
-function countType(units, type) {
+function countType(units, typeOrCategory) {
+  const cat = BASE_TYPES.includes(typeOrCategory)
+    ? typeOrCategory
+    : categoryOf(resolveUnitId(typeOrCategory));
   let n = 0;
   for (let i = 0; i < units.length; i += 1) {
-    if (units[i].hp > 0 && units[i].type === type) n += 1;
+    if (units[i].hp > 0 && categoryOf(units[i]) === cat) n += 1;
   }
   return n;
 }
@@ -125,7 +144,7 @@ function mapKinds(mapId) {
 /** Land that must remain after an alternate buy (full upgrade for elites). */
 function altLandReserve(side, key) {
   const reserve = upgradeReserve(side);
-  if (isLightAlternate(key)) {
+  if (isSpecialistVariety(key)) {
     return Math.floor(reserve * CONFIG.botLightAltLandReserve);
   }
   return reserve;
@@ -152,43 +171,43 @@ export function chooseSpawnKey(side, base, profile, ctx) {
   const mods = ctx.mods;
 
   if (yellow && canBuyAlt(side, yellow)) {
-    if (base === "troop"
-      && countType(laneUnits, "troop") >= CONFIG.botMinTroopsBeforeSupport
+    if (base === "regulars"
+      && countType(laneUnits, "infantry") >= CONFIG.botMinTroopsBeforeSupport
       && ctx.posture !== "hold"
       && ctx.posture !== "defend") {
       return yellow;
     }
-    if (base === "skirmisher" && ctx.mapHasWoodsOrPeaks) return yellow;
+    if (base === "light" && ctx.mapHasWoodsOrPeaks) return yellow;
     if (base === "dragoon" && ctx.frontSlowed) return yellow;
-    if (base === "cannon"
+    if (base === "fieldGun"
       && (ctx.enemyRows >= CONFIG.botHowitzerMinRows || ctx.gunsBlocked)) {
       return yellow;
     }
-    if (base === "officer" && ctx.mapHasRiverOrHill) return yellow;
+    if (base === "major" && ctx.mapHasRiverOrHill) return yellow;
   }
 
   if (!white || !canBuyAlt(side, white)) return base;
   // Cheap light filler when the base unit is out of reach.
   if (!side.canAffordUnit(base)) return white;
-  if (base === "troop") {
-    if (countType(laneUnits, "troop") < CONFIG.botMinTroopsBeforeSupport) return base;
+  if (base === "regulars") {
+    if (countType(laneUnits, "infantry") < CONFIG.botMinTroopsBeforeSupport) return base;
     if (ctx.posture !== "hold" && ctx.posture !== "defend") return base;
     return white;
   }
-  if (base === "skirmisher") {
+  if (base === "light") {
     if (!mods.skirmisherFromCavalry) return base;
-    if (countType(ctx.allFriends, "skirmisher") < 1) return base;
+    if (countType(ctx.allFriends, "skirmishers") < 1) return base;
     return white;
   }
   if (base === "dragoon") {
     if (!mods.dragoonFromSupport) return base;
     return white;
   }
-  if (base === "cannon") {
+  if (base === "fieldGun") {
     if (ctx.enemyRows < CONFIG.botHowitzerMinRows) return base;
     return white;
   }
-  if (base === "officer") {
+  if (base === "major") {
     if (countType(ctx.allFriends, "officer") < 1) return base;
     if (ctx.armyValue < CONFIG.botColorGuardMinValue) return base;
     return white;
@@ -207,7 +226,7 @@ function laneFrontMoveFactor(info) {
 function urgencyOf(snapshot, lane, profile) {
   const info = snapshot.lanes[lane];
   const threat = info.threat * CONFIG.botUrgencyThreat;
-  const disadvantage = (Math.max(0, info.enemyValue - info.friendValue) / UNIT_STATS.troop.cost)
+  const disadvantage = (Math.max(0, info.enemyValue - info.friendValue) / UNIT_STATS.regulars.cost)
     * CONFIG.botUrgencyDisadvantage;
   const shareDeficit = Math.max(0, 0.5 - info.share) * CONFIG.botUrgencyShare;
   let economy = 0;
@@ -270,7 +289,7 @@ export function pickBuyLane(snapshot, state, profile) {
 }
 
 function laneTroopCount(units) {
-  return countType(units, "troop");
+  return countType(units, "infantry");
 }
 
 function canBank(side, sim) {
@@ -312,7 +331,7 @@ export function decideEconomy(bot, sim, snapshot, profile) {
   }
 
   if (desperate) {
-    const bought = tryBuy(bot, sim, self, lane, "troop", profile, composed, info, allFriends);
+    const bought = tryBuy(bot, sim, self, lane, "infantry", profile, composed, info, allFriends);
     if (bought) return;
     if (taxPressure(self) && canBank(self, sim)) {
       sim.applyCommand(bot.sideId, { type: "bank" });
@@ -321,7 +340,7 @@ export function decideEconomy(bot, sim, snapshot, profile) {
   }
 
   if (laneTroopCount(info.friendlies) < CONFIG.botMinTroopsBeforeSupport) {
-    if (tryBuy(bot, sim, self, lane, "troop", profile, composed, info, allFriends)) return;
+    if (tryBuy(bot, sim, self, lane, "infantry", profile, composed, info, allFriends)) return;
   }
 
   const deficitLarge = topDeficit > CONFIG.botUpgradeDeficitSkip;
@@ -358,7 +377,8 @@ function buyAffordableDeficit(bot, sim, self, lane, profile, composed, info, all
   return false;
 }
 
-function tryBuy(bot, sim, self, lane, base, profile, composed, info, allFriends) {
+function tryBuy(bot, sim, self, lane, category, profile, composed, info, allFriends) {
+  const base = CATEGORY_SPAWN[category] || category;
   const kinds = mapKinds(sim.mapId);
   const key = chooseSpawnKey(self, base, profile, {
     laneUnits: info.friendlies,
@@ -402,8 +422,8 @@ function upgradeTown(snapshot, self, mode, posture) {
     const kind = town.upgradeKind();
     if (self.upgrades[kind] >= CONFIG.upgradeMax) continue;
     if (self.land < self.upgradeCost(kind)) continue;
-    const dx = town.x - self.capital.x;
-    const dy = town.y - self.capital.y;
+    const dx = town.x - self.keep.x;
+    const dy = town.y - self.keep.y;
     const d = dx * dx + dy * dy;
     if (d < bestD) {
       bestD = d;

@@ -18,10 +18,10 @@ test("cached top polyline matches keep endpoints and spread", () => {
   clearWorldPointsCache();
   const pts = Path.worldPoints("top", 0);
   assert.equal(pts.length, 2);
-  assert.equal(pts[0].x, CONFIG.playerCapital.x);
-  assert.equal(pts[1].x, CONFIG.enemyCapital.x);
+  assert.equal(pts[0].x, CONFIG.playerKeep.x);
+  assert.equal(pts[1].x, CONFIG.enemyKeep.x);
   const n = Path.sublaneNorm(0, CONFIG.topSublaneCount);
-  const y = CONFIG.playerCapital.y + n * CONFIG.topSublaneSpread;
+  const y = CONFIG.playerKeep.y + n * CONFIG.topSublaneSpread;
   assert.equal(pts[0].y, y);
   assert.equal(pts[1].y, y);
 });
@@ -37,8 +37,8 @@ test("cached bottom arc has expected segment count and endpoints on the ring", (
   const end = pts[pts.length - 1];
   assert.ok(Math.abs(distance(start, c) - r) < 1e-6);
   assert.ok(Math.abs(distance(end, c) - r) < 1e-6);
-  assert.ok(Math.abs(start.x - CONFIG.playerCapital.x) < 1e-6);
-  assert.ok(Math.abs(end.x - CONFIG.enemyCapital.x) < 1e-6);
+  assert.ok(Math.abs(start.x - CONFIG.playerKeep.x) < 1e-6);
+  assert.ok(Math.abs(end.x - CONFIG.enemyKeep.x) < 1e-6);
 });
 
 test("clearWorldPointsCache forces a new array identity", () => {

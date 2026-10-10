@@ -1583,7 +1583,7 @@ export class GameRoom {
     if (this.recorded || !this.sim.winner || this.status !== "playing") return;
     this.recorded = true;
     const winner = this.sim.winner;
-    const winReason = this.sim.winReason || "capital";
+    const winReason = this.sim.winReason || "keep";
     const a = this.seat.a;
     const b = this.seat.b;
     const endedAt = Date.now();

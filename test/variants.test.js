@@ -46,23 +46,25 @@ function step(sim, dt = 0.05, n = 8) {
 
 describe("alternate catalog", () => {
   it("cycles base → yellow elite → white light", () => {
-    const opts = variantOptions("troop");
-    assert.deepEqual(opts, ["troop", "grenadier", "militia"]);
-    assert.equal(cycleVariantPick("troop", "troop", 1), "grenadier");
-    assert.equal(cycleVariantPick("troop", "grenadier", 1), "militia");
-    assert.equal(cycleVariantPick("troop", "militia", 1), "troop");
-    assert.equal(cycleVariantPick("troop", "troop", -1), "militia");
+    const opts = variantOptions("regulars");
+    assert.deepEqual(opts, ["regulars", "grenadier", "militia"]);
+    assert.equal(cycleVariantPick("regulars", "regulars", 1), "grenadier");
+    assert.equal(cycleVariantPick("regulars", "grenadier", 1), "militia");
+    assert.equal(cycleVariantPick("regulars", "militia", 1), "regulars");
+    assert.equal(cycleVariantPick("regulars", "regulars", -1), "militia");
     assert.equal(variantBadgeFill("grenadier"), CONFIG.colors.yellowAlternate);
     assert.equal(variantBadgeFill("militia"), CONFIG.colors.whiteAlternate);
-    assert.equal(variantBadgeFill("troop"), null);
+    assert.equal(variantBadgeFill("regulars"), null);
   });
 
-  it("charges elite land at the elite ratio and light at the light ratio", () => {
+  it("charges elite land at the elite ratio and specialist at the specialist ratio", () => {
+    const specialistRatio =
+      CONFIG.specialistUnitLandCostRatio ?? CONFIG.lightUnitLandCostRatio;
     assert.equal(unitLandCost("grenadier"), Math.round(unitStats("grenadier").cost * CONFIG.unitLandCostRatio));
-    assert.equal(unitLandCost("militia"), Math.round(unitStats("militia").cost * CONFIG.lightUnitLandCostRatio));
-    assert.equal(unitLandCost("troop"), 0);
-    assert.equal(mobilityClass("horseGun"), "artillery");
-    assert.equal(mobilityClass("hussar"), "cavalry");
+    assert.equal(unitLandCost("militia"), Math.round(unitStats("militia").cost * specialistRatio));
+    assert.equal(unitLandCost("regulars"), 0);
+    assert.equal(mobilityClass("horseGun"), "limbered");
+    assert.equal(mobilityClass("hussar"), "mounted");
   });
 });
 
@@ -70,8 +72,10 @@ describe("militia", () => {
   it("lines with troops and keeps the troop line bonus", () => {
     const sim = makeSim();
     const a = spawn(sim, "player", "militia", "top", { progress: 0.4, sublane: 1, order: "halt" });
-    const b = spawn(sim, "player", "troop", "top", { progress: 0.4, sublane: 2, order: "halt" });
-    spawn(sim, "enemy", "troop", "top", { progress: 0.55, sublane: 2, order: "halt" });
+    const b = spawn(sim, "player", "regulars", "top", { progress: 0.4, sublane: 2, order: "halt" });
+    spawn(sim, "enemy", "regulars", "top", { progress: 0.55, sublane: 2, order: "halt" });
+    assert.equal(a.category, "infantry");
+    assert.equal(a.unit, "militia");
     assert.equal(a.type, "troop");
     assert.equal(a.variant, "militia");
     const line = a.lineGroup(sim.player.troops);
@@ -83,7 +87,7 @@ describe("militia", () => {
 describe("guerrilla stealth", () => {
   it("hides at range, reveals within 50 paces, and reveals after a shot", () => {
     const sim = makeSim();
-    spawn(sim, "player", "troop", "top", { progress: 0.1, sublane: 2, order: "halt" });
+    spawn(sim, "player", "regulars", "top", { progress: 0.1, sublane: 2, order: "halt" });
     const guerilla = spawn(sim, "enemy", "guerrilla", "top", {
       progress: 0.2,
       sublane: 2,
@@ -92,7 +96,7 @@ describe("guerrilla stealth", () => {
     const tb = troopsBySide(sim);
     assert.equal(isEnemyVisible("player", guerilla, tb), false);
 
-    const near = spawn(sim, "player", "troop", "top", { progress: 0.78, sublane: 2, order: "halt" });
+    const near = spawn(sim, "player", "regulars", "top", { progress: 0.78, sublane: 2, order: "halt" });
     assert.equal(isEnemyVisible("player", guerilla, troopsBySide(sim)), true);
 
     near.hp = 0;
@@ -105,7 +109,7 @@ describe("guerrilla stealth", () => {
 
   it("cannot be seen or shot outside stealth range unless they just fired", () => {
     const sim = makeSim();
-    const watcher = spawn(sim, "player", "troop", "top", {
+    const watcher = spawn(sim, "player", "regulars", "top", {
       progress: 0.35,
       sublane: 2,
       order: "halt",
@@ -136,7 +140,7 @@ describe("guerrilla stealth", () => {
       sublane: 2,
       order: "halt",
     });
-    spawn(open, "enemy", "troop", "top", {
+    spawn(open, "enemy", "regulars", "top", {
       progress: progressFromPlayerPaces("enemy", "top", 430),
       sublane: 2,
       order: "halt",
@@ -165,7 +169,7 @@ describe("guerrilla stealth", () => {
       order: "halt",
     });
     const ahead = woods.centerPaces + woods.halfWidthPaces + 40;
-    spawn(sim, "enemy", "troop", "bottom", {
+    spawn(sim, "enemy", "regulars", "bottom", {
       progress: progressFromPlayerPaces("enemy", "bottom", ahead),
       sublane: woods.sublanes[0],
       order: "halt",
@@ -218,7 +222,7 @@ describe("horse guns", () => {
 describe("engineer", () => {
   it("does not restore friends", () => {
     const sim = makeSim();
-    const ally = spawn(sim, "player", "troop", "top", { progress: 0.5, sublane: 2 });
+    const ally = spawn(sim, "player", "regulars", "top", { progress: 0.5, sublane: 2 });
     spawn(sim, "player", "engineer", "top", { progress: 0.5, sublane: 1 });
     ally.hp = 40;
     ally.fatigue = 40;
@@ -229,12 +233,12 @@ describe("engineer", () => {
   it("unblocks LOS through a nearby unoccupied hill", () => {
     const sim = makeSim({ mapId: "default" });
     const hill = featuresOnMap("default").find((f) => f.id === "hill-top-nw");
-    const observer = spawn(sim, "player", "troop", "top", {
+    const observer = spawn(sim, "player", "regulars", "top", {
       progress: progressFromPlayerPaces("player", "top", hill.centerPaces - 80),
       sublane: 0,
       order: "halt",
     });
-    const target = spawn(sim, "enemy", "troop", "top", {
+    const target = spawn(sim, "enemy", "regulars", "top", {
       progress: progressFromPlayerPaces("enemy", "top", hill.centerPaces + 80),
       sublane: 0,
       order: "halt",
@@ -252,14 +256,14 @@ describe("engineer", () => {
   it("pontoons a river for artillery and peels guns when the pontoon drops", () => {
     const sim = makeSim({ mapId: "default" });
     const river = featuresOnMap("default").find((f) => f.id === "river-bottom-outer");
-    assert.equal(canOccupy("cannon", "bottom", 0, river.centerPaces), false);
+    assert.equal(canOccupy("fieldGun", "bottom", 0, river.centerPaces), false);
     const eng = spawn(sim, "player", "engineer", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", river.centerPaces - 10),
       sublane: 1,
     });
     sim.syncTerrainFx();
-    assert.equal(canOccupy("cannon", "bottom", 0, river.centerPaces), true);
-    const gun = spawn(sim, "player", "cannon", "bottom", {
+    assert.equal(canOccupy("fieldGun", "bottom", 0, river.centerPaces), true);
+    const gun = spawn(sim, "player", "fieldGun", "bottom", {
       progress: progressFromPlayerPaces("player", "bottom", river.centerPaces),
       sublane: 0,
       order: "halt",
@@ -280,7 +284,7 @@ describe("engineer", () => {
       progress: progressFromPlayerPaces("player", "top", hill.centerPaces),
       sublane: 0,
     });
-    const friend = spawn(sim, "player", "troop", "top", {
+    const friend = spawn(sim, "player", "regulars", "top", {
       progress: progressFromPlayerPaces("player", "top", hill.centerPaces + 40),
       sublane: 2,
     });
@@ -311,7 +315,7 @@ describe("engineer", () => {
     assert.equal(shootRangeFactor(onHill), 1 + CONFIG.hillRangeBonus);
     assert.equal(shootRangeFactor(onPeak), 1);
 
-    const farFriend = spawn(sim, "player", "troop", "top", {
+    const farFriend = spawn(sim, "player", "regulars", "top", {
       progress: progressFromPlayerPaces("player", "top", hill.centerPaces + 90),
       sublane: 2,
     });

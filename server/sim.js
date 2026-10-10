@@ -1,5 +1,18 @@
 import { CONFIG, truncateDamage, splatDamage } from "../shared/config.js";
-import { UNIT_STATS, unitStats, massTaxOf, unitLandCost, isAlternateUnit } from "../shared/units.js";
+import {
+  UNIT_STATS,
+  unitStats,
+  massTaxOf,
+  unitLandCost,
+  isAlternateUnit,
+  resolveUnitId,
+  unitDef,
+  unitCategory,
+  legacyTypeOfCategory,
+  legacyVariantOf,
+  unitIdOf,
+  categoryOf,
+} from "../shared/units.js";
 import {
   Path,
   distance,
@@ -28,15 +41,27 @@ import {
 } from "../shared/terrain.js";
 import { getMap, computeResourceIncomes } from "../shared/map/index.js";
 
+/** Set living taxonomy + dual-emit legacy type/variant/alternate. */
+function initUnitIdentity(unit, unitId) {
+  const id = resolveUnitId(unitId);
+  const def = unitDef(id);
+  unit.unit = id;
+  unit.category = def.category;
+  unit.variety = def.variety;
+  unit.type = legacyTypeOfCategory(def.category);
+  unit.variant = legacyVariantOf(id);
+  unit.alternate = def.variety !== "standard";
+}
+
 /** Per-lane grand strategy modes (cycle order). Kept for a future game mode. */
 const TARGETING_MODES = ["bastion", "attrition", "terror"];
 void TARGETING_MODES;
 
 /** hp% − fatigue%; Attrition maximizes, Terror minimizes. Keep uses HP only. */
 function targetVitality(unit) {
-  if (unit && unit.capitalHP !== undefined) {
-    const max = CONFIG.capitalHP;
-    return max > 0 ? Math.max(0, unit.capitalHP) / max : 0;
+  if (unit && unit.keepHP !== undefined) {
+    const max = CONFIG.keepHP;
+    return max > 0 ? Math.max(0, unit.keepHP) / max : 0;
   }
   const hpPct = unit.maxHp > 0 ? Math.max(0, unit.hp) / unit.maxHp : 0;
   const fatPct = unit.maxFatigue > 0 ? unit.fatigue / unit.maxFatigue : 0;
@@ -49,7 +74,7 @@ function targetVitality(unit) {
  */
 function isValidRangedTarget(other) {
   if (!other) return false;
-  if (other.capitalHP !== undefined) return other.capitalHP > 0;
+  if (other.keepHP !== undefined) return other.keepHP > 0;
   if (other.hp <= 0) return false;
   if (other.isMeleeTargetLocked && other.isMeleeTargetLocked()) return false;
   return true;
@@ -57,7 +82,7 @@ function isValidRangedTarget(other) {
 
 /** Halted Guerillas in the open only shoot inside stealth paces. */
 function guerrillaHaltOpenStealthOnly(unit) {
-  if (!unit || unit.variant !== "guerrilla" || unit.order !== "halt") return false;
+  if (!unit || unit.unit !== "guerrilla" || unit.order !== "halt") return false;
   return featuresUnder(unit, unit.mapId()).length === 0;
 }
 
@@ -72,7 +97,7 @@ function guerrillaHaltShotRangePaces(unit, weaponPaces) {
  */
 function targetPriorityPaces(shooter, other) {
   const d = shooter.shotPaces(other);
-  if (other && other.capitalHP !== undefined) {
+  if (other && other.keepHP !== undefined) {
     return Math.max(0, d - CONFIG.keepTargetDistanceOffsetPaces);
   }
   return d;
@@ -99,12 +124,12 @@ function isBetterTarget(mode, candD, candVit, bestD, bestVit) {
  * Skirmisher / Rifles shot priority (lower is better). Cavalry is tier 0
  * only when it is the closest valid target; otherwise it sits after guns.
  */
-function skirmisherTargetTier(type, dist, closestDist) {
-  if (type === "dragoon") return dist <= closestDist ? 0 : 4;
-  if (type === "skirmisher") return 1;
-  if (type === "officer") return 2;
-  if (type === "cannon") return 3;
-  if (type === "troop") return 5;
+function skirmisherTargetTier(category, dist, closestDist) {
+  if (category === "cavalry") return dist <= closestDist ? 0 : 4;
+  if (category === "skirmishers") return 1;
+  if (category === "officer") return 2;
+  if (category === "artillery") return 3;
+  if (category === "infantry") return 5;
   return 6;
 }
 
@@ -118,7 +143,7 @@ function skirmisherTargetTier(type, dist, closestDist) {
  */
 function preferNearestRowAmongAligned(shooter, primary, eligible, keepSide) {
   if (!CONFIG.preferNearestRowAmongAlignedTargets) return primary;
-  if (!primary || primary.capitalHP !== undefined) return primary;
+  if (!primary || primary.keepHP !== undefined) return primary;
   if (!shooter || primary.lane !== shooter.lane) return primary;
   if (!eligible || !eligible.length) return primary;
 
@@ -129,7 +154,7 @@ function preferNearestRowAmongAligned(shooter, primary, eligible, keepSide) {
 
   for (let i = 0; i < eligible.length; i += 1) {
     const other = eligible[i];
-    if (!other || other === primary || other.capitalHP !== undefined) continue;
+    if (!other || other === primary || other.keepHP !== undefined) continue;
     if (other.lane !== primary.lane) continue;
     if (!primary.withinLine(other)) continue;
     hasAligned = true;
@@ -166,7 +191,7 @@ class Projectile {
     this.baseDamage = damage;
     this.allies = allies;
     this.kind = kind || "shoot";
-    this.sourceType = sourceType || "troop";
+    this.sourceType = sourceType || "regulars";
     this.sim = sim;
     this.speed = shot && shot.speed != null ? shot.speed : UNIT_STATS.troop.projectileSpeed;
     this.size = shot && shot.size != null ? shot.size : UNIT_STATS.troop.projectileSize;
@@ -207,7 +232,7 @@ class Projectile {
   /** World point the shell is flying toward. */
   dest() {
     if (this.bounce) return this.bounce;
-    if (this.target && this.target.capital) return this.target.capital;
+    if (this.target && this.target.keep) return this.target.keep;
     return this.target;
   }
 
@@ -286,7 +311,7 @@ class Projectile {
     if (!atk || typeof atk.lineDamagePercent !== "function") return sum;
     if (this.kind === "melee") return sum;
     const target = this.target;
-    if (target && target.type === "skirmisher") return sum;
+    if (target && categoryOf(target) === "skirmishers") return sum;
     return sum + atk.lineDamagePercent(this.allies);
   }
 
@@ -320,10 +345,10 @@ class Projectile {
       return;
     }
     const attackerSum = this.impactAttackerSum();
-    if (this.target.capitalHP !== undefined) {
+    if (this.target.keepHP !== undefined) {
       const hit = this.target.applyKeepDamage(this.damage, attackerSum);
-      this.target.capitalHP -= hit;
-      const keep = this.target.capital;
+      this.target.keepHP -= hit;
+      const keep = this.target.keep;
       this.sim.spawnSplat(keep.x, keep.y, hit, this.kind);
       this.sim.emitSound({ type: "keep", sideId: this.sideId });
       this.alive = false;
@@ -383,11 +408,14 @@ class Unit {
     this.side = side;
     this.lane = lane;
     this.sublane = sublane;
-    this.type = "troop";
+    this.unit = "regulars";
+    this.category = "infantry";
+    this.variety = "standard";
+    this.type = legacyTypeOfCategory("infantry");
     this.variant = null;
     this.alternate = false;
     this.lastShotAt = null;
-    this.applyStats(UNIT_STATS.troop);
+    this.applyStats(UNIT_STATS.regulars);
     this.progress = 0;
     this.cooldown = 0;
     this.flash = 0;
@@ -910,7 +938,7 @@ class Unit {
 
   /** Each type only lines with its own kind. */
   sameLineType(other) {
-    return this.type === other.type;
+    return this.category === other.category;
   }
 
   /** True when the other unit sits in the next row over. */
@@ -1181,7 +1209,7 @@ class Unit {
       if (ally === this || ally.hp <= 0 || ally.lane !== this.lane) {
         continue;
       }
-      if (ally.type !== "troop" || !this.adjacentRow(ally)) {
+      if (ally.category !== "infantry" || !this.adjacentRow(ally)) {
         continue;
       }
       if (ally.order !== "halt" && ally.order !== "reform") {
@@ -1229,7 +1257,7 @@ class Unit {
    * absorb mid-manoeuvre.
    */
   tryJoinAhead(allies) {
-    if (this.type !== "troop" || this.broken) {
+    if (this.category !== "infantry" || this.broken) {
       return;
     }
     if (this.suppressOrderPass && !this.orderPassInLineNeighbor(allies)) {
@@ -1856,16 +1884,16 @@ class Unit {
   }
 
   /** True while standing in this side's keep cannon range. */
-  inCapitalRange() {
-    return distance(this, this.side.capital) <= CONFIG.capitalCannonRange;
+  inKeepRange() {
+    return distance(this, this.side.keep) <= CONFIG.keepCannonRange;
   }
 
   /** True when this body overlaps this side's keep circle. */
-  overlapsOwnCapital() {
-    const capital = this.side && this.side.capital;
-    if (!capital) return false;
-    const reach = CONFIG.capitalRadius + this.bodyRadius();
-    return distance(this, capital) <= reach;
+  overlapsOwnKeep() {
+    const keepPos = this.side && this.side.keep;
+    if (!keepPos) return false;
+    const reach = CONFIG.keepRadius + this.bodyRadius();
+    return distance(this, keepPos) <= reach;
   }
 
   /**
@@ -1899,10 +1927,10 @@ class Unit {
         this.maxFatigue,
         this.fatigue + CONFIG.fatigueCombatRate * dt,
       );
-    } else if (this.inCapitalRange()) {
+    } else if (this.inKeepRange()) {
       const recovered = CONFIG.fatigueRecoverRate * dt;
       this.fatigue = Math.max(0, this.fatigue - recovered);
-      if (this.hp > 0 && this.overlapsOwnCapital() && this.fortsClearOfEnemies()) {
+      if (this.hp > 0 && this.overlapsOwnKeep() && this.fortsClearOfEnemies()) {
         const sim = this.side && this.side.sim;
         if (sim) {
           const gained = sim.applyHeal(this, recovered);
@@ -1989,7 +2017,7 @@ class Unit {
    */
   clampTerrainProgress(nextProgress) {
     if (nextProgress == null || !this.side || !this.lane) return nextProgress;
-    const type = this.variant || this.type;
+    const type = unitIdOf(this);
     const from = playerPacesFromProgress(this.side.id, this.lane, this.progress);
     const to = playerPacesFromProgress(this.side.id, this.lane, nextProgress);
     const clamped = clampPaceMove(type, this.lane, this.sublane, from, to, this.mapId());
@@ -2015,7 +2043,7 @@ class Unit {
   pickTerrainBypassSublane(dir, enemies) {
     if (!this.side || !this.lane) return null;
     const sign = dir < 0 ? -1 : 1;
-    const type = this.variant || this.type;
+    const type = unitIdOf(this);
     const mapId = this.mapId();
     const from = playerPacesFromProgress(this.side.id, this.lane, this.progress);
     const probe = Math.max(0, Math.min(1, this.progress + sign * 0.2));
@@ -2140,7 +2168,7 @@ class Unit {
 
   /** Along-lane paces to a unit, or the path back through our keep for the other lane. */
   shotPaces(other) {
-    if (other && other.capitalHP !== undefined) {
+    if (other && other.keepHP !== undefined) {
       return (1 - this.progress) * Path.lanePaces(this.lane);
     }
     if (other && other.lane === this.lane) {
@@ -2165,8 +2193,8 @@ class Unit {
   /** True when other is a legal shot at this pace range and LOS is clear. */
   inShotRange(other, rangePaces) {
     if (!other) return false;
-    if (other.capitalHP !== undefined) {
-      if (other.capitalHP <= 0) return false;
+    if (other.keepHP !== undefined) {
+      if (other.keepHP <= 0) return false;
       if (!(this.shotPaces(other) <= rangePaces)) return false;
     } else {
       if (other.hp <= 0) return false;
@@ -2217,7 +2245,7 @@ class Unit {
   /** How often this unit may strike. Fall Back reloads at half rate, except skirmishers. */
   strikeDelay(kind) {
     let base = kind === "melee" ? this.meleeCooldown : this.rangedCooldown;
-    if (kind !== "melee" && this.order === "fallback" && this.type !== "skirmisher") {
+    if (kind !== "melee" && this.order === "fallback" && this.category !== "skirmishers") {
       base *= 2;
     }
     return base;
@@ -2287,7 +2315,7 @@ class Unit {
       return false;
     }
     const paces = playerPacesFromProgress(this.side.id, this.lane, this.progress);
-    if (!canOccupy(this.variant || this.type, this.lane, sublane, paces, this.mapId())) {
+    if (!canOccupy(unitIdOf(this), this.lane, sublane, paces, this.mapId())) {
       return false;
     }
     const dest = Path.pointAt(Path.waypoints(this.side.id, this.lane, sublane), this.progress);
@@ -3389,7 +3417,7 @@ class Unit {
    */
   nearestTarget(enemies, maxRange, allies, enemySide) {
     const range = maxRange === undefined ? this.relevantRangePaces() : maxRange;
-    if (this.type === "skirmisher") {
+    if (this.category === "skirmishers") {
       return this.skirmisherNearestTarget(enemies, range, enemySide);
     }
     // Grand strategies disabled; always Bastion (closest eligible).
@@ -3408,9 +3436,9 @@ class Unit {
       if (!isValidRangedTarget(other)) continue;
       if (!this.inShotRange(other, range)) continue;
       const d = this.shotPaces(other);
-      if (other.type !== "officer") otherInRange = true;
+      if (other.category !== "officer") otherInRange = true;
       const vit = targetVitality(other);
-      if (other.type === "officer") {
+      if (other.category === "officer") {
         officers.push(other);
         if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
@@ -3470,7 +3498,7 @@ class Unit {
     let bestD = Infinity;
     for (let i = 0; i < candidates.length; i += 1) {
       const { other, d } = candidates[i];
-      const tier = skirmisherTargetTier(other.type, d, closestDist);
+      const tier = skirmisherTargetTier(other.category, d, closestDist);
       if (tier < bestTier || (tier === bestTier && d < bestD)) {
         bestTier = tier;
         bestD = d;
@@ -3487,7 +3515,7 @@ class Unit {
     const pool = [];
     for (let i = 0; i < candidates.length; i += 1) {
       const { other, d } = candidates[i];
-      if (skirmisherTargetTier(other.type, d, closestDist) === bestTier) {
+      if (skirmisherTargetTier(other.category, d, closestDist) === bestTier) {
         pool.push(other);
       }
     }
@@ -3537,15 +3565,16 @@ class Unit {
     this.hp -= hit;
     if (hit > 0 && this.side) {
       this.side.dmgTaken += hit;
-      if (this.type) {
-        this.side.dmgTakenByType[this.type] = (this.side.dmgTakenByType[this.type] || 0) + hit;
+      const victimType = this.unit || unitIdOf(this);
+      if (victimType) {
+        this.side.dmgTakenByType[victimType] = (this.side.dmgTakenByType[victimType] || 0) + hit;
       }
       let dealSide = null;
       let atkType = null;
       if (attacker) {
         if (attacker.side) {
           dealSide = attacker.side;
-          atkType = attacker.type || null;
+          atkType = attacker.unit || unitIdOf(attacker) || null;
         } else if (attacker.troops && attacker.upgrades) {
           dealSide = attacker;
           atkType = "keep";
@@ -3722,14 +3751,14 @@ class Unit {
    */
   lineDamagePercent(allies) {
     const perMate = CONFIG.troopLineBonus || 0;
-    if (!(perMate > 0) || this.type !== "troop") return 0;
+    if (!(perMate > 0) || this.category !== "infantry") return 0;
     const group = allies || [];
     const line = this.lineGroup(group);
     const foes = this.enemyTroops();
     let mates = 0;
     for (let i = 0; i < line.length; i += 1) {
       const mate = line[i];
-      if (mate === this || mate.type !== "troop" || mate.isInMelee(foes)) continue;
+      if (mate === this || mate.category !== "infantry" || mate.isInMelee(foes)) continue;
       const enemySide = mate.side === this.side.sim.player ? this.side.sim.enemy : this.side.sim.player;
       if (mate.nearestTarget(foes, mate.shootRange(), group, enemySide)) mates += 1;
     }
@@ -3743,14 +3772,14 @@ class Unit {
    */
   packDamagePercent(allies) {
     const perMate = CONFIG.cavalryPackBonus || 0;
-    if (!(perMate > 0) || this.variant !== "hussar") return 0;
+    if (!(perMate > 0) || this.unit !== "hussar") return 0;
     const reach = this.bodyRadius() + CONFIG.meleeSlack;
     const group = allies || (this.side ? this.side.troops : []);
     let mates = 0;
     for (let i = 0; i < group.length; i += 1) {
       const ally = group[i];
       if (!ally || ally === this || ally.hp <= 0) continue;
-      if (ally.variant !== "hussar") continue;
+      if (ally.unit !== "hussar") continue;
       if (ally.lane !== this.lane) continue;
       const dist = distance(this, ally);
       if (dist > reach + ally.bodyRadius()) continue;
@@ -3777,7 +3806,7 @@ class Unit {
     for (let i = 0; i < group.length; i += 1) {
       const source = group[i];
       if (source === this || source.hp <= 0) continue;
-      if (source.variant !== "colorGuard") continue;
+      if (source.unit !== "colorGuard") continue;
       if (source.lane !== this.lane) continue;
       const gap = Math.abs(source.station() - this.station()) / per;
       if (gap <= CONFIG.officerRestorePaces) return true;
@@ -3814,12 +3843,12 @@ class Unit {
     if (strike === "melee" && target.lane && this.isFlanking(target)) {
       sum += this.flankMultiplier - 1;
     }
-    if (!omitLine && strike !== "melee" && target.type !== "skirmisher") {
+    if (!omitLine && strike !== "melee" && categoryOf(target) !== "skirmishers") {
       sum += this.lineDamagePercent(allies);
     }
     if (strike === "melee") sum += this.packDamagePercent(allies);
     if (this.side) sum += this.side.damageScale() - 1;
-    if (target.type === "officer") sum += (this.officerDamageMultiplier || 1) - 1;
+    if (categoryOf(target) === "officer") sum += (this.officerDamageMultiplier || 1) - 1;
     sum += this.healthDamageFactor(allies) - 1;
     return sum;
   }
@@ -3865,10 +3894,10 @@ class Unit {
     const shot = this.attackDamage(target, strike, allies);
     if (strike === "melee") {
       this.fatigue = Math.min(this.maxFatigue, this.fatigue + CONFIG.fatigueOnMelee);
-      if (target && target.capitalHP !== undefined) {
+      if (target && target.keepHP !== undefined) {
         const hit = target.applyKeepDamage(shot.raw, shot.attackerSum);
-        target.capitalHP -= hit;
-        this.side.sim.spawnSplat(target.capital.x, target.capital.y, hit, "melee");
+        target.keepHP -= hit;
+        this.side.sim.spawnSplat(target.keep.x, target.keep.y, hit, "melee");
         this.side.sim.emitSound({ type: "keep", sideId: this.side.id });
       } else if (target && target.takeDamage) {
         this.side.sim.emitSound({ type: "melee", sideId: this.side.id });
@@ -3909,7 +3938,7 @@ class Unit {
     this.cooldown = this.strikeDelay(strike);
     this.flash = 0.12;
     this.markShotFired();
-    if (this.type === "cannon") {
+    if (this.category === "artillery") {
       this.applyPushback(this.shootingPushback, false);
     }
   }
@@ -4189,8 +4218,8 @@ class Unit {
 class Troop extends Unit {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.type = "troop";
-    this.applyStats(UNIT_STATS.troop);
+    initUnitIdentity(this, "regulars");
+    this.applyStats(UNIT_STATS.regulars);
   }
 }
 
@@ -4201,8 +4230,8 @@ class Troop extends Unit {
 class Skirmisher extends Unit {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.type = "skirmisher";
-    this.applyStats(UNIT_STATS.skirmisher);
+    initUnitIdentity(this, "light");
+    this.applyStats(UNIT_STATS.light);
   }
 }
 
@@ -4213,7 +4242,7 @@ class Skirmisher extends Unit {
 class Dragoon extends Unit {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.type = "dragoon";
+    initUnitIdentity(this, "dragoon");
     this.applyStats(UNIT_STATS.dragoon);
   }
 }
@@ -4225,8 +4254,8 @@ class Dragoon extends Unit {
 class Cannon extends Unit {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.type = "cannon";
-    this.applyStats(UNIT_STATS.cannon);
+    initUnitIdentity(this, "fieldGun");
+    this.applyStats(UNIT_STATS.fieldGun);
   }
 
   /** A charging or melee-locked gun does not shoot. */
@@ -4245,8 +4274,8 @@ class Cannon extends Unit {
 class Officer extends Unit {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.type = "officer";
-    this.applyStats(UNIT_STATS.officer);
+    initUnitIdentity(this, "major");
+    this.applyStats(UNIT_STATS.major);
   }
 
   /**
@@ -4275,8 +4304,7 @@ class Officer extends Unit {
 class Grenadier extends Troop {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "grenadier";
-    this.alternate = true;
+    initUnitIdentity(this, "grenadier");
     this.applyStats(UNIT_STATS.grenadier);
   }
 }
@@ -4285,8 +4313,7 @@ class Grenadier extends Troop {
 class Rifle extends Skirmisher {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "rifle";
-    this.alternate = true;
+    initUnitIdentity(this, "rifle");
     this.applyStats(UNIT_STATS.rifle);
   }
 }
@@ -4295,8 +4322,7 @@ class Rifle extends Skirmisher {
 class Lancer extends Dragoon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "lancer";
-    this.alternate = true;
+    initUnitIdentity(this, "lancer");
     this.applyStats(UNIT_STATS.lancer);
   }
 }
@@ -4310,8 +4336,7 @@ class Lancer extends Dragoon {
 class Howitzer extends Cannon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "howitzer";
-    this.alternate = true;
+    initUnitIdentity(this, "howitzer");
     this.applyStats(UNIT_STATS.howitzer);
   }
 
@@ -4330,7 +4355,7 @@ class Howitzer extends Cannon {
       if (!this.inShotRange(other, maxRange)) continue;
       const d = this.shotPaces(other);
       const key = String(other.sublane);
-      if (other.type === "officer") {
+      if (other.category === "officer") {
         const prev = officer[key];
         if (!prev || d < prev.d) officer[key] = { unit: other, d };
         continue;
@@ -4436,8 +4461,7 @@ class Howitzer extends Cannon {
 class ColorGuard extends Officer {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "colorGuard";
-    this.alternate = true;
+    initUnitIdentity(this, "colorGuard");
     this.applyStats(UNIT_STATS.colorGuard);
   }
 }
@@ -4445,8 +4469,7 @@ class ColorGuard extends Officer {
 class Militia extends Troop {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "militia";
-    this.alternate = true;
+    initUnitIdentity(this, "militia");
     this.applyStats(UNIT_STATS.militia);
   }
 }
@@ -4454,8 +4477,7 @@ class Militia extends Troop {
 class Guerrilla extends Skirmisher {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "guerrilla";
-    this.alternate = true;
+    initUnitIdentity(this, "guerrilla");
     this.applyStats(UNIT_STATS.guerrilla);
   }
 }
@@ -4463,8 +4485,7 @@ class Guerrilla extends Skirmisher {
 class hussar extends Dragoon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "hussar";
-    this.alternate = true;
+    initUnitIdentity(this, "hussar");
     this.applyStats(UNIT_STATS.hussar);
   }
 }
@@ -4472,8 +4493,7 @@ class hussar extends Dragoon {
 class HorseGun extends Cannon {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "horseGun";
-    this.alternate = true;
+    initUnitIdentity(this, "horseGun");
     this.applyStats(UNIT_STATS.horseGun);
   }
 }
@@ -4481,18 +4501,17 @@ class HorseGun extends Cannon {
 class Engineer extends Officer {
   constructor(id, side, lane, sublane) {
     super(id, side, lane, sublane);
-    this.variant = "engineer";
-    this.alternate = true;
+    initUnitIdentity(this, "engineer");
     this.applyStats(UNIT_STATS.engineer);
   }
 }
 
 const UNIT_KINDS = {
-  troop: Troop,
-  skirmisher: Skirmisher,
+  regulars: Troop,
+  light: Skirmisher,
+  fieldGun: Cannon,
+  major: Officer,
   dragoon: Dragoon,
-  cannon: Cannon,
-  officer: Officer,
   grenadier: Grenadier,
   rifle: Rifle,
   lancer: Lancer,
@@ -4503,10 +4522,15 @@ const UNIT_KINDS = {
   hussar: hussar,
   horseGun: HorseGun,
   engineer: Engineer,
+  troop: Troop,
+  skirmisher: Skirmisher,
+  cannon: Cannon,
+  officer: Officer,
 };
 
 function createUnit(id, side, lane, sublane, type) {
-  const Ctor = UNIT_KINDS[type] || Troop;
+  const unitId = resolveUnitId(type);
+  const Ctor = UNIT_KINDS[unitId] || UNIT_KINDS[type] || Troop;
   return new Ctor(id, side, lane, sublane);
 }
 
@@ -4571,15 +4595,15 @@ class Checkpoint {
  * One combatant: gold, income, speed upgrades, keep health, and living troops.
  */
 class Side {
-  constructor(id, capital, sim) {
+  constructor(id, keep, sim) {
     this.id = id;
     this.sim = sim;
-    this.capital = capital;
+    this.keep = keep;
     this.gold = CONFIG.startGold;
     this.income = CONFIG.baseIncome;
     this.land = 0;
     this.landIncome = 0;
-    this.capitalHP = CONFIG.capitalHP;
+    this.keepHP = CONFIG.keepHP;
     this.speedMultiplier = 1;
     this.upgrades = { speed: 0, armor: 0, damage: 0 };
     this.upgradeProgress = { speed: 0, armor: 0, damage: 0 };
@@ -4676,7 +4700,8 @@ class Side {
 
   /** True when this side may spawn this unit key (base or alternate). */
   canSpawnUnit(type) {
-    return UNIT_KINDS[type] !== undefined;
+    const id = resolveUnitId(type);
+    return UNIT_KINDS[id] !== undefined;
   }
 
   /** True when gold (and land for alternates) covers the buy price. */
@@ -4703,7 +4728,7 @@ class Side {
     let n = 0;
     for (let i = 0; i < this.troops.length; i += 1) {
       const troop = this.troops[i];
-      if (troop.lane === lane && troop.hp > 0 && troop.type === type) {
+      if (troop.lane === lane && troop.hp > 0 && troop.type === legacyTypeOfCategory(unitCategory(type))) {
         n += 1;
       }
     }
@@ -4795,9 +4820,10 @@ class Side {
     const land = this.unitLandCost(type);
     this.gold -= cost;
     this.land -= land;
-    const troop = createUnit(nextId, this, lane, this.pickSublane(lane), type);
+    const unitId = resolveUnitId(type);
+    const troop = createUnit(nextId, this, lane, this.pickSublane(lane), unitId);
     this.troops.push(troop);
-    this.bought[type] = (this.bought[type] || 0) + 1;
+    this.bought[unitId] = (this.bought[unitId] || 0) + 1;
     return troop;
   }
 
@@ -4826,7 +4852,7 @@ class Side {
    * keeps have no lane of their own). May fire into melee.
    * Officers are ignored while any other enemy is in cannon range.
    */
-  capitalTarget(enemies, allies) {
+  keepGunTarget(enemies, allies) {
     // Grand strategies disabled; always Bastion (closest eligible).
     const mode = "bastion";
     let best = null;
@@ -4845,14 +4871,14 @@ class Side {
         continue;
       }
       const d = other.pacesFromKeep(this.id);
-      if (d > Path.pacesFromPx(CONFIG.capitalCannonRange)) {
+      if (d > Path.pacesFromPx(CONFIG.keepCannonRange)) {
         continue;
       }
       if (!hasShotLos(this, other, this.id, troopsBySide, mapId)) {
         continue;
       }
       const vit = targetVitality(other);
-      if (other.type === "officer") {
+      if (other.category === "officer") {
         if (!bestOfficer || isBetterTarget(mode, d, vit, bestOfficerD, bestOfficerVit)) {
           bestOfficerD = d;
           bestOfficerVit = vit;
@@ -4874,20 +4900,20 @@ class Side {
    * Uses cannon shooting pushback on units; the Keep itself never recoils
    * and never takes pushback (hits use applyKeepDamage, not takeDamage).
    */
-  fireCapital(target, allies, projectiles) {
-    const range = Math.max(Path.pacesFromPx(CONFIG.capitalCannonRange), 1);
+  fireKeepGun(target, allies, projectiles) {
+    const range = Math.max(Path.pacesFromPx(CONFIG.keepCannonRange), 1);
     const along = target.pacesFromKeep ? target.pacesFromKeep(this.id) : range;
     const falloff = Math.max(CONFIG.minDamageFactor, 1 - along / range);
     const attackerSum = (Math.random() * 2 - 1) * CONFIG.damageVariance;
-    const shell = UNIT_STATS.cannon;
+    const shell = UNIT_STATS.fieldGun;
     projectiles.push(new Projectile(
-      this.capital.x,
-      this.capital.y,
+      this.keep.x,
+      this.keep.y,
       target,
-      CONFIG.capitalCannonDamage * falloff,
+      CONFIG.keepCannonDamage * falloff,
       allies,
       "shoot",
-      "cannon",
+      "fieldGun",
       this.sim,
       {
         speed: shell.projectileSpeed,
@@ -4900,8 +4926,8 @@ class Side {
         attacker: this,
       },
     ));
-    this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "cannon", sideId: this.id });
-    this.shotCooldown = CONFIG.capitalCannonAttackCooldown;
+    this.sim.emitSound({ type: "shoot", lane: "top", sublane: 2, unitType: "fieldGun", sideId: this.id });
+    this.shotCooldown = CONFIG.keepCannonAttackCooldown;
   }
 
   /** Tick the keep gun: fire at the nearest in-range foe when ready. */
@@ -4909,14 +4935,14 @@ class Side {
     if (this.shotCooldown > 0) {
       this.shotCooldown -= dt;
     }
-    if (this.capitalHP <= 0 || this.shotCooldown > 0) {
+    if (this.keepHP <= 0 || this.shotCooldown > 0) {
       return;
     }
-    const target = this.capitalTarget(enemies, allies);
+    const target = this.keepGunTarget(enemies, allies);
     if (!target) {
       return;
     }
-    this.fireCapital(target, allies, projectiles);
+    this.fireKeepGun(target, allies, projectiles);
   }
 
 
@@ -4949,6 +4975,9 @@ function troopRecord(troop) {
     id: troop.id,
     lane: troop.lane,
     sublane: troop.sublane,
+    category: troop.category,
+    unit: troop.unit,
+    variety: troop.variety,
     type: troop.type,
     variant: troop.variant,
     alternate: Boolean(troop.alternate),
@@ -4976,7 +5005,7 @@ function sidePublicFields(side) {
     land: side.land,
     landIncome: side.landIncome,
     landInvestRate: side.landInvestRate,
-    capitalHP: side.capitalHP,
+    keepHP: side.keepHP,
     banks: side.banks,
     speedMultiplier: side.speedMultiplier,
     upgrades: { ...side.upgrades },
@@ -4998,8 +5027,8 @@ export class GameSim {
     this.mapId = CONFIG.defaultMapId;
     this.bindMap(this.mapId);
     const board = this.map.board();
-    this.player = new Side("player", { ...board.playerCapital }, this);
-    this.enemy = new Side("enemy", { ...board.enemyCapital }, this);
+    this.player = new Side("player", { ...board.playerKeep }, this);
+    this.enemy = new Side("enemy", { ...board.enemyKeep }, this);
     this.player.initTargeting(this.map.laneIds());
     this.enemy.initTargeting(this.map.laneIds());
     this.checkpoints = [];
@@ -5277,12 +5306,12 @@ export class GameSim {
 
   checkWinner() {
     if (this.winner) return;
-    if (this.enemy.capitalHP <= 0) {
+    if (this.enemy.keepHP <= 0) {
       this.winner = "player";
-      this.winReason = "capital";
-    } else if (this.player.capitalHP <= 0) {
+      this.winReason = "keep";
+    } else if (this.player.keepHP <= 0) {
       this.winner = "enemy";
-      this.winReason = "capital";
+      this.winReason = "keep";
     }
   }
 
@@ -5564,7 +5593,7 @@ export class GameSim {
       land: fields.land,
       landIncome: fields.landIncome,
       landInvestRate: fields.landInvestRate,
-      capitalHP: fields.capitalHP,
+      keepHP: fields.keepHP,
       banks: fields.banks,
       speedMultiplier: fields.speedMultiplier,
       upgrades: fields.upgrades,
@@ -5643,7 +5672,7 @@ export class GameSim {
       }
       towns.push(town);
     }
-    towns.sort((a, b) => distance(a, side.capital) - distance(b, side.capital));
+    towns.sort((a, b) => distance(a, side.keep) - distance(b, side.keep));
     let invested = 0;
     for (let i = 0; i < towns.length; i += 1) {
       if (side.land <= 0) break;
@@ -5703,8 +5732,8 @@ export class GameSim {
     const officers = [];
     for (let j = 0; j < troops.length; j += 1) {
       const source = troops[j];
-      if (source.hp <= 0 || source.type !== "officer") continue;
-      if (source.variant === "engineer") continue;
+      if (source.hp <= 0 || source.category !== "officer") continue;
+      if (source.unit === "engineer") continue;
       if (!(source.restoreRate > 0)) continue;
       officers.push(source);
     }
@@ -5723,7 +5752,7 @@ export class GameSim {
         if (gap > CONFIG.officerRestorePaces) continue;
         const ahead = unit.alongSigned(source) > 0;
         const rate = (source.restoreRate || 1) * (ahead ? 2 : 1);
-        if (source.variant === "colorGuard") {
+        if (source.unit === "colorGuard") {
           if (rate > bestGuard) bestGuard = rate;
         } else if (rate > bestOfficer) {
           bestOfficer = rate;
@@ -5877,7 +5906,7 @@ export class GameSim {
       if (troop.hp <= 0 || troop.lane !== lane) {
         continue;
       }
-      total += side.unitCost(troop.variant || troop.type);
+      total += side.unitCost(troop.unit || unitIdOf(troop));
     }
     return total;
   }

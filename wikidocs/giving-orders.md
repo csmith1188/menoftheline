@@ -11,6 +11,6 @@ Touching a unit selects it and subselects the rest of its line, then gives the o
 
 To Reform without stacking onto a neighbor, swipe toward a clear adjacent row while the line is still staggered — the line squares, then switches. Swiping onto a matching unit that is already In Line Reforms instead, and does not change rows. In Line is on [[The Map]].
 
-Troops can also pick up Halt or Reform without a gesture: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. That does not replace giving orders to a line. See [[Orders]].
+Infantry can also pick up Halt or Reform without a gesture: an Advancing infantry unit that newly walks into Perfect Line with a Halted or Reforming infantry unit on an adjacent row takes that order on itself alone. That does not replace giving orders to a line. See [[Orders]].
 
 The same gestures are listed on [[Quick Start]].

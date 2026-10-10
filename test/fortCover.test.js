@@ -22,12 +22,12 @@ describe("fort cover", () => {
   it("covers a friendly standing in the footprint against an outsider", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    const defender = spawn(sim, "player", "troop", "top", {
+    const defender = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 2,
       hp: 100,
     });
-    const attacker = spawn(sim, "enemy", "troop", "top", {
+    const attacker = spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort + fortFootprintPaces() + 40),
       sublane: 2,
     });
@@ -38,12 +38,12 @@ describe("fort cover", () => {
   it("does not cover a unit outside the footprint, even behind the fort", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    const defender = spawn(sim, "player", "troop", "top", {
+    const defender = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort - fortFootprintPaces() - 20),
       sublane: 2,
       hp: 100,
     });
-    const attacker = spawn(sim, "enemy", "troop", "top", {
+    const attacker = spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort + fortFootprintPaces() + 40),
       sublane: 2,
     });
@@ -54,12 +54,12 @@ describe("fort cover", () => {
   it("does not cover when the attacker is inside the same footprint", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    const defender = spawn(sim, "player", "troop", "top", {
+    const defender = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 2,
       hp: 100,
     });
-    const attacker = spawn(sim, "enemy", "troop", "top", {
+    const attacker = spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort + fortColorHalfPaces()),
       sublane: 0,
     });
@@ -70,12 +70,12 @@ describe("fort cover", () => {
   it("does not give the enemy cover for standing in your fort", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    const defender = spawn(sim, "enemy", "troop", "top", {
+    const defender = spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort),
       sublane: 2,
       hp: 100,
     });
-    const attacker = spawn(sim, "player", "troop", "top", {
+    const attacker = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort + fortFootprintPaces() + 40),
       sublane: 2,
     });
@@ -86,12 +86,12 @@ describe("fort cover", () => {
   it("covers a unit in the footprint against the enemy keep gun", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    const inside = spawn(sim, "player", "troop", "top", {
+    const inside = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 2,
       hp: 100,
     });
-    const behind = spawn(sim, "player", "troop", "top", {
+    const behind = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort - fortFootprintPaces() - 20),
       sublane: 0,
       hp: 100,
@@ -103,12 +103,12 @@ describe("fort cover", () => {
   it("keeps the clear-fort check for keep restore, separate from cover", () => {
     const sim = makeSim();
     const fort = CONFIG.fortDistancePaces;
-    spawn(sim, "player", "troop", "top", {
+    spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 2,
     });
     assert.equal(fortsClearOfEnemies("player", sim.enemy.troops), true);
-    spawn(sim, "enemy", "troop", "top", {
+    spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort - 10),
       sublane: 2,
     });
@@ -122,15 +122,15 @@ describe("fort cover", () => {
       progress: enemyAtPlayerPaces(fort),
       sublane: 2,
     });
-    const friendly = spawn(sim, "player", "troop", "top", {
+    const friendly = spawn(sim, "player", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 2,
     });
-    const wide = spawn(sim, "enemy", "troop", "top", {
+    const wide = spawn(sim, "enemy", "regulars", "top", {
       progress: enemyAtPlayerPaces(fort + fortColorHalfPaces() + 4),
       sublane: 1,
     });
-    const onOwn = spawn(sim, "enemy", "troop", "top", {
+    const onOwn = spawn(sim, "enemy", "regulars", "top", {
       progress: progressAtPaces(fort),
       sublane: 0,
     });

@@ -42,9 +42,9 @@ export function classicBoardContext() {
     mapId: CONFIG.defaultMapId || "default",
     canvasWidth: board.canvasWidth,
     canvasHeight: board.canvasHeight,
-    playerCapital: { ...board.playerCapital },
-    enemyCapital: { ...board.enemyCapital },
-    capitalRadius: board.capitalRadius,
+    playerKeep: { ...board.playerKeep },
+    enemyKeep: { ...board.enemyKeep },
+    keepRadius: board.keepRadius,
     fortDistancePaces: CONFIG.fortDistancePaces,
     paceRulerLaneId: (lineLane && lineLane.id) || laneDefs[0].id,
     laneIds: laneDefs.map((l) => l.id),
@@ -132,8 +132,8 @@ export const Path = {
     if (cached) return cached;
 
     const board = Path.activeBoard();
-    const left = board.playerCapital;
-    const right = board.enemyCapital;
+    const left = board.playerKeep;
+    const right = board.enemyKeep;
     const def = Path.laneDef(lane);
     const kind = def && def.geometry ? def.geometry.kind : (lane === "bottom" ? "arc" : "line");
     let points;
@@ -170,8 +170,8 @@ export const Path = {
   arcCenter(_lane) {
     const board = Path.activeBoard();
     return {
-      x: (board.playerCapital.x + board.enemyCapital.x) / 2,
-      y: board.playerCapital.y,
+      x: (board.playerKeep.x + board.enemyKeep.x) / 2,
+      y: board.playerKeep.y,
     };
   },
 
@@ -183,8 +183,8 @@ export const Path = {
   /** Distance from the shared center to each keep — the middle ring's radius. */
   bottomMidRadius() {
     const board = Path.activeBoard();
-    const left = board.playerCapital;
-    const right = board.enemyCapital;
+    const left = board.playerKeep;
+    const right = board.enemyKeep;
     return Math.hypot(right.x - left.x, right.y - left.y) / 2;
   },
 
@@ -233,7 +233,7 @@ export const Path = {
   /** Pixel length of the pace-ruler lane (classic: top). */
   topSpanPx() {
     const board = Path.activeBoard();
-    return board.enemyCapital.x - board.playerCapital.x;
+    return board.enemyKeep.x - board.playerKeep.x;
   },
 
   /** Pace-ruler lane id (first line lane). */
@@ -419,8 +419,8 @@ export const Path = {
  */
 export function quarterSegments() {
   const board = Path.activeBoard();
-  const left = board.playerCapital;
-  const right = board.enemyCapital;
+  const left = board.playerKeep;
+  const right = board.enemyKeep;
   const segs = [];
 
   for (const laneId of board.laneIds) {
@@ -545,7 +545,7 @@ export function pacesFromKeepOf(body, keepSideId, lane) {
     return body.pacesFromKeep(keepSideId);
   }
   // Keep / Side attacker: no lane of its own.
-  if (body.capitalHP !== undefined || (body.capital && body.id)) {
+  if (body.keepHP !== undefined || (body.keep && body.id)) {
     const ownId = body.id;
     if (ownId === keepSideId) return 0;
     const ids = Path.laneIds();

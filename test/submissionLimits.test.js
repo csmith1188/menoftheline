@@ -180,7 +180,15 @@ test("extra unanswered suggestions cost a ticket; bugs cap at 5", async (t) => {
   html = await postSuggestion(server, jar, { body: "Needs a ticket" });
   assert.match(html, /Extra suggestions cost 1 ticket/);
 
-  await runSql(dbFile, "UPDATE accounts SET tickets = 2 WHERE email = ?", [email]);
+  const acct = await getSql(dbFile, "SELECT id FROM accounts WHERE email = ?", [email]);
+  await runSql(dbFile, "UPDATE accounts SET tickets = tickets + 2 WHERE id = ?", [acct.id]);
+  await runSql(
+    dbFile,
+    `INSERT INTO ticket_lots (
+      account_id, source_type, source_id, tickets_total, tickets_remaining, amount_cents, currency, created_at
+    ) VALUES (?, 'grant', NULL, 2, 2, 0, 'USD', ?)`,
+    [acct.id, Date.now()],
+  );
   html = await postSuggestion(server, jar, { body: "Paid idea" });
   assert.match(html, /Used 1 ticket/);
   const tickets = await getSql(dbFile, "SELECT tickets FROM accounts WHERE email = ?", [email]);

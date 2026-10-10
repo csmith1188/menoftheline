@@ -12,9 +12,9 @@ export function classicBoardFromConfig() {
   return {
     canvasWidth: CONFIG.canvasWidth,
     canvasHeight: CONFIG.canvasHeight,
-    playerCapital: { ...CONFIG.playerCapital },
-    enemyCapital: { ...CONFIG.enemyCapital },
-    capitalRadius: CONFIG.capitalRadius,
+    playerKeep: { ...CONFIG.playerKeep },
+    enemyKeep: { ...CONFIG.enemyKeep },
+    keepRadius: CONFIG.keepRadius,
   };
 }
 
@@ -183,9 +183,18 @@ export function normalizeMapDefinition(raw = {}) {
   const board = {
     canvasWidth: asFinite(boardSrc.canvasWidth, classicBoard.canvasWidth),
     canvasHeight: asFinite(boardSrc.canvasHeight, classicBoard.canvasHeight),
-    playerCapital: normalizePoint(boardSrc.playerCapital, classicBoard.playerCapital),
-    enemyCapital: normalizePoint(boardSrc.enemyCapital, classicBoard.enemyCapital),
-    capitalRadius: asFinite(boardSrc.capitalRadius, classicBoard.capitalRadius),
+    playerKeep: normalizePoint(
+      boardSrc.playerKeep ?? boardSrc.playerCapital,
+      classicBoard.playerKeep,
+    ),
+    enemyKeep: normalizePoint(
+      boardSrc.enemyKeep ?? boardSrc.enemyCapital,
+      classicBoard.enemyKeep,
+    ),
+    keepRadius: asFinite(
+      boardSrc.keepRadius ?? boardSrc.capitalRadius,
+      classicBoard.keepRadius,
+    ),
   };
 
   const classicLanes = classicLanesFromConfig();

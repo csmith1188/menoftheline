@@ -94,17 +94,17 @@ function drawKeeps(ctx) {
   const board = Path.activeBoard();
   const sides = [
     {
-      c: board.playerCapital,
+      c: board.playerKeep,
       color: CONFIG.colors.player,
       dark: CONFIG.colors.playerDark,
     },
     {
-      c: board.enemyCapital,
+      c: board.enemyKeep,
       color: CONFIG.colors.enemy,
       dark: CONFIG.colors.enemyDark,
     },
   ];
-  const r = board.capitalRadius || CONFIG.capitalRadius;
+  const r = board.keepRadius || CONFIG.keepRadius;
   for (let i = 0; i < sides.length; i += 1) {
     const { c, color, dark } = sides[i];
     ctx.beginPath();
@@ -123,8 +123,8 @@ function drawKeeps(ctx) {
 
 function drawLanes(ctx, { onlyLane = null } = {}) {
   const board = Path.activeBoard();
-  const left = board.playerCapital;
-  const right = board.enemyCapital;
+  const left = board.playerKeep;
+  const right = board.enemyKeep;
   const ids = Path.laneIds().filter((id) => !onlyLane || id === onlyLane);
 
   for (let i = 0; i < ids.length; i += 1) {
@@ -391,12 +391,21 @@ function drawUnit(ctx, unit, { bars = false } = {}) {
   }
 
   ctx.fillStyle = color;
-  if (unit.type === "cannon") {
+  const cat = unit.category || (spawn === "fieldGun" || spawn === "cannon" || spawn === "howitzer" || spawn === "horseGun"
+    ? "artillery"
+    : spawn === "light" || spawn === "skirmisher" || spawn === "rifle" || spawn === "guerrilla"
+      ? "skirmishers"
+      : spawn === "dragoon" || spawn === "lancer" || spawn === "hussar"
+        ? "cavalry"
+        : spawn === "major" || spawn === "officer" || spawn === "engineer" || spawn === "colorGuard"
+          ? "officer"
+          : "infantry");
+  if (cat === "artillery") {
     ctx.beginPath();
     ctx.arc(x, y, r * 0.8, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "skirmisher") {
+  } else if (cat === "skirmishers") {
     ctx.beginPath();
     ctx.moveTo(x, y - r);
     ctx.lineTo(x + r, y + r);
@@ -404,7 +413,7 @@ function drawUnit(ctx, unit, { bars = false } = {}) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "dragoon") {
+  } else if (cat === "cavalry") {
     ctx.beginPath();
     ctx.moveTo(x, y - r);
     ctx.lineTo(x + r, y);
@@ -413,7 +422,7 @@ function drawUnit(ctx, unit, { bars = false } = {}) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "officer") {
+  } else if (cat === "officer") {
     const s = r * 0.75;
     ctx.save();
     ctx.lineCap = "round";

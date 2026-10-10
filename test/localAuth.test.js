@@ -457,6 +457,24 @@ async function runSql(dataDir, sql, params = []) {
   });
 }
 
+/** Bump account tickets and create matching free lots (spend requires lots). */
+async function grantTestTickets(dataDir, whereSql, whereParams, n) {
+  const row = await getAccountRow(dataDir, whereSql, whereParams);
+  assert.ok(row, "account for ticket grant");
+  await runSql(
+    dataDir,
+    `UPDATE accounts SET tickets = tickets + ? WHERE id = ?`,
+    [n, row.id],
+  );
+  await runSql(
+    dataDir,
+    `INSERT INTO ticket_lots (
+      account_id, source_type, source_id, tickets_total, tickets_remaining, amount_cents, currency, created_at
+    ) VALUES (?, 'grant', NULL, ?, ?, 0, 'USD', ?)`,
+    [row.id, n, n, Date.now()],
+  );
+}
+
 async function getAccountRow(dataDir, whereSql, params) {
   const { default: sqlite3 } = await import("sqlite3");
   const dbFile = path.join(dataDir, "Men Of The Line.sqlite");
@@ -742,9 +760,7 @@ test("profile can change display name with rate limiting", async (t) => {
   assert.equal(row.name, "Rename Me");
   assert.equal(row.tickets, 0);
 
-  await runSql(server.dataDir, "UPDATE accounts SET tickets = 3 WHERE email = ?", [
-    "rename@example.com",
-  ]);
+  await grantTestTickets(server.dataDir, "email = ?", ["rename@example.com"], 3);
 
   const taken = await fetchSession(server.base, "/profile/name", jar, {
     method: "POST",
@@ -769,9 +785,7 @@ test("profile can change display name with rate limiting", async (t) => {
   assert.equal(row.name, "Rename Three");
   assert.equal(row.tickets, 0);
 
-  await runSql(server.dataDir, "UPDATE accounts SET tickets = 1 WHERE email = ?", [
-    "rename@example.com",
-  ]);
+  await grantTestTickets(server.dataDir, "email = ?", ["rename@example.com"], 1);
   const blocked = await fetchSession(server.base, "/profile/name", jar, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

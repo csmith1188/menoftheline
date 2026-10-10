@@ -26,13 +26,13 @@ export function boardContextFromMeta(meta) {
     mapId: meta.id,
     canvasWidth: board.canvasWidth != null ? board.canvasWidth : CONFIG.canvasWidth,
     canvasHeight: board.canvasHeight != null ? board.canvasHeight : CONFIG.canvasHeight,
-    playerCapital: board.playerCapital
-      ? { ...board.playerCapital }
-      : { ...CONFIG.playerCapital },
-    enemyCapital: board.enemyCapital
-      ? { ...board.enemyCapital }
-      : { ...CONFIG.enemyCapital },
-    capitalRadius: board.capitalRadius != null ? board.capitalRadius : CONFIG.capitalRadius,
+    playerKeep: board.playerKeep
+      ? { ...board.playerKeep }
+      : { ...CONFIG.playerKeep },
+    enemyKeep: board.enemyKeep
+      ? { ...board.enemyKeep }
+      : { ...CONFIG.enemyKeep },
+    keepRadius: board.keepRadius != null ? board.keepRadius : CONFIG.keepRadius,
     fortDistancePaces: meta.fortDistancePaces != null
       ? meta.fortDistancePaces
       : CONFIG.fortDistancePaces,

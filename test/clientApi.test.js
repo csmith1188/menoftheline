@@ -267,14 +267,14 @@ test("client API starts a bot game and accepts a buy", async (t) => {
   await onceEvent(socket, "lobby");
   await waitForPlaying(socket);
 
-  socket.emit("command", { type: "buy", lane: "top", unit: "troop" });
+  socket.emit("command", { type: "buy", lane: "top", unit: "regulars" });
 
   const deadline = Date.now() + 5000;
   let bought = false;
   while (Date.now() < deadline) {
     const state = await onceEvent(socket, "state", Math.max(100, deadline - Date.now()));
     const troops = state?.sides?.player?.troops || [];
-    if (troops.some((troop) => troop.type === "troop" && troop.lane === "top")) {
+    if (troops.some((troop) => troop.unit === "regulars" && troop.lane === "top")) {
       bought = true;
       break;
     }

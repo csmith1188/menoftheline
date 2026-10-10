@@ -146,7 +146,7 @@ test("commands reject non-finite numbers, bad types, and prototype keys", () => 
   assert.equal(sanitizeCommand({ type: "order", troopId: Number.POSITIVE_INFINITY, action: "forward" }), null);
   assert.equal(sanitizeCommand({ type: "townProduce", checkpointId: Number.NaN }), null);
   assert.equal(sanitizeCommand({ type: "buy", lane: "top", unit: "nope" }), null);
-  assert.equal(sanitizeCommand({ type: "buy", lane: "side", unit: "troop" }), null);
+  assert.equal(sanitizeCommand({ type: "buy", lane: "side", unit: "regulars" }), null);
   assert.equal(sanitizeCommand(["buy"]), null);
   const proto = Object.create(null);
   proto.type = "bank";
@@ -160,7 +160,7 @@ test("commands reject non-finite numbers, bad types, and prototype keys", () => 
   assert.equal(sim.applyCommand("player", { type: "order", troopId: Number.NaN, action: "forward" }), false);
   assert.equal(sim.applyCommand("player", { type: "townProduce", checkpointId: Number.POSITIVE_INFINITY }), false);
   const beforeGold = sim.player.gold;
-  assert.equal(sim.applyCommand("player", { type: "buy", lane: "top", unit: "troop", gold: 999999 }), true);
+  assert.equal(sim.applyCommand("player", { type: "buy", lane: "top", unit: "regulars", gold: 999999 }), true);
   assert.ok(sim.player.gold < beforeGold);
   assert.ok(sim.player.gold < 999999);
 });

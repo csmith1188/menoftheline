@@ -23,12 +23,12 @@ function finishPushback(unit, allies, steps = 40) {
 describe("pushback vs friendly ranks", () => {
   it("does not push the front rank into a friendly behind", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const rear = spawn(sim, "player", "troop", "top", {
+    const rear = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
@@ -51,17 +51,17 @@ describe("pushback vs friendly ranks", () => {
 
   it("keeps firing after a blocked pushback pace against a deep line", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const rear = spawn(sim, "player", "troop", "top", {
+    const rear = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const foe = spawn(sim, "enemy", "troop", "top", {
+    const foe = spawn(sim, "enemy", "regulars", "top", {
       progress: 0.72,
       sublane: 2,
       order: "halt",
@@ -85,7 +85,7 @@ describe("pushback vs friendly ranks", () => {
 
   it("applies stacked paces one instant step at a time", () => {
     const sim = makeSim();
-    const unit = spawn(sim, "player", "troop", "top", {
+    const unit = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
@@ -113,7 +113,7 @@ describe("pushback vs friendly ranks", () => {
       sublane: 2,
       order: "charge",
     });
-    const target = spawn(sim, "enemy", "troop", "top", {
+    const target = spawn(sim, "enemy", "regulars", "top", {
       progress: 0.48,
       sublane: 2,
       order: "halt",
@@ -133,12 +133,12 @@ describe("pushback vs friendly ranks", () => {
 
   it("does not treat a blocked ease-back as withdrawing for pushback", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const rear = spawn(sim, "player", "troop", "top", {
+    const rear = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
@@ -165,12 +165,12 @@ describe("pushback vs friendly ranks", () => {
 
   it("still allows shooting if ranks are already overlapping", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
     });
-    const rear = spawn(sim, "player", "troop", "top", {
+    const rear = spawn(sim, "player", "regulars", "top", {
       progress: 0.5,
       sublane: 2,
       order: "halt",
@@ -182,7 +182,7 @@ describe("pushback vs friendly ranks", () => {
     assert.ok(front.collidingAlly(allies));
     assert.ok(rear.collidingAlly(allies));
 
-    const foe = spawn(sim, "enemy", "troop", "top", {
+    const foe = spawn(sim, "enemy", "regulars", "top", {
       progress: 0.72,
       sublane: 2,
       order: "halt",

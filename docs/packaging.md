@@ -45,6 +45,7 @@ shared/protocol.js        # PROTOCOL_VERSION + CLIENT_VERSION
 - If client protocol < `minProtocol` (env `MOTL_MIN_PROTOCOL`, default = current `PROTOCOL_VERSION`): HTTP 426 / socket error `client_outdated`.
 - Missing protocol is allowed (legacy website sockets and older native clients).
 - Bump `PROTOCOL_VERSION` in `shared/protocol.js` only for breaking wire changes.
+- **Protocol 2:** Keep geometry/HP use `playerKeep` / `enemyKeep` / `keepRadius` / `keepHP` (not Capital). Unit snapshots include `category` / `unit` / `variety` (canonical); legacy `type` / `variant` / `alternate` remain dual-emitted. Buy spawn keys: `regulars`, `light`, `fieldGun`, `major` (aliases for old names still accepted). Rebuild packaged shells against protocol 2.
 
 ## CI
 

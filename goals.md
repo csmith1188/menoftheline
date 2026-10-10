@@ -15,7 +15,6 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 
 - Sort metrics by bot, casual, training, ranked
 - Earn ranks by MMR brankets
-- Vocab update
 - tip of the day
 
 - Towns produce food/men/horses/steel? strategic capturing of towns?

@@ -1,3 +1,5 @@
+import { unitCategory } from "../shared/units.js";
+
 const SHOT_NOTES = {
   top: ["F#6", "E5", "C#6", "A5", "F#5"],
   bottom: ["G#4", "B4", "F#4"],
@@ -154,7 +156,7 @@ const ShotTone = {
     let sustain = 0.14;
     let baseVolume = sideId === "enemy" ? 0.04 : 0.07;
     let decay = sustain; // Default: decay equals sustain
-    if (type === "cannon") {
+    if (type === "cannon" || type === "fieldGun" || unitCategory(type) === "artillery") {
       freq /= 4; 
       sustain = 0.32; // Longer sustain for cannon shots
       baseVolume *= 2; // Louder cannon

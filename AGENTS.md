@@ -69,7 +69,7 @@ server/
   load-env.js          dotenv load (imported first by app.js)
 shared/                Authoritative tunables + geometry used by server, client, tests
   config.js            CONFIG numbers (board, economy, combat, UI colors, …)
-  units.js             UNIT_STATS, variants, labels, BUY_UNITS, mobilityClass, cost helpers
+  units.js             UNITS taxonomy (category/variety/mobility), UNIT_STATS, labels, BUY_UNITS, resolveUnitId
   path.js              Path / lanes / progress / fort cover helpers (board via Path.useBoard)
   map/                 GameMap classes: definition, registry, classic/empty coded maps, income
   maps.js              Compatibility shim (MAP_PRESETS, resolveMapFeatures → map/)
@@ -116,7 +116,7 @@ data/                  Runtime DB, news.json (do not commit secrets)
 |-----------------|------------|--------------|
 | Add / change server logging | `server/logger.js`, `docs/logging.md` | Child loggers in `room.js` / `matchmaking.js` / `app.js`; never log secrets |
 | Change a number (range, cost, income, board size) | `shared/config.js` | Confirm consumers; update `wikidocs/` + `public/js/rules.js` if player-visible |
-| Add/change unit stats or variants | `shared/units.js` | `server/sim.js` (class/`UNIT_KINDS`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, tests |
+| Add/change unit stats, category, variety, or mobility | `shared/units.js` (`UNITS`, `CATEGORY_UNITS`) | `server/sim.js` (class/`UNIT_KINDS`, `category`/`unit`/`variety`), `shared/unitInfo.js`, buy UI (`board.js`/`render.js`/`scene3d.js`), `wikidocs/units.md`, `test/unitTaxonomy.test.js` |
 | Movement / lanes / progress / forts / LoS geometry | `shared/path.js` | `shared/map/` (lane catalog), `shared/terrain.js`, `public/js/board.js` (HUD Cover), `wikidocs/map.md` |
 | Add / change a map (lanes, towns, terrain, rules) | `shared/map/maps/` + `GameMap` | `shared/map/registry.js`, Path board context, `server/sim.js`, clients via `snapshot.map`, `test/map.test.js`, `wikidocs/map.md` |
 | Terrain / fog / map presets | `shared/terrain.js`, `shared/map/` (`maps.js` shim) | `shared/config.js` tunables, `server/sim.js` + per-seat `server/room.js` snapshots, `public/js/render.js` / `scene3d.js`, `wikidocs/map.md`, `test/terrain.test.js` |

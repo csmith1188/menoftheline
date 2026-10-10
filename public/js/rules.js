@@ -1,5 +1,5 @@
 import { CONFIG } from "../shared/config.js";
-import { UNIT_STATS, unitStats, variantBadgeFill } from "../shared/units.js";
+import { UNIT_STATS, unitStats, categoryOf, unitIdOf, variantBadgeFill } from "../shared/units.js";
 import { Path, quarterSegments, quarterThickness } from "../shared/path.js";
 import { applySouthpaw, readSouthpaw } from "./render.js";
 import { canvasFont, uiFontsReady, whenUiFontsReady } from "./board.js";
@@ -132,7 +132,7 @@ function armyShare(units, lane) {
   for (let i = 0; i < units.length; i += 1) {
     const unit = units[i];
     if (unit.lane !== lane || unit.broken) continue;
-    const value = unit.progress * unitCost(unit.type);
+    const value = unit.progress * unitCost(unitIdOf(unit));
     if (unit.side === "player") player += value;
     else enemy += value;
   }
@@ -156,8 +156,8 @@ function place(side, lane, sublane, progress, type, order) {
 }
 
 function placeX(side, sublane, x, type, order) {
-  const span = CONFIG.enemyCapital.x - CONFIG.playerCapital.x;
-  const along = (x - CONFIG.playerCapital.x) / span;
+  const span = CONFIG.enemyKeep.x - CONFIG.playerKeep.x;
+  const along = (x - CONFIG.playerKeep.x) / span;
   const progress = side === "player" ? along : 1 - along;
   return place(side, "top", sublane, progress, type, order);
 }
@@ -186,22 +186,23 @@ function drawUnit(ctx, unit) {
   ctx.lineWidth = ordered ? 3 : 2;
   const x = unit.x;
   const y = unit.y;
-  const stats = unitStats(unit.variant || unit.type);
+  const stats = unitStats(unitIdOf(unit));
   const r = stats.radius;
 
-  const badge = variantBadgeFill(unit.variant || unit.type);
+  const badge = variantBadgeFill(unitIdOf(unit));
+  const cat = unit.category || categoryOf(unit);
   if (badge) {
     const pad = r + 3;
     ctx.fillStyle = badge;
     ctx.fillRect(x - pad, y - pad, pad * 2, pad * 2);
   }
   ctx.fillStyle = color;
-  if (unit.type === "cannon") {
+  if (cat === "artillery") {
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "skirmisher") {
+  } else if (cat === "skirmishers") {
     ctx.beginPath();
     ctx.moveTo(x, y - r);
     ctx.lineTo(x + r, y + r);
@@ -209,7 +210,7 @@ function drawUnit(ctx, unit) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "dragoon") {
+  } else if (cat === "cavalry") {
     ctx.beginPath();
     ctx.moveTo(x, y - r);
     ctx.lineTo(x + r, y);
@@ -218,7 +219,7 @@ function drawUnit(ctx, unit) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else if (unit.type === "officer") {
+  } else if (cat === "officer") {
     const s = r * 0.75;
     ctx.save();
     ctx.lineCap = "round";
@@ -270,7 +271,7 @@ function drawUnit(ctx, unit) {
 }
 
 function drawShot(ctx, x, y) {
-  const shell = UNIT_STATS.troop;
+  const shell = UNIT_STATS.regulars;
   ctx.beginPath();
   ctx.arc(x, y, shell.projectileSize, 0, Math.PI * 2);
   ctx.fillStyle = shell.projectileColor;
@@ -278,11 +279,11 @@ function drawShot(ctx, x, y) {
 }
 
 function drawKeep(ctx, side) {
-  const cap = side === "player" ? CONFIG.playerCapital : CONFIG.enemyCapital;
+  const cap = side === "player" ? CONFIG.playerKeep : CONFIG.enemyKeep;
   const color = side === "player" ? CONFIG.colors.player : CONFIG.colors.enemy;
   const dark = side === "player" ? CONFIG.colors.playerDark : CONFIG.colors.enemyDark;
   ctx.beginPath();
-  ctx.arc(cap.x, cap.y, CONFIG.capitalRadius, 0, Math.PI * 2);
+  ctx.arc(cap.x, cap.y, CONFIG.keepRadius, 0, Math.PI * 2);
   ctx.fillStyle = dark;
   ctx.fill();
   ctx.lineWidth = 4;
@@ -295,8 +296,8 @@ function drawKeep(ctx, side) {
 }
 
 function drawGround(ctx) {
-  const left = CONFIG.playerCapital;
-  const right = CONFIG.enemyCapital;
+  const left = CONFIG.playerKeep;
+  const right = CONFIG.enemyKeep;
   ctx.fillStyle = CONFIG.colors.topLane;
   ctx.fillRect(
     left.x,
@@ -437,8 +438,8 @@ function drawTownMarker(ctx, spot, owner, ring) {
 }
 
 function drawLaneMarks(ctx, frame, topT, bottomT) {
-  const left = CONFIG.playerCapital;
-  const right = CONFIG.enemyCapital;
+  const left = CONFIG.playerKeep;
+  const right = CONFIG.enemyKeep;
   const x = left.x + (right.x - left.x) * topT;
   const top = left.y - CONFIG.topLaneHeight / 2;
   const bottom = left.y + CONFIG.topLaneHeight / 2;
@@ -527,31 +528,31 @@ function vignette(ctx, rect, box, label, draw) {
 function drawKeeps(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 1);
-  const foe = placeX("enemy", 2, 200, "troop");
-  const friend = placeX("player", 2, 790, "troop");
+  const foe = placeX("enemy", 2, 200, "regulars");
+  const friend = placeX("player", 2, 790, "regulars");
   vignette(ctx, panels[0], { l: 24, t: 90, r: 250, b: 220 }, "Your keep fires", (frame) => {
     drawGround(ctx);
     drawKeep(ctx, "player");
     drawUnit(ctx, foe);
-    drawShot(ctx, (CONFIG.playerCapital.x + foe.x) / 2, foe.y - 16);
-    zoomInk(ctx, frame, String(CONFIG.capitalHP), CONFIG.playerCapital.x, CONFIG.playerCapital.y + 52, CONFIG.colors.player, 16);
+    drawShot(ctx, (CONFIG.playerKeep.x + foe.x) / 2, foe.y - 16);
+    zoomInk(ctx, frame, String(CONFIG.keepHP), CONFIG.playerKeep.x, CONFIG.playerKeep.y + 52, CONFIG.colors.player, 16);
   });
   vignette(ctx, panels[1], { l: 710, t: 90, r: 936, b: 220 }, "Strike their keep", (frame) => {
     drawGround(ctx);
     drawKeep(ctx, "enemy");
     drawUnit(ctx, friend);
-    drawShot(ctx, (friend.x + CONFIG.enemyCapital.x) / 2, friend.y - 16);
-    zoomInk(ctx, frame, String(CONFIG.capitalHP), CONFIG.enemyCapital.x, CONFIG.enemyCapital.y + 52, CONFIG.colors.enemy, 16);
+    drawShot(ctx, (friend.x + CONFIG.enemyKeep.x) / 2, friend.y - 16);
+    zoomInk(ctx, frame, String(CONFIG.keepHP), CONFIG.enemyKeep.x, CONFIG.enemyKeep.y + 52, CONFIG.colors.enemy, 16);
   });
 }
 
 function drawLanes(ctx, w, h) {
   clear(ctx, w, h);
   const units = [
-    place("player", "top", 2, 0.7, "troop"),
-    place("player", "top", 0, 0.45, "skirmisher"),
-    place("enemy", "top", 4, 0.2, "cannon"),
-    place("player", "bottom", 1, 0.3, "troop"),
+    place("player", "top", 2, 0.7, "regulars"),
+    place("player", "top", 0, 0.45, "light"),
+    place("enemy", "top", 4, 0.2, "fieldGun"),
+    place("player", "bottom", 1, 0.3, "regulars"),
     place("enemy", "bottom", 0, 0.62, "dragoon"),
   ];
   const owners = ["player", "player", null, "enemy", "enemy"];
@@ -587,13 +588,13 @@ function drawHowtoButtons(ctx, w, h) {
   vignette(ctx, panels[0], { l: 40, t: 100, r: 220, b: 220 }, "Click banks to buy", (frame) => {
     drawGround(ctx);
     drawKeep(ctx, "player");
-    const cap = CONFIG.playerCapital;
+    const cap = CONFIG.playerKeep;
     const size = 18;
     const gap = 6;
     const count = CONFIG.bankCount;
     const total = count * size + (count - 1) * gap;
     const startX = cap.x - total / 2;
-    const y = cap.y - CONFIG.capitalRadius - size - 8;
+    const y = cap.y - CONFIG.keepRadius - size - 8;
     for (let i = 0; i < count; i += 1) {
       const x = startX + i * (size + gap);
       ctx.fillStyle = i < 1 ? CONFIG.colors.gold : "#2a3648";
@@ -617,7 +618,7 @@ function drawHowtoButtons(ctx, w, h) {
     ctx.strokeStyle = CONFIG.colors.player;
     ctx.lineWidth = 2;
     ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
-    drawUnit(ctx, { x: bx, y: by, side: "player", type: "troop" });
+    drawUnit(ctx, { x: bx, y: by, side: "player", type: "regulars" });
     worldArrow(ctx, bx, by - bh / 2 - 6, bx, by - bh / 2 - 28, CONFIG.colors.laneHover);
     worldArrow(ctx, bx, by + bh / 2 + 6, bx, by + bh / 2 + 28, CONFIG.colors.gold);
   });
@@ -633,7 +634,7 @@ function drawHowtoButtons(ctx, w, h) {
     ctx.strokeStyle = CONFIG.colors.whiteAlternate;
     ctx.lineWidth = 2;
     ctx.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
-    drawUnit(ctx, { x: bx, y: by, side: "player", type: "troop", variant: "militia", alternate: true });
+    drawUnit(ctx, { x: bx, y: by, side: "player", type: "regulars", variant: "militia", alternate: true });
     worldArrow(ctx, bx - bw / 2 - 6, by, bx - bw / 2 - 28, by, CONFIG.colors.gold);
     worldArrow(ctx, bx + bw / 2 + 6, by, bx + bw / 2 + 28, by, CONFIG.colors.gold);
   });
@@ -641,11 +642,11 @@ function drawHowtoButtons(ctx, w, h) {
   const town = townSpots()[2];
   vignette(ctx, panels[3], around([
     { x: town.x, y: town.y },
-    place("player", "bottom", 1, 0.45, "troop"),
+    place("player", "bottom", 1, 0.45, "regulars"),
   ], 70, 50), "Click town · research", () => {
     drawGround(ctx);
     drawTownMarker(ctx, town, "player", true);
-    drawUnit(ctx, place("player", "bottom", 1, 0.45, "troop"));
+    drawUnit(ctx, place("player", "bottom", 1, 0.45, "regulars"));
   });
 }
 
@@ -653,8 +654,8 @@ function drawHowtoMap(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 2);
   const sample = [
-    place("player", "top", 2, 0.55, "troop"),
-    place("enemy", "top", 3, 0.35, "troop"),
+    place("player", "top", 2, 0.55, "regulars"),
+    place("enemy", "top", 3, 0.35, "regulars"),
     place("player", "bottom", 1, 0.4, "dragoon"),
   ];
 
@@ -678,7 +679,7 @@ function drawHowtoMap(ctx, w, h) {
     drawKeep(ctx, "player");
     drawKeep(ctx, "enemy");
     for (let i = 0; i < sample.length; i += 1) drawUnit(ctx, sample[i]);
-    const midX = (CONFIG.playerCapital.x + CONFIG.enemyCapital.x) / 2;
+    const midX = (CONFIG.playerKeep.x + CONFIG.enemyKeep.x) / 2;
     worldArrow(ctx, midX, 200, midX, 280, CONFIG.colors.laneHover);
     worldArrow(ctx, midX, 360, midX, 280, CONFIG.colors.laneHover);
     zoomInk(ctx, frame, "lanes", midX + 36, 290, CONFIG.colors.text, 13, "left");
@@ -686,7 +687,7 @@ function drawHowtoMap(ctx, w, h) {
 
   vignette(ctx, panels[2], { l: 300, t: 110, r: 660, b: 210 }, "Swipe left/right · traverse", () => {
     drawGround(ctx);
-    const u = place("player", "top", 2, 0.5, "troop");
+    const u = place("player", "top", 2, 0.5, "regulars");
     drawUnit(ctx, u);
     worldArrow(ctx, u.x - 20, u.y - 36, u.x - 70, u.y - 36, CONFIG.colors.gold);
     worldArrow(ctx, u.x + 20, u.y - 36, u.x + 70, u.y - 36, CONFIG.colors.gold);
@@ -708,7 +709,7 @@ function drawHowtoUnits(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 2);
 
-  const line = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "troop", "halt"));
+  const line = [1, 2, 3].map((row) => place("player", "top", row, 0.5, "regulars", "halt"));
   vignette(ctx, panels[0], around(line, 56, 28), "Click line · Halt, then Advance", () => {
     drawGround(ctx);
     ctx.save();
@@ -721,8 +722,8 @@ function drawHowtoUnits(ctx, w, h) {
     for (let i = 0; i < line.length; i += 1) drawUnit(ctx, line[i]);
   });
 
-  const switcher = placeX("player", 2, 500, "troop");
-  const mate = placeX("player", 1, 500, "troop");
+  const switcher = placeX("player", 2, 500, "regulars");
+  const mate = placeX("player", 1, 500, "regulars");
   vignette(ctx, panels[1], around([switcher, mate], 70, 40), "Swipe up/down · row / Reform", () => {
     drawGround(ctx);
     drawUnit(ctx, mate);
@@ -731,8 +732,8 @@ function drawHowtoUnits(ctx, w, h) {
     worldArrow(ctx, switcher.x + 36, switcher.y + 18, switcher.x + 36, switcher.y + 52, CONFIG.colors.laneHover);
   });
 
-  const charger = placeX("player", 2, 470, "troop", "charge");
-  const chargeFoe = placeX("enemy", 2, 560, "troop");
+  const charger = placeX("player", 2, 470, "regulars", "charge");
+  const chargeFoe = placeX("enemy", 2, 560, "regulars");
   vignette(ctx, panels[2], around([charger, chargeFoe], 70, 36), "Swipe forward/back · charge / fall back", () => {
     drawGround(ctx);
     worldArrow(ctx, charger.x - 36, charger.y - 28, chargeFoe.x - 16, charger.y - 28, CONFIG.colors.charge);
@@ -740,8 +741,8 @@ function drawHowtoUnits(ctx, w, h) {
     drawUnit(ctx, chargeFoe);
   });
 
-  const halted = placeX("player", 1, 520, "troop", "halt");
-  const walker = placeX("player", 2, 470, "troop");
+  const halted = placeX("player", 1, 520, "regulars", "halt");
+  const walker = placeX("player", 2, 470, "regulars");
   vignette(ctx, panels[3], around([halted, walker], 70, 40), "Walk into Perfect Line · order passing", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, halted);
@@ -755,8 +756,8 @@ function drawHowtoPushback(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 1);
 
-  const shooter = placeX("player", 2, 430, "skirmisher");
-  const target = placeX("enemy", 2, 560, "troop");
+  const shooter = placeX("player", 2, 430, "light");
+  const target = placeX("enemy", 2, 560, "regulars");
   vignette(ctx, panels[0], around([shooter, target], 80, 40), "Hit · push back one pace", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, shooter);
@@ -766,8 +767,8 @@ function drawHowtoPushback(ctx, w, h) {
     zoomInk(ctx, frame, "push", target.x + 40, target.y + 48, CONFIG.colors.enemy, 12);
   });
 
-  const blocked = placeX("enemy", 2, 520, "troop");
-  const rear = placeX("enemy", 2, 600, "troop");
+  const blocked = placeX("enemy", 2, 520, "regulars");
+  const rear = placeX("enemy", 2, 600, "regulars");
   vignette(ctx, panels[1], around([blocked, rear], 80, 40), "Blocked · fatigue instead", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, blocked);
@@ -781,10 +782,10 @@ function drawHowtoRestore(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 1);
 
-  const hurt = placeX("player", 2, 420, "troop", "halt");
-  hurt.hp = unitStats("troop").hp * 0.5;
+  const hurt = placeX("player", 2, 420, "regulars", "halt");
+  hurt.hp = unitStats("regulars").hp * 0.5;
   hurt.fatigue = 40;
-  const foe = placeX("enemy", 2, 560, "troop");
+  const foe = placeX("enemy", 2, 560, "regulars");
   vignette(ctx, panels[0], around([hurt, foe], 90, 50), "Half health · −25% damage", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, hurt);
@@ -794,12 +795,12 @@ function drawHowtoRestore(ctx, w, h) {
     zoomInk(ctx, frame, "+", hurt.x, hurt.y - 40, CONFIG.colors.splatFatigue, 16);
   });
 
-  const guard = placeX("player", 2, 400, "officer");
+  const guard = placeX("player", 2, 400, "major");
   guard.variant = "colorGuard";
   guard.alternate = true;
-  const rallied = placeX("player", 2, 480, "troop", "halt");
-  rallied.hp = unitStats("troop").hp * 0.5;
-  const target = placeX("enemy", 2, 600, "troop");
+  const rallied = placeX("player", 2, 480, "regulars", "halt");
+  rallied.hp = unitStats("regulars").hp * 0.5;
+  const target = placeX("enemy", 2, 600, "regulars");
   vignette(ctx, panels[1], around([guard, rallied, target], 100, 50), "Color Guard · full damage", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, guard);
@@ -816,9 +817,9 @@ function drawHowtoSkirmishers(ctx, w, h) {
   clear(ctx, w, h);
   const panels = cells(w, h, 2, 1);
 
-  const skirm = placeX("player", 2, 420, "skirmisher");
+  const skirm = placeX("player", 2, 420, "light");
   const horse = placeX("enemy", 2, 520, "dragoon");
-  const nearTroop = placeX("enemy", 1, 560, "troop");
+  const nearTroop = placeX("enemy", 1, 560, "regulars");
   vignette(ctx, panels[0], around([skirm, horse, nearTroop], 90, 50), "Priority · cavalry if closest", (frame) => {
     drawGround(ctx);
     drawUnit(ctx, nearTroop);
@@ -830,12 +831,12 @@ function drawHowtoSkirmishers(ctx, w, h) {
   });
 
   const lineTroops = [
-    placeX("enemy", 1, 430, "troop"),
-    placeX("enemy", 2, 430, "troop"),
-    placeX("enemy", 3, 430, "troop"),
+    placeX("enemy", 1, 430, "regulars"),
+    placeX("enemy", 2, 430, "regulars"),
+    placeX("enemy", 3, 430, "regulars"),
   ];
-  const light = placeX("player", 2, 560, "skirmisher");
-  vignette(ctx, panels[1], around([...lineTroops, light], 90, 50), "Troop line · no bonus vs skirmish", (frame) => {
+  const light = placeX("player", 2, 560, "light");
+  vignette(ctx, panels[1], around([...lineTroops, light], 90, 50), "Infantry line · no bonus vs Light", (frame) => {
     drawGround(ctx);
     for (let i = 0; i < lineTroops.length; i += 1) drawUnit(ctx, lineTroops[i]);
     drawUnit(ctx, light);
@@ -852,7 +853,7 @@ const howtoPages = [
       {
         kind: "ul",
         items: [
-          "Build units to attack the enemy Capital.",
+          "Build units to attack the enemy Keep.",
         ],
       },
     ],
@@ -919,7 +920,7 @@ const howtoPages = [
           "Swipe forward to Charge.",
           "Swipe back to Fall Back.",
           "Long press or right-click a single unit to issue orders to only that unit (ignore lines).",
-          "Troops only: an Advancing Troop that newly walks into Perfect Line with a Halted or Reforming Troop on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
+          "Infantry only: an Advancing Regular that newly walks into Perfect Line with a Halted or Reforming infantry unit on an adjacent row takes that order on itself alone. A long-press (solo) Advance while already In Line behind them does not re-inherit at Perfect Line (you can walk past). Reform movement does not trigger it.",
         ],
       },
     ],
@@ -933,12 +934,12 @@ const howtoPages = [
         kind: "ul",
         items: [
           "Full reload whenever firing is allowed, including Fall Back.",
-          "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Troops.",
+          "Shoot by priority: cavalry if closest, then Skirmishers/Rifles, Officers, artillery, other cavalry, then Infantry.",
           "Among same-priority targets In Line across rows, aim at the nearer row (then closer). The keep counts as your row.",
-          "Troop line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
-          "Troop line bonus does not apply when shooting Skirmishers or Rifles.",
-          "Rifles deal double damage to Officers. Skirmishers have stronger shooting pushback.",
-          "Guerillas Halted in the open only shoot enemies within stealth range; occupying terrain lets them Halt-shoot at full range.",
+          "Infantry line bonus stacks per eligible mate, then scales with how Perfect you are with adjacent-row neighbors (full in Perfect Line, nearly none at the In Line edge).",
+          "Infantry line bonus does not apply when shooting Lights or Rifles.",
+          "Rifles deal double damage to Officers. Lights have stronger shooting pushback.",
+          "Guerrillas Halted in the open only shoot enemies within stealth range; occupying terrain lets them Halt-shoot at full range.",
         ],
       },
     ],
@@ -952,9 +953,9 @@ const howtoPages = [
         kind: "ul",
         items: [
           "Missing health cuts damage at half that fraction (50% health → 25% less damage).",
-          "Officers and Color Guards each restore fatigue and health nearby (doubled when ahead).",
+          "Majors and Color Guards each restore fatigue and health nearby (doubled when ahead).",
           "Color Guard aura negates missing-health damage loss for friends.",
-          "Blue + while Halt recovers fatigue. Green + while health is restored from Officers, Color Guards, or keeps.",
+          "Blue + while Halt recovers fatigue. Green + while health is restored from Majors, Color Guards, or keeps.",
           "One restore source: + at quarter rate. Two: alternate at half rate. Three or more: alternate at full rate.",
         ],
       },

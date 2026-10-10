@@ -1,5 +1,5 @@
 import { GameSim } from "../server/sim.js";
-import { unitLandCost, unitStats } from "../shared/units.js";
+import { unitLandCost, unitStats, resolveUnitId } from "../shared/units.js";
 import { BotController } from "../server/bot.js";
 
 /** Fresh sim. Defaults to the empty map so combat tests ignore terrain LOS. */
@@ -52,5 +52,12 @@ export function stepBot(bot, sim) {
 }
 
 export function living(side, type) {
-  return side.troops.filter((unit) => unit.hp > 0 && (!type || unit.type === type));
+  if (!type) return side.troops.filter((unit) => unit.hp > 0);
+  const want = resolveUnitId(type);
+  return side.troops.filter((unit) => {
+    if (unit.hp <= 0) return false;
+    return resolveUnitId(unit.unit || unit.type) === want
+      || unit.unit === type
+      || unit.type === type;
+  });
 }

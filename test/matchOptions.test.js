@@ -61,7 +61,7 @@ describe("match options", () => {
     sim.refreshIncomes();
     assert.equal(sim.player.income, Math.round(7 + CONFIG.centerIncome * 0.5));
 
-    const foe = spawn(sim, "enemy", "troop", "top", { progress: 0.5 });
+    const foe = spawn(sim, "enemy", "regulars", "top", { progress: 0.5 });
     const snap = sim.snapshot({ forSideId: "player" });
     assert.ok(snap.sides.enemy.troops.some((t) => t.id === foe.id));
     assert.equal(snap.fogEnabled, false);

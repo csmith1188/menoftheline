@@ -23,19 +23,19 @@ function stationPerProgress(unit) {
 describe("reform stays on row", () => {
   it("does not leave its row when a same-row friendly blocks the walk-up", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.4,
       sublane: 1,
       order: "reform",
     });
-    const trailer = spawn(sim, "player", "troop", "top", {
+    const trailer = spawn(sim, "player", "regulars", "top", {
       progress: 0.4,
       sublane: 2,
       order: "reform",
     });
     // Different type so it does not join the reform chain, but still
     // blocks the trailer's walk-up on the same row.
-    const blocker = spawn(sim, "player", "skirmisher", "top", {
+    const blocker = spawn(sim, "player", "light", "top", {
       progress: 0.4,
       sublane: 2,
       order: "halt",
@@ -69,12 +69,12 @@ describe("reform stays on row", () => {
 
   it("walks forward on its own row to square with the front", () => {
     const sim = makeSim();
-    const front = spawn(sim, "player", "troop", "top", {
+    const front = spawn(sim, "player", "regulars", "top", {
       progress: 0.4,
       sublane: 1,
       order: "reform",
     });
-    const trailer = spawn(sim, "player", "troop", "top", {
+    const trailer = spawn(sim, "player", "regulars", "top", {
       progress: 0.39,
       sublane: 2,
       order: "reform",

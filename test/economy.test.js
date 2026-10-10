@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CONFIG } from "../shared/config.js";
-import { UNIT_STATS, unitLandCost } from "../shared/units.js";
+import { UNIT_STATS, categoryOf, unitIdOf, unitLandCost } from "../shared/units.js";
 import { chooseSpawnKey, desiredComposition } from "../server/bot/economy.js";
 import { botProfile } from "../server/bot/controller.js";
 import { makeBot, makeSim, spawn, stepBot, living } from "./helpers.js";
@@ -29,8 +29,8 @@ function spawnCtx(overrides = {}) {
 
 function valueOf(units, type) {
   return units
-    .filter((unit) => unit.hp > 0 && (!type || unit.type === type))
-    .reduce((sum, unit) => sum + UNIT_STATS[unit.variant || unit.type].cost, 0);
+    .filter((unit) => unit.hp > 0 && (!type || categoryOf(unit) === type || unit.unit === type || unit.type === type))
+    .reduce((sum, unit) => sum + UNIT_STATS[unitIdOf(unit)].cost, 0);
 }
 
 describe("purchases", () => {
@@ -62,15 +62,15 @@ describe("purchases", () => {
     for (let i = 0; i < 8; i += 1) stepBot(bot, sim);
     const units = living(sim.player);
     assert.ok(valueOf(units) <= CONFIG.botCannonArmyValue);
-    assert.equal(living(sim.player, "cannon").length, 0);
-    assert.ok(living(sim.player, "skirmisher").length >= 1);
+    assert.equal(living(sim.player, "fieldGun").length, 0);
+    assert.ok(living(sim.player, "light").length >= 1);
   });
 
   it("Hard buys a skirmisher against a dragoon and then stops", () => {
     const sim = makeSim();
     const bot = makeBot("hard");
     for (let i = 0; i < 6; i += 1) {
-      spawn(sim, "player", "troop", "bottom", { progress: 0.3, sublane: i % 3 });
+      spawn(sim, "player", "regulars", "bottom", { progress: 0.3, sublane: i % 3 });
     }
     spawn(sim, "enemy", "dragoon", "bottom", { progress: 0.55, sublane: 1 });
     sim.player.gold = 20000;
@@ -82,15 +82,15 @@ describe("purchases", () => {
       botProfile("hard"),
       units,
       living(sim.enemy),
-    ).desired.skirmisher;
-    const fraction = valueOf(units, "skirmisher") / valueOf(units);
-    assert.ok(living(sim.player, "skirmisher").length >= 1);
+    ).desired.skirmishers;
+    const fraction = valueOf(units, "skirmishers") / valueOf(units);
+    assert.ok(living(sim.player, "light").length >= 1);
     assert.ok(fraction <= desired + 0.1, `skirmisher fraction ${fraction} vs ${desired}`);
-    assert.ok(living(sim.player, "cannon").length + living(sim.player, "dragoon").length > 0);
+    assert.ok(living(sim.player, "fieldGun").length + living(sim.player, "dragoon").length > 0);
     const before = fraction;
     for (let i = 0; i < 8; i += 1) stepBot(bot, sim);
     const later = living(sim.player);
-    const laterFraction = valueOf(later, "skirmisher") / valueOf(later);
+    const laterFraction = valueOf(later, "skirmishers") / valueOf(later);
     assert.ok(laterFraction <= desired + 0.1);
     assert.ok(laterFraction <= before + 0.08);
   });
@@ -98,10 +98,10 @@ describe("purchases", () => {
   it("sends a unit to a keep threat instead of a mildly losing lane", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
-    spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: 2 });
-    spawn(sim, "enemy", "troop", "top", { progress: 0.3, sublane: 2 });
-    spawn(sim, "enemy", "troop", "bottom", { progress: 0.98, sublane: 0 });
-    spawn(sim, "enemy", "troop", "bottom", { progress: 0.98, sublane: 1 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: 2 });
+    spawn(sim, "enemy", "regulars", "top", { progress: 0.3, sublane: 2 });
+    spawn(sim, "enemy", "regulars", "bottom", { progress: 0.98, sublane: 0 });
+    spawn(sim, "enemy", "regulars", "bottom", { progress: 0.98, sublane: 1 });
     sim.checkpoints[0].owner = "player";
     sim.checkpoints[0].producing = false;
     sim.player.land = 400;
@@ -134,7 +134,7 @@ describe("purchases", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     for (let i = 0; i < CONFIG.botTopGarrison; i += 1) {
-      spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: i });
+      spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: i });
     }
     sim.player.gold = 200;
     sim.player.land = 0;
@@ -142,20 +142,20 @@ describe("purchases", () => {
     stepBot(bot, sim);
     const bottoms = living(sim.player).filter((unit) => unit.lane === "bottom");
     assert.equal(bottoms.length, 1);
-    assert.equal(bottoms[0].type, "troop");
+    assert.equal(bottoms[0].unit, "regulars");
   });
 
   it("reinforces the top lane when the enemy is ahead there", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     for (let i = 0; i < CONFIG.botTopGarrison; i += 1) {
-      spawn(sim, "player", "troop", "top", { progress: 0.3, sublane: i });
+      spawn(sim, "player", "regulars", "top", { progress: 0.3, sublane: i });
     }
     for (let i = 0; i < CONFIG.botBottomSeed; i += 1) {
-      spawn(sim, "player", "troop", "bottom", { progress: 0.1, sublane: i });
+      spawn(sim, "player", "regulars", "bottom", { progress: 0.1, sublane: i });
     }
     for (let i = 0; i < CONFIG.botTopGarrison + 2; i += 1) {
-      spawn(sim, "enemy", "troop", "top", { progress: 0.35, sublane: i % 5 });
+      spawn(sim, "enemy", "regulars", "top", { progress: 0.35, sublane: i % 5 });
     }
     bot.buyLane = "bottom";
     sim.player.gold = 200;
@@ -171,26 +171,26 @@ describe("purchases", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     for (let i = 0; i < 12; i += 1) {
-      spawn(sim, "player", "cannon", "top", { progress: 0.1, sublane: i % 5 });
+      spawn(sim, "player", "fieldGun", "top", { progress: 0.1, sublane: i % 5 });
     }
     sim.player.gold = 240;
     sim.player.land = 0;
     stepBot(bot, sim);
     assert.equal(sim.player.banks, 1);
-    assert.equal(living(sim.player, "cannon").length, 12);
+    assert.equal(living(sim.player, "fieldGun").length, 12);
   });
 
   it("banks after a desperate buy fails when upkeep is already too high", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
-    spawn(sim, "player", "troop", "top", { progress: 0.1, sublane: 0 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.1, sublane: 0 });
     const saved = {};
-    for (const key of ["troop", "skirmisher", "dragoon", "cannon", "officer"]) {
+    for (const key of ["regulars", "light", "dragoon", "fieldGun", "major"]) {
       saved[key] = UNIT_STATS[key].cost;
       UNIT_STATS[key].cost = 5000;
     }
     try {
-      sim.player.capitalHP = CONFIG.capitalHP * 0.2;
+      sim.player.keepHP = CONFIG.keepHP * 0.2;
       sim.player.gold = 240;
       sim.player.income = 0;
       sim.player.land = 0;
@@ -205,8 +205,8 @@ describe("purchases", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     for (let i = 0; i < 3; i += 1) {
-      spawn(sim, "player", "troop", "bottom", { progress: 0.2, sublane: i });
-      spawn(sim, "player", "troop", "top", { progress: 0.2, sublane: i });
+      spawn(sim, "player", "regulars", "bottom", { progress: 0.2, sublane: i });
+      spawn(sim, "player", "regulars", "top", { progress: 0.2, sublane: i });
     }
     sim.checkpoints[0].owner = "player";
     sim.checkpoints[0].producing = false;
@@ -223,13 +223,13 @@ describe("purchases", () => {
     const sim = makeSim();
     const bot = makeBot("simple");
     // Under the line minimum so decideEconomy forces a troop-role buy.
-    spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: 0 });
-    spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: 1 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.25, sublane: 0 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.25, sublane: 1 });
     bot.buyLane = "top";
     sim.player.gold = UNIT_STATS.militia.cost + 20;
     sim.player.land = unitLandCost("militia") + CONFIG.upgradeBaseCost;
     sim.player.income = 1000;
-    assert.ok(sim.player.gold < UNIT_STATS.troop.cost);
+    assert.ok(sim.player.gold < UNIT_STATS.regulars.cost);
     const before = living(sim.player).length;
     stepBot(bot, sim);
     const militia = living(sim.player).filter((unit) => unit.variant === "militia");
@@ -241,11 +241,11 @@ describe("purchases", () => {
     const sim = makeSim();
     const troops = [];
     for (let i = 0; i < CONFIG.botMinTroopsBeforeSupport; i += 1) {
-      troops.push(spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: i }));
+      troops.push(spawn(sim, "player", "regulars", "top", { progress: 0.25, sublane: i }));
     }
     sim.player.gold = UNIT_STATS.grenadier.cost + 50;
     sim.player.land = unitLandCost("grenadier") + CONFIG.upgradeBaseCost;
-    const key = chooseSpawnKey(sim.player, "troop", botProfile("hard"), spawnCtx({
+    const key = chooseSpawnKey(sim.player, "regulars", botProfile("hard"), spawnCtx({
       laneUnits: troops,
       allFriends: troops,
       posture: "attack",
@@ -258,11 +258,11 @@ describe("purchases", () => {
     const sim = makeSim();
     const troops = [];
     for (let i = 0; i < CONFIG.botMinTroopsBeforeSupport; i += 1) {
-      troops.push(spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: i }));
+      troops.push(spawn(sim, "player", "regulars", "top", { progress: 0.25, sublane: i }));
     }
-    sim.player.gold = UNIT_STATS.troop.cost + 50;
+    sim.player.gold = UNIT_STATS.regulars.cost + 50;
     sim.player.land = unitLandCost("militia") + CONFIG.upgradeBaseCost;
-    const key = chooseSpawnKey(sim.player, "troop", botProfile("simple"), spawnCtx({
+    const key = chooseSpawnKey(sim.player, "regulars", botProfile("simple"), spawnCtx({
       laneUnits: troops,
       allFriends: troops,
       posture: "hold",

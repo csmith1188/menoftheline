@@ -11,7 +11,7 @@ import { makeBot, makeSim, quiet, spawn, stepBot } from "./helpers.js";
 function placeLine(sim, count, progress, order) {
   const units = [];
   for (let i = 0; i < count; i += 1) {
-    units.push(spawn(sim, "player", "troop", "top", {
+    units.push(spawn(sim, "player", "regulars", "top", {
       progress,
       sublane: i,
       order,
@@ -24,8 +24,8 @@ describe("hysteresis, keeps, and defense", () => {
   it("does not resume an advance while the local ratio is still short of even", () => {
     const sim = makeSim();
     const bot = makeBot("hard");
-    const friend = spawn(sim, "player", "troop", "top", { progress: 0.5, sublane: 2 });
-    const foe = spawn(sim, "enemy", "troop", "top", { progress: 0.4, sublane: 0 });
+    const friend = spawn(sim, "player", "regulars", "top", { progress: 0.5, sublane: 2 });
+    const foe = spawn(sim, "enemy", "regulars", "top", { progress: 0.4, sublane: 0 });
     const hard = botProfile("hard");
     const tune = (hp) => {
       friend.hp = hp;
@@ -49,15 +49,15 @@ describe("hysteresis, keeps, and defense", () => {
   });
 
   it("does not flip a cannon between halt and advance inside the dead band", () => {
-    const range = spawn(makeSim(), "player", "cannon", "top", { progress: 0 }).rangePaces();
+    const range = spawn(makeSim(), "player", "fieldGun", "top", { progress: 0 }).rangePaces();
     const inner = range * CONFIG.botCannonHaltBand;
     const outer = range * CONFIG.botCannonAdvanceBand;
     const gap = (inner + outer) / 2;
 
     const held = makeSim();
     const botHeld = makeBot("hard");
-    const gun = spawn(held, "player", "cannon", "top", { progress: 0.2, sublane: 2 });
-    const foe = spawn(held, "enemy", "troop", "top", {
+    const gun = spawn(held, "player", "fieldGun", "top", { progress: 0.2, sublane: 2 });
+    const foe = spawn(held, "enemy", "regulars", "top", {
       progress: 1 - (0.2 + inner * 0.6 / 1000),
       sublane: 0,
     });
@@ -72,8 +72,8 @@ describe("hysteresis, keeps, and defense", () => {
 
     const moving = makeSim();
     const botMove = makeBot("hard");
-    const walker = spawn(moving, "player", "cannon", "top", { progress: 0.2, sublane: 2 });
-    const far = spawn(moving, "enemy", "troop", "top", {
+    const walker = spawn(moving, "player", "fieldGun", "top", { progress: 0.2, sublane: 2 });
+    const far = spawn(moving, "enemy", "regulars", "top", {
       progress: 1 - (0.2 + (outer + 80) / 1000),
       sublane: 0,
     });
@@ -91,7 +91,7 @@ describe("hysteresis, keeps, and defense", () => {
     const committed = makeSim();
     const bot = makeBot("hard");
     const line = placeLine(committed, 5, 0.86, "halt");
-    spawn(committed, "enemy", "troop", "top", { progress: 0.04, sublane: 2 });
+    spawn(committed, "enemy", "regulars", "top", { progress: 0.04, sublane: 2 });
     quiet(committed.player);
     quiet(committed.enemy);
     stepBot(bot, committed);
@@ -100,10 +100,10 @@ describe("hysteresis, keeps, and defense", () => {
 
     const lone = makeSim();
     const botLone = makeBot("hard");
-    const one = spawn(lone, "player", "troop", "top", {
+    const one = spawn(lone, "player", "regulars", "top", {
       progress: 0.86, sublane: 2, order: "halt",
     });
-    spawn(lone, "enemy", "troop", "top", { progress: 0.04, sublane: 1 });
+    spawn(lone, "enemy", "regulars", "top", { progress: 0.04, sublane: 1 });
     quiet(lone.player);
     quiet(lone.enemy);
     stepBot(botLone, lone);
@@ -114,9 +114,9 @@ describe("hysteresis, keeps, and defense", () => {
   it("defends a lane whose keep is actually threatened", () => {
     const sim = makeSim();
     const bot = makeBot("hard");
-    spawn(sim, "player", "troop", "top", { progress: 0.25, sublane: 2 });
-    spawn(sim, "enemy", "troop", "bottom", { progress: 0.98, sublane: 0 });
-    spawn(sim, "enemy", "troop", "bottom", { progress: 0.98, sublane: 1 });
+    spawn(sim, "player", "regulars", "top", { progress: 0.25, sublane: 2 });
+    spawn(sim, "enemy", "regulars", "bottom", { progress: 0.98, sublane: 0 });
+    spawn(sim, "enemy", "regulars", "bottom", { progress: 0.98, sublane: 1 });
     sim.player.gold = 150;
     sim.player.income = 1000;
     sim.player.land = 0;

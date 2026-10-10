@@ -12,7 +12,7 @@ The Bottom lane is drawn as an arc so the lanes can meet at both keeps. Units on
 
 Distances along a lane are measured from a unit's center. Each figure below is a **reach from that center**. Two units match when those reaches **overlap** (so centers may be up to twice the reach apart):
 
-- **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot, and for Troop order passing.
+- **Perfect Line:** 1 pace either side. [[Orders]] use this when a line holds to shoot, and for Infantry order passing.
 - **In Line:** 8 paces either side. [[Lines]] form inside this reach.
 - **Footprint:** 12 paces either side. Footprints that meet are touching. Friendly blocking uses this reach.
 - **Melee reach:** footprint plus 6 paces of slack either side. Same-row or adjacent-row contact inside this reach is [[Melee]]. Chargers stop just outside the hard footprint and lock in that slack ring.
@@ -41,7 +41,7 @@ Cover from a footprint applies only against attackers who are not also standing 
 
 **Hills** (⛰️). Block LOS. Units standing on a hill get +20% shooting range and 20% cover against attackers outside that hill. While walking away from your keep, movement is slower before the hill center and faster by the same amount after it. Walking back toward your keep reverses that: faster before the center, slower after it.
 
-**Woods** (🌲). Units standing in woods have 10% cover against attackers outside those woods, and move slower. Standing on the woods is what removes their line-of-sight block. Guerillas in woods stay hidden unless you occupy that woods or are in melee with them (or they just shot). Other units in woods are visible through ordinary fog of war. A unit inside can see into and past the woods.
+**Woods** (🌲). Units standing in woods have 10% cover against attackers outside those woods, and move slower. Standing on the woods is what removes their line-of-sight block. Guerrillas in woods stay hidden unless you occupy that woods or are in melee with them (or they just shot). Other units in woods are visible through ordinary fog of war. A unit inside can see into and past the woods.
 
 **River** (🌊). Infantry cross at half speed; cavalry at quarter speed; artillery cannot enter unless an Engineer pontoons that river (treated as a bridge while the Engineer's 60-pace aura overlaps it). Broken artillery steps onto a clear adjacent row (the bridge row when present) to keep withdrawing. Guns left on a river when a pontoon drops peel toward their own keep.
 
@@ -49,7 +49,7 @@ Cover from a footprint applies only against attackers who are not also standing 
 
 **Bridge** (🌉). Normal movement; does not block LOS (cosmetic pathing on that row).
 
-**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Shots from a hidden enemy still appear in flight. Enemies you are in melee with are always shown. Guerillas are also hidden (and cannot be shot) unless within 50 paces, they shot within the last second, or you occupy their woods. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Stealthed Guerillas cannot. An Engineer within 60 paces of a terrain feature unblocks LOS through it for its side even without standing on it. Reveal and hide update each tick.
+**Fog of war.** Each row is split into segments between keeps and LOS terrain (hills, woods, peaks, forts). Rivers and bridges do not split these segments. Segments you cannot see draw dark; terrain footprints themselves are not darkened further. The server does not send you enemy unit positions you cannot see. Shots from a hidden enemy still appear in flight. Enemies you are in melee with are always shown. Guerrillas are also hidden (and cannot be shot) unless within 50 paces, they shot within the last second, or you occupy their woods. Units you can see (including those on a terrain footprint you have LOS to) can be shot if they are in range. Stealthed Guerrillas cannot. An Engineer within 60 paces of a terrain feature unblocks LOS through it for its side even without standing on it. Reveal and hide update each tick.
 
 **Cresting a segment.** Once any of your units on that lane is past the centerline of the terrain that closes off a gap (and not yet into the footprint of the terrain on the far side of that gap), you can see into that open segment on every row of the lane — not only the row your unit stands on. Example: a unit on the outer bottom row just past a forest toward the river can see the inner-row gap between the peak and the next forest, but not the earlier outer-row gap between the two forests behind it.
 

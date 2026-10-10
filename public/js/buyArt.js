@@ -1,7 +1,11 @@
 const BUY_BG_SRC = {
+  regulars: "/img/troop_red.svg",
+  light: "/img/skirmisher_red.svg",
+  dragoon: "/img/dragoon_red.svg",
+  fieldGun: "/img/guns_red.svg",
+  major: "/img/officer_red.svg",
   troop: "/img/troop_red.svg",
   skirmisher: "/img/skirmisher_red.svg",
-  dragoon: "/img/dragoon_red.svg",
   cannon: "/img/guns_red.svg",
   officer: "/img/officer_red.svg",
 };

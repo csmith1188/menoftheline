@@ -5,34 +5,23 @@
 - 3d should always zoom in to fill screen with map
 - Wiki Categories
 
-# Capacity
-One Node process still owns each match. `METRICS=1` and `npm run load -- bot` measure it. Sim steps stay at 50 ms; snapshots go out about every 100 ms. A crowded 20-vs-20 bench is too heavy for 100 rooms on one core (see `npm run sim-bench`), so `WORKER_COUNT` can pin each match to one owner process. That does not copy GameSim through Redis. Leave PM2 at one instance until you set workers on purpose.
-
 # Ideas (May add to game)
-- Guerillas target most vulnerable units (msot likely to break soon)
+- Guerillas target most vulnerable units (most likely to break soon)
 - Fog in lanes in 3d
 - Units also cost men from initial pool?
 - Game mode to play by programming each unit and keep's orders
-
-- Earn ranks by MMR brankets
 - tip of the day
-
 - Towns produce food/men/horses/steel? strategic capturing of towns?
-
 - officers make order sounds when near lines given orders
 - Reinforced Learning player
 
 # Site
-- don't fill formbar id's for guest / non-formbar users
-- discord login (done) + bot /status /profile (done; more commands later)
 - demo recorder / playback
 - social accounts: x, insta, discord, reddit, restore iPhone SE
 - LLC
 - steam, google, apple, nintendo
 - Payment processing per platform
-- limit login attempts
 - refer a friend -> friend gets 5 tickets -> referer gets 5 tickets if referer spends all five, and 5 more if referer makes a purchase
-
 
 - inspect database and migrations
 - client performance benchmarks
@@ -45,6 +34,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 
 - Regiments
     - Buy a regiment for X tickets
+    - Limited by number of men? X men per unit type (like points from wh40k)
     - Design regimental colors for them
     - Comes with 10 battalions
     - Battalions have a specific number of each unit, but can be editted before used in a game

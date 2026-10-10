@@ -6,6 +6,7 @@ import {
   startPlay,
 } from "./api.js";
 import { isShell, playPath } from "../runtime.js";
+import { installCommunityPanel } from "../community.js";
 
 const root = document.getElementById("games-root");
 const accountEl = document.getElementById("games-account");
@@ -196,3 +197,5 @@ refresh().catch((err) => {
   console.error(err);
   setNotice("Failed to load games menu.");
 });
+
+installCommunityPanel().catch(() => {});

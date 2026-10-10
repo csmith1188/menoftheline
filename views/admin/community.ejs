@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <%- include("../pwa-head") %>
+  <title>Community · Admin</title>
+  <link rel="stylesheet" href="/css/landing.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/css/admin.css?v=<%= assetVersion %>">
+</head>
+<body>
+  <%
+    const SLOT_LABELS = ["Blue", "Green", "Red"];
+    const fundingSlots = [0, 1, 2].map(function (slot) {
+      return (state.funding && state.funding[slot]) || null;
+    });
+    const devSlots = [0, 1, 2].map(function (slot) {
+      return (state.development && state.development[slot]) || null;
+    });
+    let defaultFundingSlot = 0;
+    let defaultDevSlot = 0;
+    fundingSlots.forEach(function (g, slot) {
+      if (g && defaults.fundingGoalId && Number(g.id) === Number(defaults.fundingGoalId)) {
+        defaultFundingSlot = slot;
+      }
+    });
+    devSlots.forEach(function (p, slot) {
+      if (p && defaults.devPriorityId && Number(p.id) === Number(defaults.devPriorityId)) {
+        defaultDevSlot = slot;
+      }
+    });
+    const archivedFunding = (fundingAll || []).filter(function (g) {
+      return g.status === "archived" || (g.status === "fulfilled" && g.slot == null);
+    });
+    const closedRounds = (rounds || []).filter(function (entry) {
+      return entry.round && entry.round.status === "closed";
+    });
+    const openRoundEntry = (rounds || []).find(function (entry) {
+      return entry.round && entry.round.status === "open";
+    });
+  %>
+  <div class="page">
+    <%- include("../header") %>
+    <% if (notice) { %><p class="notice" role="status"><%= notice %></p><% } %>
+    <%- include("_nav") %>
+    <section>
+      <h2>Community Funding &amp; Development</h2>
+      <p class="hint">
+        Funding counts eligible paid tickets spent (PayPal + Digipog), not cash on hand.
+        Development counts every ticket spent.
+      </p>
+
+      <div class="admin-panel">
+        <h3>Live preview</h3>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Slot</th>
+                <th>Funding</th>
+                <th>Progress</th>
+                <th>Status</th>
+                <th>Development</th>
+                <th>%</th>
+                <th>Votes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% [0,1,2].forEach(function (slot) {
+                const f = fundingSlots[slot];
+                const d = devSlots[slot];
+              %>
+                <tr>
+                  <td><%= SLOT_LABELS[slot] %></td>
+                  <td><% if (f) { %><%= f.title %><% } else { %>—<% } %></td>
+                  <td><% if (f) { %><%= f.contributedTickets %>/<%= f.targetTickets %><% } else { %>—<% } %></td>
+                  <td><%= f ? f.status : "—" %></td>
+                  <td><% if (d) { %><%= d.title %><% } else { %>—<% } %></td>
+                  <td><%= d ? d.percent + "%" : "—" %></td>
+                  <td><%= d ? d.contributedTickets : "—" %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Fund the War Effort</h3>
+        <p class="hint">
+          Three fixed slots. Pick one default for new players.
+          Changing a filled slot and saving archives the old goal and starts a new one in that slot.
+        </p>
+        <form method="post" action="/admin/community/funding/save" class="community-slot-form">
+          <%- include("../csrf-field") %>
+          <div class="community-slot-grid">
+            <% [0,1,2].forEach(function (slot) {
+              const g = fundingSlots[slot];
+            %>
+              <div class="community-slot-card community-slot-<%= slot %>">
+                <p class="community-slot-label"><%= SLOT_LABELS[slot] %></p>
+                <label class="community-default-radio">
+                  <input type="radio" name="defaultSlot" value="<%= slot %>"
+                    <%= defaultFundingSlot === slot ? "checked" : "" %>>
+                  Default
+                </label>
+                <label>Title
+                  <input name="title<%= slot %>" maxlength="80" required
+                    value="<%= g ? g.title : "" %>">
+                </label>
+                <label>Summary
+                  <textarea name="description<%= slot %>" rows="3" maxlength="400"><%= g ? g.description : "" %></textarea>
+                </label>
+                <label>Ticket target
+                  <input name="target<%= slot %>" type="number" min="1" required
+                    value="<%= g ? g.targetTickets : 100 %>">
+                </label>
+                <% if (g) { %>
+                  <p class="hint"><%= g.contributedTickets %> contributed · <%= g.status %></p>
+                  <label class="community-default-radio">
+                    <input type="checkbox" name="keepOverflow<%= slot %>" value="1">
+                    Keep overflow when replacing
+                  </label>
+                <% } %>
+              </div>
+            <% }) %>
+          </div>
+          <button type="submit">Save funding</button>
+        </form>
+
+        <% fundingSlots.forEach(function (g, slot) {
+          if (!g) return;
+        %>
+          <div class="community-slot-actions">
+            <p class="hint"><%= SLOT_LABELS[slot] %>: #<%= g.id %></p>
+            <form method="post" action="/admin/community/funding/<%= g.id %>/fulfill" class="inline-form">
+              <%- include("../csrf-field") %>
+              <input type="hidden" name="confirm" value="1">
+              <input name="notes" placeholder="What was purchased?" required>
+              <input name="links" placeholder="Optional link">
+              <button type="submit">Mark fulfilled</button>
+            </form>
+          </div>
+        <% }) %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Shape the Future</h3>
+        <p class="hint">Three fixed priorities for the current development round. Pick one default for new players.</p>
+        <form method="post" action="/admin/community/dev/save" class="community-slot-form">
+          <%- include("../csrf-field") %>
+          <div class="community-slot-grid">
+            <% [0,1,2].forEach(function (slot) {
+              const p = devSlots[slot];
+            %>
+              <div class="community-slot-card community-slot-<%= slot %>">
+                <p class="community-slot-label"><%= SLOT_LABELS[slot] %></p>
+                <label class="community-default-radio">
+                  <input type="radio" name="defaultSlot" value="<%= slot %>"
+                    <%= defaultDevSlot === slot ? "checked" : "" %>>
+                  Default
+                </label>
+                <label>Title
+                  <input name="title<%= slot %>" maxlength="80" required
+                    value="<%= p ? p.title : "" %>">
+                </label>
+                <label>Summary
+                  <textarea name="description<%= slot %>" rows="3" maxlength="400"><%= p ? p.description : "" %></textarea>
+                </label>
+                <% if (p) { %>
+                  <p class="hint"><%= p.contributedTickets %> votes · <%= p.percent %>%</p>
+                <% } %>
+              </div>
+            <% }) %>
+          </div>
+          <button type="submit">Save development</button>
+        </form>
+
+        <% if (openRoundEntry) {
+          const priorities = openRoundEntry.priorities || [];
+          const sorted = priorities.slice().sort(function (a, b) {
+            return (Number(b.contributed_tickets) || 0) - (Number(a.contributed_tickets) || 0);
+          });
+          const leadId = sorted[0] && sorted[0].id;
+        %>
+          <form method="post" action="/admin/community/dev/close" class="community-close-round"
+            onsubmit="return confirm('Close this development round and archive results?');">
+            <%- include("../csrf-field") %>
+            <input type="hidden" name="confirm" value="1">
+            <label>Winner
+              <select name="winnerPriorityId" required>
+                <% priorities.forEach(function (p) { %>
+                  <option value="<%= p.id %>" <%= Number(p.id) === Number(leadId) ? "selected" : "" %>>
+                    <%= p.title %> (<%= p.contributed_tickets %> votes)
+                  </option>
+                <% }) %>
+              </select>
+            </label>
+            <button type="submit">Close round &amp; archive</button>
+          </form>
+        <% } %>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Archives</h3>
+
+        <h4>Funding goals</h4>
+        <% if (!archivedFunding.length) { %>
+          <p class="hint">No archived funding goals yet.</p>
+        <% } else { %>
+          <ul class="community-archive-list">
+            <% archivedFunding.forEach(function (g) { %>
+              <li>
+                <strong><%= g.title %></strong>
+                — <%= g.contributedTickets %>/<%= g.targetTickets || g.originalTargetTickets || "?" %> tickets
+                · <%= g.status %>
+                <% if (g.goalReached) { %> · target reached<% } %>
+                <% if (g.fulfillmentNotes) { %>
+                  <br><span class="hint">Purchased: <%= g.fulfillmentNotes %></span>
+                <% } %>
+                <% if (g.discrepancyFlag) { %>
+                  <br><span class="hint">Discrepancy: contributions later fell below target.</span>
+                <% } %>
+              </li>
+            <% }) %>
+          </ul>
+        <% } %>
+
+        <h4>Development rounds</h4>
+        <% if (!closedRounds.length) { %>
+          <p class="hint">No closed development rounds yet.</p>
+        <% } else { %>
+          <% closedRounds.forEach(function (entry) {
+            const round = entry.round;
+            const priorities = entry.priorities || [];
+            const total = priorities.reduce(function (sum, p) {
+              return sum + (Number(p.contributed_tickets) || 0);
+            }, 0);
+          %>
+            <div class="community-archive-round">
+              <p>
+                <strong>Round #<%= round.id %></strong>
+                <% if (round.closed_at) { %>
+                  · closed <%= new Date(round.closed_at).toLocaleDateString() %>
+                <% } %>
+                <% if (round.winner_priority_id) { %>
+                  · winner #<%= round.winner_priority_id %>
+                <% } %>
+              </p>
+              <ul>
+                <% priorities.forEach(function (p) {
+                  const pct = total > 0
+                    ? Math.round((Number(p.contributed_tickets) || 0) * 100 / total)
+                    : 0;
+                  const won = Number(p.id) === Number(round.winner_priority_id);
+                %>
+                  <li>
+                    <%= p.title %> — <%= pct %>% (<%= p.contributed_tickets %>)
+                    <% if (won) { %> · winner<% } %>
+                    <% if (p.impl_status) { %> · <%= p.impl_status %><% } %>
+                    <% if (p.public_change_explanation) { %>
+                      <br><span class="hint"><%= p.public_change_explanation %></span>
+                    <% } %>
+                  </li>
+                <% }) %>
+              </ul>
+            </div>
+          <% }) %>
+        <% } %>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

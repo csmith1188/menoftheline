@@ -1055,3 +1055,244 @@ select:focus {
 .motl-asset-update button:hover {
   background: rgba(232, 195, 106, 0.12);
 }
+
+/* Community Funding & Development Priorities (/games) */
+.community-root {
+  --community-blue: #4aa3ff;
+  --community-green: #3a7a6a;
+  --community-red: #e85d4c;
+  margin: 0 0 1.25rem;
+}
+
+.community-panel {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.85rem 1rem 1rem;
+  background: rgba(29, 40, 54, 0.55);
+}
+
+.community-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.community-panel-head h2 {
+  margin: 0;
+}
+
+.community-history-link {
+  margin-left: auto;
+  color: var(--gold);
+  text-decoration: underline;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+.community-history-link:hover {
+  color: color-mix(in srgb, var(--gold) 80%, white);
+}
+
+.community-row {
+  margin: 0.85rem 0 0;
+}
+
+.community-row-title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  color: var(--gold);
+}
+
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.community-cell {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 24, 33, 0.55);
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.community-cell.pickable {
+  cursor: pointer;
+}
+
+.community-cell.pickable:hover {
+  border-color: color-mix(in srgb, var(--gold) 50%, var(--line));
+}
+
+.community-cell.slot-blue {
+  border-top: 3px solid var(--community-blue);
+}
+
+.community-cell.slot-green {
+  border-top: 3px solid var(--community-green);
+}
+
+.community-cell.slot-red {
+  border-top: 3px solid var(--community-red);
+}
+
+.community-cell.selected {
+  box-shadow: inset 0 0 0 1px var(--gold);
+  background: rgba(40, 52, 68, 0.85);
+}
+
+.community-cell-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.community-cell-title {
+  margin: 0;
+  font-family: var(--font-header);
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.community-cell-desc {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+  line-height: 1.3;
+  opacity: 0.88;
+}
+
+.community-cell-summary {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--gold);
+}
+
+.community-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.community-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.community-cell.slot-blue .community-fill {
+  background: var(--community-blue);
+}
+
+.community-cell.slot-green .community-fill {
+  background: var(--community-green);
+}
+
+.community-cell.slot-red .community-fill {
+  background: var(--community-red);
+}
+
+.community-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.community-badge {
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.community-badge.selected-mark {
+  border-color: var(--gold);
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.community-badge.reached,
+.community-badge.fulfilled {
+  color: #c8e6c9;
+}
+
+.community-history {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.community-history.hidden {
+  display: none;
+}
+
+.community-history-card {
+  width: min(520px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.community-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.community-history-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.community-history-section {
+  margin: 12px 0 6px;
+  font-family: var(--font-header);
+  color: var(--gold);
+  font-size: 0.9rem;
+}
+
+.community-history-item {
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.community-history-item h3 {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+}
+
+.community-history-item p,
+.community-history-item li {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+  .community-grid {
+    grid-template-columns: 1fr;
+  }
+}

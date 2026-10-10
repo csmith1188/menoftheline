@@ -90,6 +90,7 @@ import {
   accountEmailVerified,
   anyLoginEnabled,
   authEmailEnabled,
+  communityFundingEnabled,
   discordLoginEnabled,
   formbarLoginEnabled,
   hashPassword,
@@ -162,6 +163,12 @@ import { loadNews } from "./server/news.js";
 import { renderNewsWebsiteHtml } from "./server/newsRender.js";
 import { renderWikiBody } from "./server/wiki-render.js";
 import { createAdminRouter } from "./server/admin/routes.js";
+import {
+  attachCommunityIo,
+  getCommunityHistory,
+  getCommunityPublicState,
+  setPlayerCommunitySelection,
+} from "./server/community.js";
 import {
   getStaffContext,
   sessionIsAdmin,
@@ -259,6 +266,7 @@ const io = new Server(httpServer, {
   perMessageDeflate: false,
   httpCompression: true,
 });
+attachCommunityIo(io);
 const formbarSocket = connectFormbar(AUTH_URL, process.env.API_KEY || "");
 
 const sessionStore = new SQLiteStore({
@@ -493,6 +501,7 @@ app.use(async (req, res, next) => {
     res.locals.authEmailEnabled = authEmailEnabled();
     res.locals.anyLoginEnabled = anyLoginEnabled();
     res.locals.matchChatEnabled = matchChatEnabled();
+    res.locals.communityFundingEnabled = communityFundingEnabled();
 
     if (staff.account) {
       if (isAccountBanned(staff.account)) {
@@ -3329,6 +3338,83 @@ app.get("/api/v1/match-options", requireApiSession, async (req, res, next) => {
       baseGpsMin: BASE_GPS_MIN,
       baseGpsMax: BASE_GPS_MAX,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/community", async (req, res, next) => {
+  try {
+    if (!communityFundingEnabled()) {
+      res.json({ enabled: false });
+      return;
+    }
+    let accountId = null;
+    if (req.session && req.session.accountId) {
+      accountId = Number(req.session.accountId);
+    } else {
+      const header = String(req.headers.authorization || "");
+      const match = /^Bearer\s+(\S+)/i.exec(header);
+      if (match) {
+        try {
+          const data = await loadStoredSession(match[1]);
+          if (data && data.accountId) accountId = Number(data.accountId);
+        } catch {
+          // treat as anonymous
+        }
+      }
+    }
+    if (!Number.isInteger(accountId) || accountId <= 0) accountId = null;
+    const state = await getCommunityPublicState(accountId);
+    res.json({ enabled: true, ...state });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/api/v1/community/history", async (req, res, next) => {
+  try {
+    if (!communityFundingEnabled()) {
+      res.status(404).json({ error: "disabled" });
+      return;
+    }
+    const history = await getCommunityHistory({ limit: 30 });
+    res.json(history);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/v1/community/select", requireApiSession, async (req, res, next) => {
+  try {
+    if (!communityFundingEnabled()) {
+      res.status(404).json({ error: "disabled" });
+      return;
+    }
+    const account = await resolveSessionAccount(req.session);
+    if (!account || isAccountDeleted(account)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!rateLimit(`community-select:${account.id}`, { max: 30, windowMs: 60 * 1000 })) {
+      res.status(429).json({ error: "rate_limited" });
+      return;
+    }
+    const body = req.body || {};
+    const opts = {};
+    if (body.fundingGoalId !== undefined) opts.fundingGoalId = body.fundingGoalId;
+    if (body.devPriorityId !== undefined) opts.devPriorityId = body.devPriorityId;
+    if (opts.fundingGoalId === undefined && opts.devPriorityId === undefined) {
+      res.status(400).json({ error: "nothing_to_update" });
+      return;
+    }
+    const result = await setPlayerCommunitySelection(account.id, opts);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || "failed" });
+      return;
+    }
+    const state = await getCommunityPublicState(account.id);
+    res.json({ ok: true, selections: result.selections, state });
   } catch (err) {
     next(err);
   }

@@ -11,6 +11,9 @@
   <div class="page">
     <%- include("header") %>
     <p id="games-notice" class="notice<%= notice ? "" : " hidden" %>" role="status"><%= notice || "" %></p>
+    <% if (typeof communityFundingEnabled !== "undefined" && communityFundingEnabled) { %>
+      <%- include("community-strip") %>
+    <% } %>
     <div id="games-root">
       <p class="hint">Loading games…</p>
     </div>

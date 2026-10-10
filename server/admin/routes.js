@@ -32,6 +32,7 @@ import { report as metricsReport, ensureMetrics, metricsEnabled } from "../metri
 import { wikiLineDiff } from "../wiki-diff.js";
 import { requireAdmin, requireStaff } from "./auth.js";
 import { auditAdmin } from "./audit.js";
+import { communityFundingEnabled } from "../auth.js";
 import { buildAnalytics, barRows, formatRate, formatUsd } from "./analytics.js";
 import { eventsToCsv, listAdminEvents, retainAdminEvents } from "./events.js";
 import {
@@ -65,6 +66,13 @@ import {
   sendNewsTestEmail,
   startNewsCampaign,
 } from "./news.js";
+import {
+  closeDevRound,
+  communityAdminIndexData,
+  fulfillFundingGoal,
+  saveDevSlots,
+  saveFundingSlots,
+} from "./community.js";
 import {
   adminAdjustTickets,
   adminBan,
@@ -175,8 +183,16 @@ export function createAdminRouter(deps) {
       isAdmin: staff.role === "admin",
       isModerator: staff.role === "moderator" || staff.role === "admin",
       openReportCount,
+      communityFundingEnabled: communityFundingEnabled(),
       ...extra,
     };
+  }
+
+  function requireCommunityFunding(req, res) {
+    if (communityFundingEnabled()) return true;
+    req.session.notice = "Community funding is disabled when Formbar is the only login option.";
+    req.session.save(() => res.redirect("/admin"));
+    return false;
   }
 
   // ----- Overview -----
@@ -764,6 +780,167 @@ export function createAdminRouter(deps) {
         req.session.notice = "Maintenance settings updated.";
       }
       req.session.save(() => res.redirect("/admin/ops"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ----- Community Funding / Development -----
+  router.get("/community", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!requireCommunityFunding(req, res)) return;
+      const bundle = await communityAdminIndexData();
+      const data = await baseLocals(req, { ...bundle, adminSection: "community" });
+      req.session.save(() => res.render("admin/community", data));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/community/funding/save", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!requireCommunityFunding(req, res)) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions. Try again shortly.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      const slots = [0, 1, 2].map((slot) => ({
+        title: req.body[`title${slot}`],
+        description: req.body[`description${slot}`],
+        targetTickets: Number(req.body[`target${slot}`]),
+        keepOverflow: req.body[`keepOverflow${slot}`] === "1"
+          || req.body[`keepOverflow${slot}`] === "on",
+      }));
+      const result = await saveFundingSlots({
+        slots,
+        defaultSlot: Number(req.body.defaultSlot),
+        actorAccountId: req.session.accountId,
+      });
+      if (!result.ok) {
+        req.session.notice = `Save funding failed: ${result.error}`
+          + (result.slot != null ? ` (slot ${result.slot})` : "");
+      } else {
+        await auditAdmin(req, {
+          action: "community_funding_save",
+          targetType: "funding_goals",
+          targetId: result.goalIds.join(","),
+          after: result,
+        });
+        req.session.notice = "Funding slots saved.";
+      }
+      req.session.save(() => res.redirect("/admin/community"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/community/funding/:id/fulfill", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!requireCommunityFunding(req, res)) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions. Try again shortly.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      if (!confirmed(req.body)) {
+        req.session.notice = "Confirmation required.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      const id = routeId(req.params.id);
+      const result = await fulfillFundingGoal(id, {
+        notes: req.body.notes,
+        links: req.body.links,
+      });
+      if (!result.ok) {
+        req.session.notice = `Fulfill failed: ${result.error}`;
+      } else {
+        await auditAdmin(req, {
+          action: "community_funding_fulfill",
+          targetType: "funding_goal",
+          targetId: String(id),
+          before: result.before,
+          after: result.goal,
+        });
+        req.session.notice = `Marked funding goal #${id} fulfilled and archived.`;
+      }
+      req.session.save(() => res.redirect("/admin/community"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/community/dev/save", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!requireCommunityFunding(req, res)) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions. Try again shortly.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      const slots = [0, 1, 2].map((slot) => ({
+        title: req.body[`title${slot}`],
+        description: req.body[`description${slot}`],
+      }));
+      const result = await saveDevSlots({
+        slots,
+        defaultSlot: Number(req.body.defaultSlot),
+        actorAccountId: req.session.accountId,
+      });
+      if (!result.ok) {
+        req.session.notice = `Save development failed: ${result.error}`
+          + (result.slot != null ? ` (slot ${result.slot})` : "");
+      } else {
+        await auditAdmin(req, {
+          action: "community_dev_save",
+          targetType: "dev_round",
+          targetId: String(result.roundId),
+          after: result,
+        });
+        req.session.notice = "Development slots saved.";
+      }
+      req.session.save(() => res.redirect("/admin/community"));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/community/dev/close", async (req, res, next) => {
+    try {
+      if (!(await requireAdmin(req, res))) return;
+      if (!requireCommunityFunding(req, res)) return;
+      if (!adminLimited(req)) {
+        req.session.notice = "Too many admin actions. Try again shortly.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      if (!confirmed(req.body)) {
+        req.session.notice = "Confirmation required.";
+        req.session.save(() => res.redirect("/admin/community"));
+        return;
+      }
+      const result = await closeDevRound({
+        winnerPriorityId: Number(req.body.winnerPriorityId),
+        tieBreakNotes: req.body.tieBreakNotes || "",
+        actorAccountId: req.session.accountId,
+      });
+      if (!result.ok) {
+        req.session.notice = `Close round failed: ${result.error}`;
+      } else {
+        await auditAdmin(req, {
+          action: "community_dev_close",
+          targetType: "dev_round",
+          targetId: String(result.roundId),
+          after: result,
+        });
+        req.session.notice = `Closed round #${result.roundId}; winner #${result.winnerPriorityId}.`;
+      }
+      req.session.save(() => res.redirect("/admin/community"));
     } catch (err) {
       next(err);
     }

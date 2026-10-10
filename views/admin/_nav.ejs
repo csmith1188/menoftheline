@@ -8,6 +8,9 @@
   <a href="/admin/games" class="<%= adminSection === 'games' ? 'active' : '' %>">Games</a>
   <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
     <a href="/admin/ops" class="<%= adminSection === 'ops' ? 'active' : '' %>">Ops</a>
+    <% if (typeof communityFundingEnabled === "undefined" || communityFundingEnabled) { %>
+      <a href="/admin/community" class="<%= adminSection === 'community' ? 'active' : '' %>">Community</a>
+    <% } %>
     <a href="/admin/news" class="<%= adminSection === 'news' ? 'active' : '' %>">News</a>
     <a href="/admin/audit" class="<%= adminSection === 'audit' ? 'active' : '' %>">Audit</a>
   <% } %>

@@ -16,6 +16,7 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - Sort metrics by bot, casual, training, ranked
 - Earn ranks by MMR brankets
 - Vocab update
+- tip of the day
 
 - Towns produce food/men/horses/steel? strategic capturing of towns?
 
@@ -44,7 +45,6 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - Reinforced Learning player
 
 # Site
-- revenue goals
 - don't fill formbar id's for guest / non-formbar users
 - discord bot + login
 - demo recorder / playback
@@ -52,6 +52,9 @@ One Node process still owns each match. `METRICS=1` and `npm run load -- bot` me
 - LLC
 - steam, google, apple, nintendo
 - Payment processing per platform
+- limit login attempts
+- refer a friend -> friend gets 5 tickets -> referer gets 5 tickets if referer spends all five, and 5 more if referer makes a purchase
+
 
 - inspect database and migrations
 - client performance benchmarks

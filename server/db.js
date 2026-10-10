@@ -659,6 +659,91 @@ async function ensureAdminSchema() {
   )`);
   await run("CREATE INDEX IF NOT EXISTS newsletter_outbox_claim ON newsletter_outbox (status, next_attempt_at)");
   await run("CREATE INDEX IF NOT EXISTS newsletter_outbox_campaign ON newsletter_outbox (campaign_id, status)");
+
+  await ensureCommunitySchema();
+}
+
+async function ensureCommunitySchema() {
+  await run(`CREATE TABLE IF NOT EXISTS funding_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    target_tickets INTEGER NOT NULL,
+    contributed_tickets INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    slot INTEGER,
+    selection_deadline_at INTEGER,
+    created_at INTEGER NOT NULL,
+    reached_at INTEGER,
+    fulfilled_at INTEGER,
+    archived_at INTEGER,
+    fulfillment_notes TEXT,
+    fulfillment_links TEXT,
+    original_target_tickets INTEGER,
+    discrepancy_flag INTEGER NOT NULL DEFAULT 0
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS funding_goals_status_slot ON funding_goals (status, slot)");
+
+  await run(`CREATE TABLE IF NOT EXISTS dev_rounds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'open',
+    started_at INTEGER NOT NULL,
+    closed_at INTEGER,
+    winner_priority_id INTEGER,
+    tie_break_notes TEXT,
+    closed_by INTEGER
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS dev_rounds_status ON dev_rounds (status, started_at)");
+
+  await run(`CREATE TABLE IF NOT EXISTS dev_priorities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    contributed_tickets INTEGER NOT NULL DEFAULT 0,
+    slot INTEGER,
+    selection_deadline_at INTEGER,
+    vote_status TEXT NOT NULL DEFAULT 'active',
+    impl_status TEXT,
+    impl_notes TEXT,
+    public_change_explanation TEXT,
+    news_links TEXT,
+    created_at INTEGER NOT NULL,
+    closed_at INTEGER
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS dev_priorities_round ON dev_priorities (round_id, slot)");
+  await run("CREATE INDEX IF NOT EXISTS dev_priorities_vote ON dev_priorities (vote_status, slot)");
+
+  await run(`CREATE TABLE IF NOT EXISTS community_player_selections (
+    account_id INTEGER PRIMARY KEY,
+    funding_goal_id INTEGER,
+    dev_priority_id INTEGER,
+    updated_at INTEGER NOT NULL
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS community_contributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    spend_ledger_id INTEGER UNIQUE,
+    reversal_of_id INTEGER,
+    tickets_spent INTEGER NOT NULL DEFAULT 0,
+    paid_tickets INTEGER NOT NULL DEFAULT 0,
+    free_tickets INTEGER NOT NULL DEFAULT 0,
+    funding_goal_id INTEGER,
+    funding_delta INTEGER NOT NULL DEFAULT 0,
+    dev_priority_id INTEGER,
+    dev_delta INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL,
+    ref_type TEXT,
+    ref_id TEXT,
+    lot_slices_json TEXT
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS community_contrib_account ON community_contributions (account_id, created_at)");
+  await run("CREATE INDEX IF NOT EXISTS community_contrib_funding ON community_contributions (funding_goal_id, created_at)");
+  await run("CREATE INDEX IF NOT EXISTS community_contrib_dev ON community_contributions (dev_priority_id, created_at)");
+  await run("CREATE INDEX IF NOT EXISTS community_contrib_reversal ON community_contributions (reversal_of_id)");
+  await run("CREATE INDEX IF NOT EXISTS community_contrib_ref ON community_contributions (ref_type, ref_id)");
 }
 
 async function bootstrapAdminRoles() {
@@ -1037,7 +1122,7 @@ export async function setAccountDisplayName(accountId, name, { spendTicket = fal
         return { ok: false, error: "no_ticket" };
       }
       const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
-      await insertTicketLedger(execRun, {
+      const ledgerId = await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
@@ -1048,7 +1133,15 @@ export async function setAccountDisplayName(accountId, name, { spendTicket = fal
         reason: "display_name",
         createdAt: now,
       });
+      const contrib = await applySpendContributions(execRun, execGet, {
+        accountId: id,
+        spendLedgerId: ledgerId,
+        slices,
+        ticketsSpent: 1,
+        createdAt: now,
+      });
       await execRun("COMMIT");
+      if (contrib && !contrib.skipped && !contrib.duplicate) noteCommunityDirty();
       const account = await execGet(
         `SELECT ${ACCOUNT_SELECT} FROM accounts WHERE id = ?`,
         [id],
@@ -1701,7 +1794,7 @@ async function insertTicketLedger(exec, {
   reason = null,
   createdAt = Date.now(),
 }) {
-  await exec(
+  const result = await exec(
     `INSERT INTO ticket_ledger (
       account_id, delta, balance_after, held_after, kind,
       ref_type, ref_id, actor_account_id, reason, created_at
@@ -1719,6 +1812,43 @@ async function insertTicketLedger(exec, {
       createdAt,
     ],
   );
+  return result?.lastID ?? null;
+}
+
+/** Lot source types that count toward monetary funding goals. */
+export const PAID_LOT_SOURCES = Object.freeze(["paypal_purchase", "ticket_purchase"]);
+
+export function isPaidLotSource(sourceType) {
+  return PAID_LOT_SOURCES.includes(String(sourceType || ""));
+}
+
+export function countPaidFromSlices(slices) {
+  let paid = 0;
+  for (const slice of slices || []) {
+    if (isPaidLotSource(slice.sourceType)) {
+      paid += Number(slice.take) || 0;
+    }
+  }
+  return paid;
+}
+
+/** Largest-remainder percentages that sum to 100 (or all 0 when total is 0). */
+export function communityPercentages(totals) {
+  const nums = (totals || []).map((n) => Math.max(0, Number(n) || 0));
+  const sum = nums.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return nums.map(() => 0);
+  const raw = nums.map((n) => (n * 100) / sum);
+  const floors = raw.map((n) => Math.floor(n));
+  let rem = 100 - floors.reduce((a, b) => a + b, 0);
+  const order = raw
+    .map((n, i) => ({ i, frac: n - floors[i] }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  const out = floors.slice();
+  for (let k = 0; k < order.length && rem > 0; k += 1) {
+    out[order[k].i] += 1;
+    rem -= 1;
+  }
+  return out;
 }
 
 const TICKET_LOTS_BACKFILL_KEY = "ticket_lots_backfill_v1";
@@ -1788,7 +1918,8 @@ async function consumeTicketLotsFifo(execRunFn, execAllFn, accountId, n, { exclu
   const want = Number(n);
   if (!Number.isInteger(want) || want <= 0) return [];
   const lots = await execAllFn(
-    `SELECT id, tickets_remaining, amount_cents, tickets_total FROM ticket_lots
+    `SELECT id, tickets_remaining, amount_cents, tickets_total, source_type, source_id
+     FROM ticket_lots
      WHERE account_id = ? AND tickets_remaining > 0
      ORDER BY created_at ASC, id ASC`,
     [accountId],
@@ -1809,6 +1940,8 @@ async function consumeTicketLotsFifo(execRunFn, execAllFn, accountId, n, { exclu
       take,
       amountCents: lot.amount_cents,
       ticketsTotal: lot.tickets_total,
+      sourceType: lot.source_type,
+      sourceId: lot.source_id,
     });
     left -= take;
   }
@@ -1993,6 +2126,1497 @@ export async function paypalRefundValueCents(accountId) {
   return sum;
 }
 
+export const COMMUNITY_DEFAULT_FUNDING_KEY = "community_default_funding_goal_id";
+export const COMMUNITY_DEFAULT_DEV_KEY = "community_default_dev_priority_id";
+
+let communityDirtyHook = null;
+
+/** Optional listener after community totals change (e.g. throttled socket broadcast). */
+export function setCommunityDirtyHook(fn) {
+  communityDirtyHook = typeof fn === "function" ? fn : null;
+}
+
+function noteCommunityDirty() {
+  try {
+    communityDirtyHook?.();
+  } catch {
+    // ignore listener errors
+  }
+}
+
+const FUNDING_SELECTABLE = new Set(["active", "goal_reached"]);
+const FUNDING_LIVE = new Set(["active", "goal_reached", "fulfilled"]);
+
+function fundingSelectable(row, now = Date.now()) {
+  if (!row || !FUNDING_SELECTABLE.has(row.status)) return false;
+  if (row.selection_deadline_at != null && Number(row.selection_deadline_at) <= now) return false;
+  return row.slot != null && Number(row.slot) >= 0 && Number(row.slot) <= 2;
+}
+
+function devSelectable(row, now = Date.now()) {
+  if (!row || row.vote_status !== "active") return false;
+  if (row.selection_deadline_at != null && Number(row.selection_deadline_at) <= now) return false;
+  return row.slot != null && Number(row.slot) >= 0 && Number(row.slot) <= 2;
+}
+
+async function getSiteSettingValue(execGetFn, key) {
+  const row = await execGetFn(
+    "SELECT value FROM site_settings WHERE key = ?",
+    [key],
+  );
+  return row?.value != null ? String(row.value) : null;
+}
+
+async function setSiteSettingExec(execRunFn, key, value, updatedBy = null, now = Date.now()) {
+  await execRunFn(
+    `INSERT INTO site_settings (key, value, updated_at, updated_by)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at,
+       updated_by = excluded.updated_by`,
+    [key, value != null ? String(value) : null, now, updatedBy],
+  );
+}
+
+async function bumpFundingContributed(execRunFn, execGetFn, goalId, delta, now) {
+  const id = Number(goalId);
+  const n = Number(delta) || 0;
+  if (!Number.isInteger(id) || id <= 0 || n === 0) return null;
+  await execRunFn(
+    "UPDATE funding_goals SET contributed_tickets = contributed_tickets + ? WHERE id = ?",
+    [n, id],
+  );
+  const row = await execGetFn("SELECT * FROM funding_goals WHERE id = ?", [id]);
+  if (!row) return null;
+  if (
+    row.status === "active"
+    && Number(row.contributed_tickets) >= Number(row.target_tickets)
+  ) {
+    await execRunFn(
+      `UPDATE funding_goals
+       SET status = 'goal_reached', reached_at = COALESCE(reached_at, ?)
+       WHERE id = ? AND status = 'active'`,
+      [now, id],
+    );
+    return execGetFn("SELECT * FROM funding_goals WHERE id = ?", [id]);
+  }
+  if (
+    FUNDING_LIVE.has(row.status)
+    && Number(row.contributed_tickets) < Number(row.target_tickets)
+    && row.status === "goal_reached"
+    && !row.fulfilled_at
+  ) {
+    // Late reversal can drop below target while still goal_reached; leave status.
+  }
+  if (
+    row.status === "fulfilled"
+    && n < 0
+    && Number(row.contributed_tickets) < Number(row.target_tickets)
+  ) {
+    await execRunFn(
+      "UPDATE funding_goals SET discrepancy_flag = 1 WHERE id = ?",
+      [id],
+    );
+    return execGetFn("SELECT * FROM funding_goals WHERE id = ?", [id]);
+  }
+  return row;
+}
+
+async function bumpDevContributed(execRunFn, priorityId, delta) {
+  const id = Number(priorityId);
+  const n = Number(delta) || 0;
+  if (!Number.isInteger(id) || id <= 0 || n === 0) return;
+  await execRunFn(
+    "UPDATE dev_priorities SET contributed_tickets = contributed_tickets + ? WHERE id = ?",
+    [n, id],
+  );
+}
+
+async function resolveSelectionsForSpend(execGetFn, accountId, now) {
+  const sel = await execGetFn(
+    "SELECT * FROM community_player_selections WHERE account_id = ?",
+    [accountId],
+  );
+  let fundingId = sel?.funding_goal_id != null ? Number(sel.funding_goal_id) : null;
+  let devId = sel?.dev_priority_id != null ? Number(sel.dev_priority_id) : null;
+
+  const defaultFundingRaw = await getSiteSettingValue(execGetFn, COMMUNITY_DEFAULT_FUNDING_KEY);
+  const defaultDevRaw = await getSiteSettingValue(execGetFn, COMMUNITY_DEFAULT_DEV_KEY);
+  const defaultFunding = Number(defaultFundingRaw);
+  const defaultDev = Number(defaultDevRaw);
+
+  let funding = fundingId
+    ? await execGetFn("SELECT * FROM funding_goals WHERE id = ?", [fundingId])
+    : null;
+  if (!fundingSelectable(funding, now)) {
+    funding = Number.isInteger(defaultFunding) && defaultFunding > 0
+      ? await execGetFn("SELECT * FROM funding_goals WHERE id = ?", [defaultFunding])
+      : null;
+    if (!fundingSelectable(funding, now)) funding = null;
+    fundingId = funding ? Number(funding.id) : null;
+  }
+
+  let dev = devId
+    ? await execGetFn("SELECT * FROM dev_priorities WHERE id = ?", [devId])
+    : null;
+  if (!devSelectable(dev, now)) {
+    dev = Number.isInteger(defaultDev) && defaultDev > 0
+      ? await execGetFn("SELECT * FROM dev_priorities WHERE id = ?", [defaultDev])
+      : null;
+    if (!devSelectable(dev, now)) {
+      // Fall back to any active priority in the open round.
+      const open = await execGetFn(
+        "SELECT id FROM dev_rounds WHERE status = 'open' ORDER BY started_at DESC LIMIT 1",
+      );
+      if (open) {
+        dev = await execGetFn(
+          `SELECT * FROM dev_priorities
+           WHERE round_id = ? AND vote_status = 'active'
+           ORDER BY slot ASC LIMIT 1`,
+          [open.id],
+        );
+      } else {
+        dev = null;
+      }
+    }
+    if (!devSelectable(dev, now)) dev = null;
+    devId = dev ? Number(dev.id) : null;
+  }
+
+  return { fundingGoalId: fundingId, devPriorityId: devId };
+}
+
+/**
+ * Record community contributions for a successful ticket spend (same DB txn).
+ * Skips quietly when goals are not configured.
+ */
+async function applySpendContributions(execRunFn, execGetFn, {
+  accountId,
+  spendLedgerId,
+  slices,
+  ticketsSpent = 1,
+  createdAt = Date.now(),
+}) {
+  const id = Number(accountId);
+  const ledgerId = Number(spendLedgerId);
+  const n = Number(ticketsSpent);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  if (!Number.isInteger(ledgerId) || ledgerId <= 0) return null;
+  if (!Number.isInteger(n) || n <= 0) return null;
+
+  const existing = await execGetFn(
+    "SELECT id FROM community_contributions WHERE spend_ledger_id = ?",
+    [ledgerId],
+  );
+  if (existing) return { duplicate: true, id: existing.id };
+
+  const paid = countPaidFromSlices(slices);
+  const free = Math.max(0, n - paid);
+  const { fundingGoalId, devPriorityId } = await resolveSelectionsForSpend(
+    execGetFn,
+    id,
+    createdAt,
+  );
+
+  const fundingDelta = fundingGoalId && paid > 0 ? paid : 0;
+  const devDelta = devPriorityId ? n : 0;
+  if (fundingDelta === 0 && devDelta === 0) {
+    return { skipped: true };
+  }
+
+  if (fundingDelta > 0) {
+    await bumpFundingContributed(execRunFn, execGetFn, fundingGoalId, fundingDelta, createdAt);
+  }
+  if (devDelta > 0) {
+    await bumpDevContributed(execRunFn, devPriorityId, devDelta);
+  }
+
+  const result = await execRunFn(
+    `INSERT INTO community_contributions (
+      account_id, created_at, spend_ledger_id, reversal_of_id,
+      tickets_spent, paid_tickets, free_tickets,
+      funding_goal_id, funding_delta, dev_priority_id, dev_delta,
+      reason, ref_type, ref_id, lot_slices_json
+    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'spend', NULL, NULL, ?)`,
+    [
+      id,
+      createdAt,
+      ledgerId,
+      n,
+      paid,
+      free,
+      fundingGoalId,
+      fundingDelta,
+      devPriorityId,
+      devDelta,
+      JSON.stringify((slices || []).map((s) => ({
+        lotId: s.lotId,
+        take: s.take,
+        sourceType: s.sourceType,
+        sourceId: s.sourceId,
+      }))),
+    ],
+  );
+  return { id: result.lastID, fundingDelta, devDelta, fundingGoalId, devPriorityId, paid, free };
+}
+
+/** Reverse funding+dev for a prior spend (match refund). Idempotent. */
+async function reverseContributionForSpend(execRunFn, execGetFn, spendLedgerId, {
+  reason = "match_refund",
+  createdAt = Date.now(),
+} = {}) {
+  const ledgerId = Number(spendLedgerId);
+  if (!Number.isInteger(ledgerId) || ledgerId <= 0) return null;
+
+  const original = await execGetFn(
+    "SELECT * FROM community_contributions WHERE spend_ledger_id = ? AND reversal_of_id IS NULL",
+    [ledgerId],
+  );
+  if (!original) return { missing: true };
+
+  const already = await execGetFn(
+    "SELECT id FROM community_contributions WHERE reversal_of_id = ? AND reason = ?",
+    [original.id, reason],
+  );
+  if (already) return { duplicate: true, id: already.id };
+
+  const fundingDelta = -Number(original.funding_delta || 0);
+  const devDelta = -Number(original.dev_delta || 0);
+  if (original.funding_goal_id && fundingDelta !== 0) {
+    await bumpFundingContributed(
+      execRunFn,
+      execGetFn,
+      original.funding_goal_id,
+      fundingDelta,
+      createdAt,
+    );
+  }
+  if (original.dev_priority_id && devDelta !== 0) {
+    await bumpDevContributed(execRunFn, original.dev_priority_id, devDelta);
+  }
+
+  const result = await execRunFn(
+    `INSERT INTO community_contributions (
+      account_id, created_at, spend_ledger_id, reversal_of_id,
+      tickets_spent, paid_tickets, free_tickets,
+      funding_goal_id, funding_delta, dev_priority_id, dev_delta,
+      reason, ref_type, ref_id, lot_slices_json
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+    [
+      original.account_id,
+      createdAt,
+      original.id,
+      -Number(original.tickets_spent || 0),
+      -Number(original.paid_tickets || 0),
+      -Number(original.free_tickets || 0),
+      original.funding_goal_id,
+      fundingDelta,
+      original.dev_priority_id,
+      devDelta,
+      reason,
+    ],
+  );
+  return { id: result.lastID, fundingDelta, devDelta };
+}
+
+/**
+ * Reverse funding (not dev) for contributions that spent tickets from a purchase lot.
+ * Idempotent per original contribution + reason.
+ */
+async function reverseFundingForPurchaseLotWithAll(execRunFn, execGetFn, execAllFn, {
+  sourceType,
+  sourceId,
+  reason = "purchase_clawback",
+  createdAt = Date.now(),
+}) {
+  const st = String(sourceType || "");
+  const sid = String(sourceId ?? "");
+  if (!st || !sid) return { reversed: 0 };
+
+  const forwards = await execAllFn(
+    `SELECT * FROM community_contributions
+     WHERE reversal_of_id IS NULL AND reason = 'spend'
+       AND funding_delta > 0 AND lot_slices_json IS NOT NULL`,
+  );
+  return reverseFundingForPurchaseLotRows(execRunFn, execGetFn, forwards, {
+    sourceType: st,
+    sourceId: sid,
+    reason,
+    createdAt,
+  });
+}
+
+async function reverseFundingForPurchaseLotRows(execRunFn, execGetFn, forwards, {
+  sourceType,
+  sourceId,
+  reason,
+  createdAt,
+}) {
+  let reversed = 0;
+  for (const original of forwards || []) {
+    let slices;
+    try {
+      slices = JSON.parse(original.lot_slices_json || "[]");
+    } catch {
+      continue;
+    }
+    let fromPurchase = 0;
+    for (const slice of slices) {
+      if (
+        String(slice.sourceType) === sourceType
+        && String(slice.sourceId ?? "") === sourceId
+      ) {
+        fromPurchase += Number(slice.take) || 0;
+      }
+    }
+    if (fromPurchase <= 0) continue;
+
+    const already = await execGetFn(
+      `SELECT id FROM community_contributions
+       WHERE reversal_of_id = ? AND reason = ? AND ref_type = ? AND ref_id = ?`,
+      [original.id, reason, sourceType, sourceId],
+    );
+    if (already) continue;
+
+    const fundingDelta = -Math.min(fromPurchase, Number(original.funding_delta) || 0);
+    if (fundingDelta === 0) continue;
+
+    if (original.funding_goal_id) {
+      await bumpFundingContributed(
+        execRunFn,
+        execGetFn,
+        original.funding_goal_id,
+        fundingDelta,
+        createdAt,
+      );
+    }
+
+    await execRunFn(
+      `INSERT INTO community_contributions (
+        account_id, created_at, spend_ledger_id, reversal_of_id,
+        tickets_spent, paid_tickets, free_tickets,
+        funding_goal_id, funding_delta, dev_priority_id, dev_delta,
+        reason, ref_type, ref_id, lot_slices_json
+      ) VALUES (?, ?, NULL, ?, 0, ?, 0, ?, ?, NULL, 0, ?, ?, ?, NULL)`,
+      [
+        original.account_id,
+        createdAt,
+        original.id,
+        fundingDelta,
+        original.funding_goal_id,
+        fundingDelta,
+        reason,
+        sourceType,
+        sourceId,
+      ],
+    );
+    reversed += 1;
+  }
+  return { reversed };
+}
+
+function publicFundingGoal(row, { percent = null } = {}) {
+  if (!row) return null;
+  const target = Math.max(0, Number(row.target_tickets) || 0);
+  const contributed = Math.max(0, Number(row.contributed_tickets) || 0);
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || "",
+    targetTickets: target,
+    contributedTickets: contributed,
+    percentOfTarget: target > 0 ? Math.round((contributed * 1000) / target) / 10 : 0,
+    barPercent: target > 0 ? Math.min(100, Math.round((contributed * 100) / target)) : 0,
+    status: row.status,
+    slot: row.slot,
+    selectionDeadlineAt: row.selection_deadline_at,
+    createdAt: row.created_at,
+    reachedAt: row.reached_at,
+    fulfilledAt: row.fulfilled_at,
+    archivedAt: row.archived_at,
+    fulfillmentNotes: row.fulfillment_notes,
+    fulfillmentLinks: row.fulfillment_links,
+    originalTargetTickets: row.original_target_tickets,
+    discrepancyFlag: !!row.discrepancy_flag,
+    goalReached: contributed >= target && target > 0,
+    percent,
+  };
+}
+
+function publicDevPriority(row, { percent = 0 } = {}) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    roundId: row.round_id,
+    title: row.title,
+    description: row.description || "",
+    contributedTickets: Math.max(0, Number(row.contributed_tickets) || 0),
+    percent,
+    slot: row.slot,
+    selectionDeadlineAt: row.selection_deadline_at,
+    voteStatus: row.vote_status,
+    implStatus: row.impl_status,
+    implNotes: row.impl_notes,
+    publicChangeExplanation: row.public_change_explanation,
+    newsLinks: row.news_links,
+    createdAt: row.created_at,
+    closedAt: row.closed_at,
+  };
+}
+
+export async function listLiveFundingGoals() {
+  return all(
+    `SELECT * FROM funding_goals
+     WHERE status IN ('active', 'goal_reached', 'fulfilled') AND slot IS NOT NULL
+     ORDER BY slot ASC`,
+  );
+}
+
+export async function getOpenDevRound() {
+  return get(
+    "SELECT * FROM dev_rounds WHERE status = 'open' ORDER BY started_at DESC LIMIT 1",
+  );
+}
+
+export async function listActiveDevPriorities(roundId = null) {
+  let rid = roundId;
+  if (rid == null) {
+    const open = await getOpenDevRound();
+    if (!open) return [];
+    rid = open.id;
+  }
+  return all(
+    `SELECT * FROM dev_priorities
+     WHERE round_id = ? AND vote_status = 'active' AND slot IS NOT NULL
+     ORDER BY slot ASC`,
+    [rid],
+  );
+}
+
+export async function getCommunityPublicState(accountId = null) {
+  const fundingRows = await listLiveFundingGoals();
+  const openRound = await getOpenDevRound();
+  const devRows = openRound ? await listActiveDevPriorities(openRound.id) : [];
+  const slots = [0, 1, 2];
+  const funding = slots.map((slot) => {
+    const row = fundingRows.find((r) => Number(r.slot) === slot) || null;
+    return publicFundingGoal(row);
+  });
+  const totals = slots.map((slot) => {
+    const row = devRows.find((r) => Number(r.slot) === slot);
+    return row ? Number(row.contributed_tickets) || 0 : 0;
+  });
+  const percents = communityPercentages(totals);
+  const development = slots.map((slot, i) => {
+    const row = devRows.find((r) => Number(r.slot) === slot) || null;
+    return publicDevPriority(row, { percent: percents[i] });
+  });
+  const configured = funding.every(Boolean) && development.every(Boolean);
+  let selections = null;
+  if (accountId != null) {
+    selections = await ensurePlayerCommunitySelections(accountId);
+  }
+  return {
+    configured,
+    funding,
+    development,
+    round: openRound
+      ? { id: openRound.id, status: openRound.status, startedAt: openRound.started_at }
+      : null,
+    selections,
+    disclaimer:
+      "Funding progress counts eligible paid tickets spent toward a goal — not verified cash held in reserve.",
+  };
+}
+
+export async function ensurePlayerCommunitySelections(accountId) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const now = Date.now();
+      let sel = await execGet(
+        "SELECT * FROM community_player_selections WHERE account_id = ?",
+        [id],
+      );
+      const resolved = await resolveSelectionsForSpend(execGet, id, now);
+      if (!sel) {
+        await execRun(
+          `INSERT INTO community_player_selections
+           (account_id, funding_goal_id, dev_priority_id, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          [id, resolved.fundingGoalId, resolved.devPriorityId, now],
+        );
+      } else {
+        const curFunding = sel.funding_goal_id
+          ? await execGet("SELECT * FROM funding_goals WHERE id = ?", [sel.funding_goal_id])
+          : null;
+        const curDev = sel.dev_priority_id
+          ? await execGet("SELECT * FROM dev_priorities WHERE id = ?", [sel.dev_priority_id])
+          : null;
+        const fundingOk = fundingSelectable(curFunding, now);
+        const devOk = devSelectable(curDev, now);
+        if (!fundingOk || !devOk) {
+          await execRun(
+            `UPDATE community_player_selections
+             SET funding_goal_id = ?, dev_priority_id = ?, updated_at = ?
+             WHERE account_id = ?`,
+            [
+              fundingOk ? sel.funding_goal_id : resolved.fundingGoalId,
+              devOk ? sel.dev_priority_id : resolved.devPriorityId,
+              now,
+              id,
+            ],
+          );
+        }
+      }
+      sel = await execGet(
+        "SELECT * FROM community_player_selections WHERE account_id = ?",
+        [id],
+      );
+      await execRun("COMMIT");
+      return {
+        fundingGoalId: sel?.funding_goal_id ?? null,
+        devPriorityId: sel?.dev_priority_id ?? null,
+        updatedAt: sel?.updated_at ?? null,
+      };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("ensurePlayerCommunitySelections", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function setPlayerCommunitySelection(accountId, {
+  fundingGoalId = undefined,
+  devPriorityId = undefined,
+} = {}) {
+  const id = Number(accountId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "invalid_account" };
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      let sel = await execGet(
+        "SELECT * FROM community_player_selections WHERE account_id = ?",
+        [id],
+      );
+      let nextFunding = sel?.funding_goal_id ?? null;
+      let nextDev = sel?.dev_priority_id ?? null;
+
+      if (fundingGoalId !== undefined) {
+        const fid = Number(fundingGoalId);
+        if (!Number.isInteger(fid) || fid <= 0) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_funding" };
+        }
+        const goal = await execGet("SELECT * FROM funding_goals WHERE id = ?", [fid]);
+        if (!fundingSelectable(goal, now)) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "funding_unavailable" };
+        }
+        nextFunding = fid;
+      }
+      if (devPriorityId !== undefined) {
+        const did = Number(devPriorityId);
+        if (!Number.isInteger(did) || did <= 0) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_dev" };
+        }
+        const pri = await execGet("SELECT * FROM dev_priorities WHERE id = ?", [did]);
+        if (!devSelectable(pri, now)) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "dev_unavailable" };
+        }
+        const open = await execGet(
+          "SELECT id FROM dev_rounds WHERE status = 'open' ORDER BY started_at DESC LIMIT 1",
+        );
+        if (!open || Number(pri.round_id) !== Number(open.id)) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "dev_unavailable" };
+        }
+        nextDev = did;
+      }
+
+      if (!sel) {
+        const resolved = await resolveSelectionsForSpend(execGet, id, now);
+        if (nextFunding == null) nextFunding = resolved.fundingGoalId;
+        if (nextDev == null) nextDev = resolved.devPriorityId;
+        await execRun(
+          `INSERT INTO community_player_selections
+           (account_id, funding_goal_id, dev_priority_id, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          [id, nextFunding, nextDev, now],
+        );
+      } else {
+        await execRun(
+          `UPDATE community_player_selections
+           SET funding_goal_id = ?, dev_priority_id = ?, updated_at = ?
+           WHERE account_id = ?`,
+          [nextFunding, nextDev, now, id],
+        );
+      }
+      sel = await execGet(
+        "SELECT * FROM community_player_selections WHERE account_id = ?",
+        [id],
+      );
+      await execRun("COMMIT");
+      return {
+        ok: true,
+        selections: {
+          fundingGoalId: sel.funding_goal_id,
+          devPriorityId: sel.dev_priority_id,
+          updatedAt: sel.updated_at,
+        },
+      };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("setPlayerCommunitySelection", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+async function migrateSelectionsFromFunding(execRunFn, execGetFn, oldGoalId, now) {
+  const defaultRaw = await getSiteSettingValue(execGetFn, COMMUNITY_DEFAULT_FUNDING_KEY);
+  const defaultId = Number(defaultRaw);
+  const next = Number.isInteger(defaultId) && defaultId > 0 && defaultId !== Number(oldGoalId)
+    ? defaultId
+    : null;
+  await execRunFn(
+    `UPDATE community_player_selections
+     SET funding_goal_id = ?, updated_at = ?
+     WHERE funding_goal_id = ?`,
+    [next, now, oldGoalId],
+  );
+}
+
+async function migrateSelectionsFromDev(execRunFn, execGetFn, oldPriorityId, now) {
+  const defaultRaw = await getSiteSettingValue(execGetFn, COMMUNITY_DEFAULT_DEV_KEY);
+  const defaultId = Number(defaultRaw);
+  const next = Number.isInteger(defaultId) && defaultId > 0 && defaultId !== Number(oldPriorityId)
+    ? defaultId
+    : null;
+  await execRunFn(
+    `UPDATE community_player_selections
+     SET dev_priority_id = ?, updated_at = ?
+     WHERE dev_priority_id = ?`,
+    [next, now, oldPriorityId],
+  );
+}
+
+/**
+ * Save all three funding slots and set the default by slot index.
+ * Empty slot → create. Occupied slot → archive the old goal and create a new
+ * one (optional keepOverflow transfers tickets above the old target).
+ * slots: [{ title, description, targetTickets, keepOverflow? }, ...] length 3
+ */
+export async function saveFundingSlots({
+  slots,
+  defaultSlot = 0,
+  actorAccountId = null,
+} = {}) {
+  if (!Array.isArray(slots) || slots.length !== 3) {
+    return { ok: false, error: "need_three" };
+  }
+  const def = Number(defaultSlot);
+  if (!Number.isInteger(def) || def < 0 || def > 2) {
+    return { ok: false, error: "invalid_default" };
+  }
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const ids = [];
+      for (let s = 0; s < 3; s += 1) {
+        const t = String(slots[s]?.title || "").trim();
+        const desc = String(slots[s]?.description || "").trim();
+        const target = Number(slots[s]?.targetTickets);
+        const keepOverflow = Boolean(slots[s]?.keepOverflow);
+        if (!t || !Number.isInteger(target) || target <= 0) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_slot", slot: s };
+        }
+        const existing = await execGet(
+          `SELECT * FROM funding_goals
+           WHERE slot = ? AND status IN ('active', 'goal_reached', 'fulfilled')`,
+          [s],
+        );
+
+        const sameContent = existing
+          && String(existing.title) === t
+          && String(existing.description || "") === desc
+          && Number(existing.target_tickets) === target;
+
+        if (existing && sameContent && !keepOverflow) {
+          ids.push(existing.id);
+          continue;
+        }
+
+        let overflow = 0;
+        if (existing) {
+          if (keepOverflow) {
+            overflow = Math.max(
+              0,
+              Number(existing.contributed_tickets) - Number(existing.target_tickets),
+            );
+          }
+          await execRun(
+            `UPDATE funding_goals
+             SET status = 'archived', archived_at = ?, slot = NULL
+             WHERE id = ?`,
+            [now, existing.id],
+          );
+        }
+
+        const result = await execRun(
+          `INSERT INTO funding_goals (
+            title, description, target_tickets, contributed_tickets, status, slot,
+            selection_deadline_at, created_at, original_target_tickets
+          ) VALUES (?, ?, ?, ?, 'active', ?, NULL, ?, ?)`,
+          [t, desc, target, overflow, s, now, target],
+        );
+        const newId = result.lastID;
+        if (overflow > 0 && overflow >= target) {
+          await execRun(
+            `UPDATE funding_goals
+             SET status = 'goal_reached', reached_at = ?
+             WHERE id = ?`,
+            [now, newId],
+          );
+        }
+        if (existing) {
+          await execRun(
+            `UPDATE community_player_selections
+             SET funding_goal_id = ?, updated_at = ?
+             WHERE funding_goal_id = ?`,
+            [newId, now, existing.id],
+          );
+        }
+        ids.push(newId);
+      }
+      await setSiteSettingExec(
+        execRun,
+        COMMUNITY_DEFAULT_FUNDING_KEY,
+        ids[def],
+        actorAccountId,
+        now,
+      );
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, goalIds: ids, defaultSlot: def };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("saveFundingSlots", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+/**
+ * Upsert the three development priorities for the open round (or start a round).
+ * slots: [{ title, description }, ...] length 3
+ */
+export async function saveDevSlots({
+  slots,
+  defaultSlot = 0,
+  actorAccountId = null,
+} = {}) {
+  if (!Array.isArray(slots) || slots.length !== 3) {
+    return { ok: false, error: "need_three" };
+  }
+  const def = Number(defaultSlot);
+  if (!Number.isInteger(def) || def < 0 || def > 2) {
+    return { ok: false, error: "invalid_default" };
+  }
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      for (let s = 0; s < 3; s += 1) {
+        const t = String(slots[s]?.title || "").trim();
+        if (!t) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_slot", slot: s };
+        }
+      }
+      let open = await execGet(
+        "SELECT * FROM dev_rounds WHERE status = 'open' ORDER BY started_at DESC LIMIT 1",
+      );
+      let ids = [];
+      if (!open) {
+        const round = await execRun(
+          "INSERT INTO dev_rounds (status, started_at) VALUES ('open', ?)",
+          [now],
+        );
+        for (let s = 0; s < 3; s += 1) {
+          const result = await execRun(
+            `INSERT INTO dev_priorities (
+              round_id, title, description, contributed_tickets, slot,
+              selection_deadline_at, vote_status, created_at
+            ) VALUES (?, ?, ?, 0, ?, NULL, 'active', ?)`,
+            [
+              round.lastID,
+              String(slots[s].title).trim(),
+              String(slots[s].description || "").trim(),
+              s,
+              now,
+            ],
+          );
+          ids.push(result.lastID);
+        }
+        open = { id: round.lastID };
+      } else {
+        const priorities = await execAll(
+          `SELECT * FROM dev_priorities
+           WHERE round_id = ? AND vote_status = 'active' AND slot IS NOT NULL
+           ORDER BY slot ASC`,
+          [open.id],
+        );
+        if (priorities.length !== 3) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "round_incomplete" };
+        }
+        for (let s = 0; s < 3; s += 1) {
+          const p = priorities.find((row) => Number(row.slot) === s) || priorities[s];
+          await execRun(
+            `UPDATE dev_priorities SET title = ?, description = ? WHERE id = ?`,
+            [
+              String(slots[s].title).trim(),
+              String(slots[s].description || "").trim(),
+              p.id,
+            ],
+          );
+          ids.push(p.id);
+        }
+      }
+      await setSiteSettingExec(
+        execRun,
+        COMMUNITY_DEFAULT_DEV_KEY,
+        ids[def],
+        actorAccountId,
+        now,
+      );
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, roundId: open.id, priorityIds: ids, defaultSlot: def };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("saveDevSlots", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function createFundingGoal({
+  title,
+  description = "",
+  targetTickets,
+  slot,
+  selectionDeadlineAt = null,
+  setAsDefault = false,
+  actorAccountId = null,
+}) {
+  const t = String(title || "").trim();
+  const target = Number(targetTickets);
+  const s = Number(slot);
+  if (!t || !Number.isInteger(target) || target <= 0) return { ok: false, error: "invalid" };
+  if (!Number.isInteger(s) || s < 0 || s > 2) return { ok: false, error: "invalid_slot" };
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const taken = await execGet(
+        `SELECT id FROM funding_goals
+         WHERE slot = ? AND status IN ('active', 'goal_reached', 'fulfilled')`,
+        [s],
+      );
+      if (taken) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "slot_taken" };
+      }
+      const result = await execRun(
+        `INSERT INTO funding_goals (
+          title, description, target_tickets, contributed_tickets, status, slot,
+          selection_deadline_at, created_at, original_target_tickets
+        ) VALUES (?, ?, ?, 0, 'active', ?, ?, ?, ?)`,
+        [t, String(description || "").trim(), target, s, selectionDeadlineAt, now, target],
+      );
+      if (setAsDefault) {
+        await setSiteSettingExec(execRun, COMMUNITY_DEFAULT_FUNDING_KEY, result.lastID, actorAccountId, now);
+      }
+      const row = await execGet("SELECT * FROM funding_goals WHERE id = ?", [result.lastID]);
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, goal: publicFundingGoal(row) };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("createFundingGoal", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function updateFundingGoal(goalId, {
+  title = undefined,
+  description = undefined,
+  targetTickets = undefined,
+  selectionDeadlineAt = undefined,
+  fulfillmentNotes = undefined,
+  fulfillmentLinks = undefined,
+} = {}) {
+  const id = Number(goalId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "invalid" };
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet("SELECT * FROM funding_goals WHERE id = ?", [id]);
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (row.status === "archived") {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "archived" };
+      }
+      const nextTitle = title !== undefined ? String(title).trim() : row.title;
+      const nextDesc = description !== undefined ? String(description).trim() : row.description;
+      let nextTarget = row.target_tickets;
+      let original = row.original_target_tickets;
+      if (targetTickets !== undefined) {
+        const t = Number(targetTickets);
+        if (!Number.isInteger(t) || t <= 0) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_target" };
+        }
+        if (original == null) original = row.target_tickets;
+        nextTarget = t;
+      }
+      const nextDeadline = selectionDeadlineAt !== undefined
+        ? selectionDeadlineAt
+        : row.selection_deadline_at;
+      const nextNotes = fulfillmentNotes !== undefined
+        ? String(fulfillmentNotes || "")
+        : row.fulfillment_notes;
+      const nextLinks = fulfillmentLinks !== undefined
+        ? String(fulfillmentLinks || "")
+        : row.fulfillment_links;
+      await execRun(
+        `UPDATE funding_goals SET
+           title = ?, description = ?, target_tickets = ?,
+           selection_deadline_at = ?, fulfillment_notes = ?, fulfillment_links = ?,
+           original_target_tickets = ?
+         WHERE id = ?`,
+        [nextTitle, nextDesc, nextTarget, nextDeadline, nextNotes, nextLinks, original, id],
+      );
+      if (
+        row.status === "active"
+        && Number(row.contributed_tickets) >= nextTarget
+      ) {
+        await execRun(
+          `UPDATE funding_goals
+           SET status = 'goal_reached', reached_at = COALESCE(reached_at, ?)
+           WHERE id = ?`,
+          [now, id],
+        );
+      }
+      const updated = await execGet("SELECT * FROM funding_goals WHERE id = ?", [id]);
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, goal: publicFundingGoal(updated), before: publicFundingGoal(row) };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("updateFundingGoal", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function fulfillFundingGoal(goalId, {
+  notes = "",
+  links = "",
+} = {}) {
+  const id = Number(goalId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "invalid" };
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet("SELECT * FROM funding_goals WHERE id = ?", [id]);
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (row.status === "archived" || (row.status === "fulfilled" && row.slot == null)) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "archived" };
+      }
+      await execRun(
+        `UPDATE funding_goals SET
+           status = 'fulfilled',
+           fulfilled_at = ?,
+           archived_at = ?,
+           slot = NULL,
+           fulfillment_notes = ?,
+           fulfillment_links = ?,
+           reached_at = COALESCE(reached_at, ?)
+         WHERE id = ?`,
+        [now, now, String(notes || ""), String(links || ""), now, id],
+      );
+      await migrateSelectionsFromFunding(execRun, execGet, id, now);
+      const updated = await execGet("SELECT * FROM funding_goals WHERE id = ?", [id]);
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, goal: publicFundingGoal(updated), before: publicFundingGoal(row) };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("fulfillFundingGoal", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function replaceFundingGoal(oldGoalId, {
+  title,
+  description = "",
+  targetTickets,
+  selectionDeadlineAt = null,
+  transferOverflow = false,
+  setAsDefault = false,
+  actorAccountId = null,
+}) {
+  const oldId = Number(oldGoalId);
+  const t = String(title || "").trim();
+  const target = Number(targetTickets);
+  if (!Number.isInteger(oldId) || oldId <= 0 || !t || !Number.isInteger(target) || target <= 0) {
+    return { ok: false, error: "invalid" };
+  }
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const old = await execGet("SELECT * FROM funding_goals WHERE id = ?", [oldId]);
+      if (!old || old.slot == null) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      if (old.status === "archived") {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "archived" };
+      }
+      const slot = Number(old.slot);
+      let overflow = 0;
+      if (transferOverflow) {
+        overflow = Math.max(0, Number(old.contributed_tickets) - Number(old.target_tickets));
+      }
+      await execRun(
+        `UPDATE funding_goals
+         SET status = 'archived', archived_at = ?, slot = NULL
+         WHERE id = ?`,
+        [now, oldId],
+      );
+      await migrateSelectionsFromFunding(execRun, execGet, oldId, now);
+      const result = await execRun(
+        `INSERT INTO funding_goals (
+          title, description, target_tickets, contributed_tickets, status, slot,
+          selection_deadline_at, created_at, original_target_tickets
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+        [
+          t,
+          String(description || "").trim(),
+          target,
+          overflow,
+          slot,
+          selectionDeadlineAt,
+          now,
+          target,
+        ],
+      );
+      if (overflow > 0 && overflow >= target) {
+        await execRun(
+          `UPDATE funding_goals
+           SET status = 'goal_reached', reached_at = ?
+           WHERE id = ?`,
+          [now, result.lastID],
+        );
+      }
+      if (setAsDefault) {
+        await setSiteSettingExec(execRun, COMMUNITY_DEFAULT_FUNDING_KEY, result.lastID, actorAccountId, now);
+      } else {
+        const def = await getSiteSettingValue(execGet, COMMUNITY_DEFAULT_FUNDING_KEY);
+        if (String(def) === String(oldId)) {
+          await setSiteSettingExec(execRun, COMMUNITY_DEFAULT_FUNDING_KEY, result.lastID, actorAccountId, now);
+        }
+      }
+      const neu = await execGet("SELECT * FROM funding_goals WHERE id = ?", [result.lastID]);
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return {
+        ok: true,
+        old: publicFundingGoal({ ...old, status: "archived", archived_at: now, slot: null }),
+        goal: publicFundingGoal(neu),
+        overflowTransferred: overflow,
+      };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("replaceFundingGoal", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function setCommunityDefaults({
+  fundingGoalId = undefined,
+  devPriorityId = undefined,
+  actorAccountId = null,
+} = {}) {
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      if (fundingGoalId !== undefined) {
+        const fid = Number(fundingGoalId);
+        const goal = await execGet("SELECT * FROM funding_goals WHERE id = ?", [fid]);
+        if (!fundingSelectable(goal, now) && !(goal && FUNDING_LIVE.has(goal.status))) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_funding" };
+        }
+        await setSiteSettingExec(execRun, COMMUNITY_DEFAULT_FUNDING_KEY, fid, actorAccountId, now);
+      }
+      if (devPriorityId !== undefined) {
+        const did = Number(devPriorityId);
+        const pri = await execGet("SELECT * FROM dev_priorities WHERE id = ?", [did]);
+        if (!devSelectable(pri, now)) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_dev" };
+        }
+        await setSiteSettingExec(execRun, COMMUNITY_DEFAULT_DEV_KEY, did, actorAccountId, now);
+      }
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("setCommunityDefaults", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function startDevRound({
+  priorities,
+  actorAccountId = null,
+} = {}) {
+  if (!Array.isArray(priorities) || priorities.length !== 3) {
+    return { ok: false, error: "need_three" };
+  }
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const open = await execGet(
+        "SELECT id FROM dev_rounds WHERE status = 'open' LIMIT 1",
+      );
+      if (open) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "round_open" };
+      }
+      const round = await execRun(
+        "INSERT INTO dev_rounds (status, started_at) VALUES ('open', ?)",
+        [now],
+      );
+      const created = [];
+      for (let slot = 0; slot < 3; slot += 1) {
+        const p = priorities[slot] || {};
+        const title = String(p.title || "").trim();
+        if (!title) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_priority" };
+        }
+        const result = await execRun(
+          `INSERT INTO dev_priorities (
+            round_id, title, description, contributed_tickets, slot,
+            selection_deadline_at, vote_status, created_at
+          ) VALUES (?, ?, ?, 0, ?, ?, 'active', ?)`,
+          [
+            round.lastID,
+            title,
+            String(p.description || "").trim(),
+            slot,
+            p.selectionDeadlineAt ?? null,
+            now,
+          ],
+        );
+        created.push(result.lastID);
+      }
+      const defaultSlot = Math.min(2, Math.max(0, Number(priorities.findIndex((p) => p.setAsDefault)) || 0));
+      await setSiteSettingExec(
+        execRun,
+        COMMUNITY_DEFAULT_DEV_KEY,
+        created[defaultSlot >= 0 ? defaultSlot : 0],
+        actorAccountId,
+        now,
+      );
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, roundId: round.lastID, priorityIds: created };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("startDevRound", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function updateDevPriority(priorityId, {
+  title = undefined,
+  description = undefined,
+  selectionDeadlineAt = undefined,
+  implStatus = undefined,
+  implNotes = undefined,
+  publicChangeExplanation = undefined,
+  newsLinks = undefined,
+} = {}) {
+  const id = Number(priorityId);
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "invalid" };
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const row = await execGet("SELECT * FROM dev_priorities WHERE id = ?", [id]);
+      if (!row) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "not_found" };
+      }
+      const nextTitle = title !== undefined ? String(title).trim() : row.title;
+      const nextDesc = description !== undefined ? String(description).trim() : row.description;
+      const nextDeadline = selectionDeadlineAt !== undefined
+        ? selectionDeadlineAt
+        : row.selection_deadline_at;
+      let nextImpl = implStatus !== undefined ? implStatus : row.impl_status;
+      if (implStatus !== undefined && implStatus != null) {
+        const allowed = ["planned", "in_progress", "completed", "delayed", "cancelled"];
+        if (!allowed.includes(String(implStatus))) {
+          await execRun("ROLLBACK");
+          return { ok: false, error: "invalid_impl" };
+        }
+        nextImpl = String(implStatus);
+      }
+      const nextImplNotes = implNotes !== undefined ? String(implNotes || "") : row.impl_notes;
+      let nextExplain = publicChangeExplanation !== undefined
+        ? String(publicChangeExplanation || "")
+        : row.public_change_explanation;
+      if (
+        (nextImpl === "cancelled" || (row.vote_status === "won" && publicChangeExplanation !== undefined))
+        && nextImpl === "cancelled"
+        && !String(nextExplain || "").trim()
+      ) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "explanation_required" };
+      }
+      const nextNews = newsLinks !== undefined ? String(newsLinks || "") : row.news_links;
+      await execRun(
+        `UPDATE dev_priorities SET
+           title = ?, description = ?, selection_deadline_at = ?,
+           impl_status = ?, impl_notes = ?, public_change_explanation = ?, news_links = ?
+         WHERE id = ?`,
+        [nextTitle, nextDesc, nextDeadline, nextImpl, nextImplNotes, nextExplain, nextNews, id],
+      );
+      const updated = await execGet("SELECT * FROM dev_priorities WHERE id = ?", [id]);
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, priority: publicDevPriority(updated), before: publicDevPriority(row) };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("updateDevPriority", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function closeDevRound({
+  winnerPriorityId,
+  tieBreakNotes = "",
+  actorAccountId = null,
+} = {}) {
+  const winnerId = Number(winnerPriorityId);
+  if (!Number.isInteger(winnerId) || winnerId <= 0) {
+    return { ok: false, error: "winner_required" };
+  }
+  const now = Date.now();
+  return withDb(async () => {
+    await execRun("BEGIN IMMEDIATE");
+    try {
+      const round = await execGet(
+        "SELECT * FROM dev_rounds WHERE status = 'open' ORDER BY started_at DESC LIMIT 1",
+      );
+      if (!round) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "no_open_round" };
+      }
+      const priorities = await execAll(
+        `SELECT * FROM dev_priorities WHERE round_id = ? AND vote_status = 'active'`,
+        [round.id],
+      );
+      if (!priorities.some((p) => Number(p.id) === winnerId)) {
+        await execRun("ROLLBACK");
+        return { ok: false, error: "winner_not_in_round" };
+      }
+      for (const p of priorities) {
+        const won = Number(p.id) === winnerId;
+        await execRun(
+          `UPDATE dev_priorities SET
+             vote_status = ?, slot = NULL, closed_at = ?,
+             impl_status = CASE WHEN ? THEN COALESCE(impl_status, 'planned') ELSE impl_status END
+           WHERE id = ?`,
+          [won ? "won" : "lost", now, won ? 1 : 0, p.id],
+        );
+        await migrateSelectionsFromDev(execRun, execGet, p.id, now);
+      }
+      await execRun(
+        `UPDATE dev_rounds SET
+           status = 'closed', closed_at = ?, winner_priority_id = ?,
+           tie_break_notes = ?, closed_by = ?
+         WHERE id = ?`,
+        [now, winnerId, String(tieBreakNotes || ""), actorAccountId, round.id],
+      );
+      await execRun("COMMIT");
+      noteCommunityDirty();
+      return { ok: true, roundId: round.id, winnerPriorityId: winnerId };
+    } catch (err) {
+      try { await execRun("ROLLBACK"); } catch (rollbackErr) {
+        logRollbackFailed("closeDevRound", rollbackErr);
+      }
+      throw err;
+    }
+  });
+}
+
+export async function getCommunityHistory({ limit = 20 } = {}) {
+  const lim = Math.min(100, Math.max(1, Number(limit) || 20));
+  const archivedFunding = await all(
+    `SELECT * FROM funding_goals WHERE status IN ('archived', 'fulfilled')
+     ORDER BY COALESCE(archived_at, fulfilled_at, created_at) DESC LIMIT ?`,
+    [lim],
+  );
+  const rounds = await all(
+    `SELECT * FROM dev_rounds WHERE status = 'closed'
+     ORDER BY closed_at DESC LIMIT ?`,
+    [lim],
+  );
+  const outRounds = [];
+  for (const round of rounds) {
+    const priorities = await all(
+      "SELECT * FROM dev_priorities WHERE round_id = ? ORDER BY id ASC",
+      [round.id],
+    );
+    const totals = priorities.map((p) => Number(p.contributed_tickets) || 0);
+    const percents = communityPercentages(totals);
+    outRounds.push({
+      id: round.id,
+      status: round.status,
+      startedAt: round.started_at,
+      closedAt: round.closed_at,
+      winnerPriorityId: round.winner_priority_id,
+      tieBreakNotes: round.tie_break_notes,
+      priorities: priorities.map((p, i) => publicDevPriority(p, { percent: percents[i] })),
+    });
+  }
+  return {
+    funding: archivedFunding.map((r) => publicFundingGoal(r)),
+    rounds: outRounds,
+  };
+}
+
+export async function listCommunityContributions({
+  fundingGoalId = null,
+  devPriorityId = null,
+  accountId = null,
+  limit = 50,
+} = {}) {
+  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const clauses = [];
+  const params = [];
+  if (fundingGoalId != null) {
+    clauses.push("funding_goal_id = ?");
+    params.push(Number(fundingGoalId));
+  }
+  if (devPriorityId != null) {
+    clauses.push("dev_priority_id = ?");
+    params.push(Number(devPriorityId));
+  }
+  if (accountId != null) {
+    clauses.push("account_id = ?");
+    params.push(Number(accountId));
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  params.push(lim);
+  return all(
+    `SELECT * FROM community_contributions ${where}
+     ORDER BY created_at DESC, id DESC LIMIT ?`,
+    params,
+  );
+}
+
+export async function listFundingGoalsAdmin() {
+  return all("SELECT * FROM funding_goals ORDER BY COALESCE(slot, 99), id DESC");
+}
+
+export async function listDevRoundsAdmin() {
+  const rounds = await all("SELECT * FROM dev_rounds ORDER BY started_at DESC LIMIT 50");
+  const out = [];
+  for (const round of rounds) {
+    const priorities = await all(
+      "SELECT * FROM dev_priorities WHERE round_id = ? ORDER BY COALESCE(slot, 99), id ASC",
+      [round.id],
+    );
+    out.push({ round, priorities });
+  }
+  return out;
+}
+
+export async function getCommunityAdminBundle() {
+  const state = await getCommunityPublicState(null);
+  const defaults = await getSiteSettings([
+    COMMUNITY_DEFAULT_FUNDING_KEY,
+    COMMUNITY_DEFAULT_DEV_KEY,
+  ]);
+  const defaultMap = Object.fromEntries((defaults || []).map((r) => [r.key, r.value]));
+  const discrepancies = await all(
+    "SELECT * FROM funding_goals WHERE discrepancy_flag = 1 ORDER BY id DESC LIMIT 50",
+  );
+  const contributions = await listCommunityContributions({ limit: 40 });
+  return {
+    state,
+    defaults: {
+      fundingGoalId: defaultMap[COMMUNITY_DEFAULT_FUNDING_KEY]
+        ? Number(defaultMap[COMMUNITY_DEFAULT_FUNDING_KEY])
+        : null,
+      devPriorityId: defaultMap[COMMUNITY_DEFAULT_DEV_KEY]
+        ? Number(defaultMap[COMMUNITY_DEFAULT_DEV_KEY])
+        : null,
+    },
+    fundingAll: (await listFundingGoalsAdmin()).map((r) => publicFundingGoal(r)),
+    rounds: await listDevRoundsAdmin(),
+    discrepancies: discrepancies.map((r) => publicFundingGoal(r)),
+    contributions,
+  };
+}
+
 export async function holdTicket(accountId) {
   const id = Number(accountId);
   if (!Number.isInteger(id) || id <= 0) return false;
@@ -2103,7 +3727,7 @@ export async function chargeHeld(accountId) {
         return false;
       }
       const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
-      await insertTicketLedger(execRun, {
+      const ledgerId = await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
@@ -2113,7 +3737,15 @@ export async function chargeHeld(accountId) {
         refId: slices[0]?.lotId ?? null,
         createdAt: now,
       });
+      const contrib = await applySpendContributions(execRun, execGet, {
+        accountId: id,
+        spendLedgerId: ledgerId,
+        slices,
+        ticketsSpent: 1,
+        createdAt: now,
+      });
       await execRun("COMMIT");
+      if (contrib && !contrib.skipped && !contrib.duplicate) noteCommunityDirty();
       return true;
     } catch (err) {
       try { await execRun("ROLLBACK"); } catch (rollbackErr) {
@@ -2144,7 +3776,7 @@ export async function refundTicket(accountId) {
         [now, id],
       );
       const lastSpend = await execGet(
-        `SELECT ref_id FROM ticket_ledger
+        `SELECT id, ref_id FROM ticket_ledger
          WHERE account_id = ? AND kind IN ('charge', 'spend') AND ref_type = 'ticket_lot'
          ORDER BY created_at DESC, id DESC LIMIT 1`,
         [id],
@@ -2173,7 +3805,15 @@ export async function refundTicket(accountId) {
         refId: lotId,
         createdAt: now,
       });
+      let reversed = null;
+      if (lastSpend?.id) {
+        reversed = await reverseContributionForSpend(execRun, execGet, lastSpend.id, {
+          reason: "match_refund",
+          createdAt: now,
+        });
+      }
       await execRun("COMMIT");
+      if (reversed && reversed.id && !reversed.duplicate) noteCommunityDirty();
     } catch (err) {
       try { await execRun("ROLLBACK"); } catch (rollbackErr) {
         logRollbackFailed("refundTicket", rollbackErr);
@@ -2210,7 +3850,7 @@ export async function spendFreeTicket(accountId) {
         return false;
       }
       const slices = await consumeTicketLotsFifo(execRun, execAll, id, 1);
-      await insertTicketLedger(execRun, {
+      const ledgerId = await insertTicketLedger(execRun, {
         accountId: id,
         delta: -1,
         balanceAfter: row.tickets - 1,
@@ -2220,7 +3860,15 @@ export async function spendFreeTicket(accountId) {
         refId: slices[0]?.lotId ?? null,
         createdAt: now,
       });
+      const contrib = await applySpendContributions(execRun, execGet, {
+        accountId: id,
+        spendLedgerId: ledgerId,
+        slices,
+        ticketsSpent: 1,
+        createdAt: now,
+      });
       await execRun("COMMIT");
+      if (contrib && !contrib.skipped && !contrib.duplicate) noteCommunityDirty();
       return true;
     } catch (err) {
       try { await execRun("ROLLBACK"); } catch (rollbackErr) {
@@ -2876,11 +4524,18 @@ export async function clawbackPaypalPurchase(purchaseId, { status = "refunded", 
          WHERE id = ?`,
         [nextStatus, applied, shortfall, now, now, id],
       );
+      const fundingRev = await reverseFundingForPurchaseLotWithAll(execRun, execGet, execAll, {
+        sourceType: "paypal_purchase",
+        sourceId: id,
+        reason: "purchase_clawback",
+        createdAt: now,
+      });
       const purchase = await execGet(
         `SELECT ${PAYPAL_PURCHASE_SELECT} FROM paypal_purchases WHERE id = ?`,
         [id],
       );
       await execRun("COMMIT");
+      if (fundingRev && fundingRev.reversed > 0) noteCommunityDirty();
       return {
         ok: true,
         purchase,

@@ -49,8 +49,8 @@ server/
   bot/                 AI: controller, assess, tactics, formations, economy, commands
   training.js          Training-mode rule tweaks
   trainingBot.js       Scripted training opponent
-  admin/               Staff dashboard (role authz, audit, users, analytics, logs, matches, ops, routes)
-  db.js                SQLite accounts (internal id), tickets, wiki, suggestions, games, admin audit/ledger, paypal_purchases
+  admin/               Staff dashboard (role authz, audit, users, analytics, logs, matches, ops, community, routes)
+  db.js                SQLite accounts (internal id), tickets, ticket_lots, community funding/dev, wiki, suggestions, games, admin audit/ledger, paypal_purchases
   auth.js              Local auth flags (incl. MATCH_CHAT), scrypt passwords, tokens, rate limits, EN/ES name filter (glin-profanity)
   mail.js              Nodemailer verify/reset + news email (SMTP_*, NEWS_MAIL_*)
   newsStore.js         data/news.json load/validate/upsert (ids, lock)
@@ -58,6 +58,7 @@ server/
   newsMailer.js        Newsletter drip worker (campaigns/outbox)
   paypal.js            PayPal Orders v2 (create/capture/webhook verify/settle) + reconcile loop
   paypalPackages.js    Server-only USD ticket package catalog
+  community.js         Community funding / development broadcast + `communityFundingEnabled` re-export (off if Formbar-only login)
   rating.js            MMR/Elo
   news.js              Re-exports loadNews from newsStore.js
   wiki-render.js       Markdown → HTML for wiki
@@ -89,6 +90,7 @@ public/js/             Browser match client (ES modules, imports ../shared/)
   rules.js             In-match how-to diagrams (reads live CONFIG/UNIT_STATS)
   unitInfo.js          In-match unit info overlay (uses shared/unitInfo.js)
   chat.js              In-match chat bubble + panel (Socket.IO `chat`)
+  community.js         /games War Effort panel (funding + development priorities)
   tooltips.js, tutorial.js, audio.js, buyArt.js, suggestion.js, debugRanges.js
 public/app/            Static shell entry HTML (games, lobby-create, play, play3d)
 public/css/            game.css, landing.css, admin.css
@@ -136,11 +138,12 @@ data/                  Runtime DB, news.json (do not commit secrets)
 | Website client cache / deploy freshness | `server/assetVersion.js`, `app.js` static mounts | EJS `?v=` + `views/asset-boot.ejs`; `/js` `/css` `/shared` `/vendor` `no-cache`; `public/js/assetWatch.js` (skip shells); `deploy/nginx.conf.example`; `test/assetVersion.test.js` |
 | Electron / Capacitor packaging | `docs/packaging.md`, `scripts/export-client.js` | `platforms/electron/`, `platforms/capacitor/` (pocketMOTL Kotlin client retired) |
 | Site pages / auth / wiki admin | `app.js` + `views/*.ejs` | `server/db.js`, `wikidocs/` |
-| Admin dashboard (roles, users, analytics, logs, games, ops, news, reports) | `server/admin/` (`routes.js`, `auth.js`, `news.js`, …) | `views/admin/` (incl. `news.ejs`, `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`, newsletter_*), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |
+| Admin dashboard (roles, users, analytics, logs, games, ops, community, news, reports) | `server/admin/` (`routes.js`, `auth.js`, `news.js`, `community.js`, …) | `views/admin/` (incl. `news.ejs`, `community.ejs`, `reports.ejs`), `server/db.js` (`analyticsSnapshot`, audit/ledger/activity/`player_reports`, newsletter_*, community tables), `server/analyticsMetrics.js`, `server/matchSummary.js` (`games.map_id`/`summary_json`), `public/css/admin.css` |
 | News editor / newsletter mailer | `server/newsStore.js`, `server/newsRender.js`, `server/newsMailer.js`, `docs/news-mail.md` | Admin `/admin/news` (admin-only); profile opt-in; `/unsubscribe/news`; DreamHost drip via `NEWS_MAIL_*`; `npm run patch-notes` prepends with `id` |
 | End-of-match Match Review (game-over banner) | `server/matchSummary.js`, `shared/matchReview.js` | `room.decorateState` → `snap.matchReview`; `public/js/matchReview.js` + `main.js` / `main3d.js`; play EJS/`game.css` |
 | Buy Digipog tickets (site) | `GET /buy` → `views/tickets.ejs` | Header ticket link; form partial `views/buy.ejs` posts `POST /tickets` (Formbar-linked only) |
 | Buy PayPal ticket packs | `server/paypal.js`, `server/paypalPackages.js`, `docs/paypal.md` | `/buy` + `views/paypal-store.ejs` / `public/js/paypalBuy.js`; `POST /api/paypal/orders` + capture; `POST /webhooks/paypal`; gated: local/Discord login + credentials; blocked when `formbar_id` set; ledger `paypal_purchase` / `paypal_clawback`; FIFO `ticket_lots` + admin refundable USD; admin user + ops lookup/export |
+| Community funding / development priorities | `server/db.js` (funding_goals, dev_*, community_*), `server/community.js`, `communityFundingEnabled()` in `server/auth.js` | Gated off when Formbar is the only login (`LOCAL_ACCOUNTS` and `DISCORD_LOGIN` both off): no `/games` strip, admin Community nav/routes, or community APIs/socket. When on: spend hooks on charge/spend/rename; match refund + PayPal clawback reversals; `GET/POST /api/v1/community*`; Socket.IO `community` (throttled); `/games` UI via `public/js/community.js` + `views/games.ejs` / `public/app/games.html` (not `/play`); admin `/admin/community`; tests `test/community.test.js`. Paid funding = PayPal + Digipog lots only; legacy/grant never count as paid. Match clients are unchanged. |
 | Suggestion / bug / wiki submit limits | `server/db.js` (`sanitizeUserText`, count/spend helpers) | `app.js` routes, `views/suggestion-modal.ejs`, `views/wiki-edit.ejs` |
 | 2D visuals / HUD | `public/js/render.js`, `board.js` | `public/css/game.css` |
 | 3D visuals | `public/js/scene3d.js`, `main3d.js` | `views/play3d.ejs` |
@@ -151,11 +154,11 @@ data/                  Runtime DB, news.json (do not commit secrets)
 ### Command / socket cheat sheet
 
 - Client → server: `command` (payload to `sim.applyCommand`), also `chat` (`{ text }`), `report` (`{ text }`), `pause`, `pauseSeen`, `settingsOpen`, `leave`, `concede`, `tooltips`, `bgmVolume`, `botSettings`, `debugPlay`.
-- Server → client: `state` (public snapshot; includes pause fields), `lobby` (includes `chatEnabled` / `chatHistory` when chat on, `canReport` / `alreadyReported`, plus pause fields), `chat` (user/system lines), `reportResult`, `go-home`, `replaced`.
+- Server → client: `state` (public snapshot; includes pause fields), `lobby` (includes `chatEnabled` / `chatHistory` when chat on, `canReport` / `alreadyReported`, plus pause fields), `chat` (user/system lines), `community` (throttled funding/dev public snapshot for site listeners; not used by match clients), `reportResult`, `go-home`, `replaced`.
 - Pause: human vs human mutual pause via settings `pause` (chat request + red chat alert until `pauseSeen` or both pause); both pause freezes sim; unpause votes or `UNPAUSE_MS` (60s) countdown resumes. Bot/training-vs-bot: `settingsOpen` freezes while the settings menu is open. Mid-match disconnect: `DISCONNECT_GRACE_MS` (5s) then `RECONNECT_WAIT_MS` (60s) frozen wait (“Waiting for opponent to reconnect”); timeout auto-concedes the disconnected seat.
 - Pre-game lobby overlay (`#lobby`): logo; once an opponent is seated (waiting or countdown) show them and two-click Concede; alone waiting uses Leave (abandon). Leave/concede with both seats filled forfeits (tickets stay charged if already charged).
 - Command `type`s handled in sim: `buy`, `bank`, `targeting`, `townProduce` / `upgrade`, `order`. Chat is not a sim command.
-- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `GET /api/v1/version`, `GET /api/v1/queues`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). `/api/v1` accepts Bearer token or cookie session. Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie; packaged clients also send `auth.protocol`. Deep-link returns allow `motl://auth`.
+- Native/client JSON API: `POST /api/v1/session`, `GET /api/v1/me`, `GET /api/v1/version`, `GET /api/v1/queues`, Formbar `GET /api/v1/login` + callback / `POST /api/v1/login/token`, Discord `GET /api/v1/login/discord` + callback, `POST /api/v1/logout`, `GET /api/v1/lobbies`, `GET /api/v1/match-options`, `GET /api/v1/community`, `GET /api/v1/community/history`, `POST /api/v1/community/select`, `POST /api/v1/tickets`, `POST /api/v1/play` (guest + ranked/listed/join). `/api/v1` accepts Bearer token or cookie session. Socket handshake may send `auth.token` (express-session id) instead of the `lane.sid` cookie; packaged clients also send `auth.protocol`. Deep-link returns allow `motl://auth`.
 - PayPal (browser): `POST /api/paypal/orders` `{ packageId }`, `POST /api/paypal/orders/:orderId/capture`, webhook `POST /webhooks/paypal` (signature-verified).
 
 ### Shared code rule

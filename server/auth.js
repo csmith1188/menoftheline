@@ -77,6 +77,15 @@ export function anyLoginEnabled() {
   return localAccountsEnabled() || formbarLoginEnabled() || discordLoginEnabled();
 }
 
+/**
+ * Community War Effort (funding / development priorities).
+ * Off when Formbar is the only login option — Digipog-only sites use Formbar
+ * tickets, not the paid-ticket funding track shared with PayPal/local.
+ */
+export function communityFundingEnabled() {
+  return localAccountsEnabled() || discordLoginEnabled();
+}
+
 /** In-match player chat (Socket.IO `chat` event + play-page chrome). */
 export function matchChatEnabled() {
   return envFlag("MATCH_CHAT", true);

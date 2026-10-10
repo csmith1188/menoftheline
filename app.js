@@ -193,8 +193,10 @@ import {
 } from "./shared/protocol.js";
 import { resolveAssetVersion } from "./server/assetVersion.js";
 import {
+  buildDiscordVerifiedPayload,
   buildProfilePayload,
   buildStatusSnapshot,
+  buildWarEffortPayload,
   discordBotApiToken,
 } from "./server/discordBotApi.js";
 
@@ -3080,6 +3082,35 @@ app.get("/api/v1/bot/profile", async (req, res) => {
   } catch (err) {
     logger.error({ event: "bot_profile_failed", err: asErr(err) }, "bot profile failed");
     res.status(500).json({ error: "profile unavailable" });
+  }
+});
+
+app.get("/api/v1/bot/wareffort", async (req, res) => {
+  const token = discordBotApiToken();
+  if (!token || !bearerMatches(req.headers.authorization, token)) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    res.json(await buildWarEffortPayload());
+  } catch (err) {
+    logger.error({ event: "bot_wareffort_failed", err: asErr(err) }, "bot wareffort failed");
+    res.status(500).json({ error: "wareffort unavailable" });
+  }
+});
+
+app.get("/api/v1/bot/discord-verified", async (req, res) => {
+  const token = discordBotApiToken();
+  if (!token || !bearerMatches(req.headers.authorization, token)) {
+    res.status(404).end();
+    return;
+  }
+  const discordId = String(req.query.discordId || "").trim() || null;
+  try {
+    res.json(await buildDiscordVerifiedPayload({ discordId }));
+  } catch (err) {
+    logger.error({ event: "bot_discord_verified_failed", err: asErr(err) }, "bot discord-verified failed");
+    res.status(500).json({ error: "discord-verified unavailable" });
   }
 });
 

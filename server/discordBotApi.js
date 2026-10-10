@@ -1,11 +1,26 @@
 /**
- * Authenticated Discord bot HTTP helpers (status / profile payloads).
+ * Authenticated Discord bot HTTP helpers (status / profile / war effort payloads).
  * Used by /api/v1/bot/* on the game process; the bot runs separately.
  */
 
 import { configHealth } from "./admin/ops.js";
-import { accountPlayStats, getAccountByDiscord, publicDisplayName } from "./db.js";
+import { accountEmailVerified, communityFundingEnabled } from "./auth.js";
+import {
+  accountPlayStats,
+  getAccountByDiscord,
+  getCommunityPublicState,
+  listDiscordLinkedEmailAccounts,
+  publicDisplayName,
+} from "./db.js";
 import { workerIndex } from "./owners.js";
+
+/** Linked Discord + non-empty email + MOTL email verified (site rules). */
+export function discordVerifiedRoleEligible(account) {
+  if (!account || !account.discord_id) return false;
+  const email = account.email != null ? String(account.email).trim() : "";
+  if (!email) return false;
+  return accountEmailVerified(account);
+}
 
 export function discordBotApiToken() {
   return String(process.env.DISCORD_BOT_API_TOKEN || "").trim();
@@ -105,4 +120,66 @@ export async function buildProfilePayload(discordId, { self = false } = {}) {
     payload.held = Number(account.held) || 0;
   }
   return payload;
+}
+
+/**
+ * Public War Effort snapshot (funding + development). No player selections.
+ * Matches fields shown on /games community panel.
+ */
+export async function buildWarEffortPayload() {
+  if (!communityFundingEnabled()) {
+    return { enabled: false };
+  }
+  const state = await getCommunityPublicState(null);
+  return {
+    enabled: true,
+    configured: Boolean(state.configured),
+    disclaimer: state.disclaimer || "",
+    round: state.round
+      ? { status: state.round.status, startedAt: state.round.startedAt }
+      : null,
+    funding: (state.funding || []).map((g) => {
+      if (!g) return null;
+      return {
+        title: g.title,
+        description: g.description || "",
+        targetTickets: g.targetTickets,
+        contributedTickets: g.contributedTickets,
+        percentOfTarget: g.percentOfTarget,
+        status: g.status,
+        goalReached: Boolean(g.goalReached),
+      };
+    }),
+    development: (state.development || []).map((d) => {
+      if (!d) return null;
+      return {
+        title: d.title,
+        description: d.description || "",
+        contributedTickets: d.contributedTickets,
+        percent: d.percent,
+        voteStatus: d.voteStatus,
+        implStatus: d.implStatus,
+      };
+    }),
+  };
+}
+
+/**
+ * Discord snowflakes that should hold the verified role.
+ * Optional discordId query: { eligible: boolean } for a single member check.
+ */
+export async function buildDiscordVerifiedPayload({ discordId = null } = {}) {
+  const key = discordId != null ? String(discordId).trim() : "";
+  if (key) {
+    const account = await getAccountByDiscord(key);
+    return { eligible: discordVerifiedRoleEligible(account) };
+  }
+  const rows = await listDiscordLinkedEmailAccounts();
+  const discordIds = [];
+  for (const row of rows) {
+    if (discordVerifiedRoleEligible(row)) {
+      discordIds.push(String(row.discord_id));
+    }
+  }
+  return { discordIds };
 }

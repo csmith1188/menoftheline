@@ -14,11 +14,15 @@ process.env.METRICS_LOG = "0";
 const {
   initDb,
   upsertDiscordAccount,
+  setEmailVerified,
   dbFile,
 } = await import("../server/db.js");
 const {
   buildStatusSnapshot,
   buildProfilePayload,
+  buildWarEffortPayload,
+  buildDiscordVerifiedPayload,
+  discordVerifiedRoleEligible,
 } = await import("../server/discordBotApi.js");
 const { default: sqlite3 } = await import("sqlite3");
 
@@ -85,6 +89,89 @@ test("buildStatusSnapshot counts rooms by status and queues", async () => {
   assert.equal(snap.maintenanceMessage, "patching");
   assert.equal(typeof snap.pid, "number");
   assert.equal(typeof snap.workerIndex, "number");
+});
+
+test("discordVerifiedRoleEligible requires linked Discord, email, and verification", async () => {
+  const prevAuth = process.env.AUTH_EMAIL;
+  process.env.AUTH_EMAIL = "1";
+  try {
+    assert.equal(discordVerifiedRoleEligible(null), false);
+    assert.equal(discordVerifiedRoleEligible({ discord_id: "1", email: null, email_verified_at: Date.now() }), false);
+    assert.equal(discordVerifiedRoleEligible({
+      discord_id: "1",
+      email: "a@example.com",
+      email_verified_at: null,
+    }), false);
+    assert.equal(discordVerifiedRoleEligible({
+      discord_id: "1",
+      email: "a@example.com",
+      email_verified_at: Date.now(),
+    }), true);
+  } finally {
+    if (prevAuth === undefined) delete process.env.AUTH_EMAIL;
+    else process.env.AUTH_EMAIL = prevAuth;
+  }
+});
+
+test("buildDiscordVerifiedPayload lists and checks eligible Discord ids", async () => {
+  const prevAuth = process.env.AUTH_EMAIL;
+  process.env.AUTH_EMAIL = "1";
+  try {
+    const unverified = await upsertDiscordAccount("600100200300", "Unverified Role", {
+      email: "unverified-role@example.com",
+      emailVerified: false,
+    });
+    assert.ok(unverified);
+    const verified = await upsertDiscordAccount("600100200301", "Verified Role", {
+      email: "verified-role@example.com",
+      emailVerified: true,
+    });
+    assert.ok(verified);
+    await setEmailVerified(verified.id, Date.now(), { reason: "test" });
+
+    const one = await buildDiscordVerifiedPayload({ discordId: "600100200301" });
+    assert.equal(one.eligible, true);
+    const no = await buildDiscordVerifiedPayload({ discordId: "600100200300" });
+    assert.equal(no.eligible, false);
+
+    const list = await buildDiscordVerifiedPayload();
+    assert.ok(Array.isArray(list.discordIds));
+    assert.ok(list.discordIds.includes("600100200301"));
+    assert.equal(list.discordIds.includes("600100200300"), false);
+  } finally {
+    if (prevAuth === undefined) delete process.env.AUTH_EMAIL;
+    else process.env.AUTH_EMAIL = prevAuth;
+  }
+});
+
+test("buildWarEffortPayload returns public funding/dev without selections", async () => {
+  const prevLocal = process.env.LOCAL_ACCOUNTS;
+  const prevDiscord = process.env.DISCORD_LOGIN;
+  process.env.LOCAL_ACCOUNTS = "1";
+  process.env.DISCORD_LOGIN = "0";
+  try {
+    const payload = await buildWarEffortPayload();
+    assert.equal(payload.enabled, true);
+    assert.equal("selections" in payload, false);
+    assert.ok(Array.isArray(payload.funding));
+    assert.ok(Array.isArray(payload.development));
+    assert.equal(payload.funding.length, 3);
+    assert.equal(payload.development.length, 3);
+    for (const g of payload.funding) {
+      if (!g) continue;
+      assert.ok("title" in g);
+      assert.ok("contributedTickets" in g);
+      assert.ok("targetTickets" in g);
+      assert.equal("id" in g, false);
+      assert.equal("fulfillmentNotes" in g, false);
+      assert.equal("discrepancyFlag" in g, false);
+    }
+  } finally {
+    if (prevLocal === undefined) delete process.env.LOCAL_ACCOUNTS;
+    else process.env.LOCAL_ACCOUNTS = prevLocal;
+    if (prevDiscord === undefined) delete process.env.DISCORD_LOGIN;
+    else process.env.DISCORD_LOGIN = prevDiscord;
+  }
 });
 
 test("buildProfilePayload returns unlinked and public vs self fields", async () => {
@@ -196,4 +283,25 @@ test("bot API routes require Bearer token and return status/profile", async (t) 
   );
   assert.equal(unlinked.status, 200);
   assert.deepEqual(await unlinked.json(), { linked: false });
+
+  const warHidden = await fetch(`${server.base}/api/v1/bot/wareffort`);
+  assert.equal(warHidden.status, 404);
+
+  const warRes = await fetch(`${server.base}/api/v1/bot/wareffort`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(warRes.status, 200);
+  const war = await warRes.json();
+  assert.equal(typeof war.enabled, "boolean");
+  assert.equal("selections" in war, false);
+
+  const verHidden = await fetch(`${server.base}/api/v1/bot/discord-verified`);
+  assert.equal(verHidden.status, 404);
+
+  const verRes = await fetch(`${server.base}/api/v1/bot/discord-verified`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(verRes.status, 200);
+  const ver = await verRes.json();
+  assert.ok(Array.isArray(ver.discordIds));
 });

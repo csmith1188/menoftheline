@@ -1001,6 +1001,14 @@ export async function getAccountByDiscord(discordId) {
   return row || null;
 }
 
+/** Discord-linked accounts that have an email (for verified-role sync). */
+export async function listDiscordLinkedEmailAccounts() {
+  return all(
+    `SELECT ${ACCOUNT_SELECT} FROM accounts
+     WHERE discord_id IS NOT NULL AND email IS NOT NULL AND deleted_at IS NULL`,
+  );
+}
+
 /** Resolve profile URL id: internal account id, else legacy Formbar id. */
 export async function findAccountForProfile(rawId) {
   const id = Number(rawId);

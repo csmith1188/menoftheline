@@ -4,7 +4,8 @@
  * Calls authenticated /api/v1/bot/* on the game server. Run exactly one instance.
  *
  * Env: DISCORD_BOT_TOKEN, DISCORD_BOT_API_TOKEN, MOTL_API_URL (or THIS_URL)
- * Optional: DISCORD_BOT_GUILD_ID for instant guild command registration
+ * Optional: DISCORD_BOT_GUILD_ID (slash commands + verified role guild)
+ * Optional: DISCORD_VERIFIED_ROLE_ID — assign role when MOTL email is verified
  *
  *   npm run discord-bot
  */
@@ -46,6 +47,11 @@ const BOT_TOKEN = requireEnv("DISCORD_BOT_TOKEN");
 const API_TOKEN = requireEnv("DISCORD_BOT_API_TOKEN");
 const API_BASE = apiBaseUrl();
 const GUILD_ID = String(process.env.DISCORD_BOT_GUILD_ID || "").trim();
+const VERIFIED_ROLE_ID = String(process.env.DISCORD_VERIFIED_ROLE_ID || "").trim();
+const VERIFIED_ROLE_SYNC_MS = Math.max(
+  60_000,
+  Number(process.env.DISCORD_VERIFIED_ROLE_SYNC_MS) || 5 * 60_000,
+);
 
 const COMMANDS = [
   new SlashCommandBuilder()
@@ -59,6 +65,10 @@ const COMMANDS = [
       .setName("user")
       .setDescription("Discord user (defaults to you)")
       .setRequired(false))
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("wareffort")
+    .setDescription("Community funding and development priorities")
     .toJSON(),
 ];
 
@@ -104,7 +114,7 @@ function formatPlayDuration(ms) {
 
 function statusEmbed(snap) {
   const queues = snap.queues || {};
-  const paused = snap.matchmakingPaused ? "Yes" : "No";
+  // snap also includes version, nodeEnv, sockets, matchmakingPaused, workerIndex, pid — kept for later use
   const maint = snap.maintenanceMessage
     ? String(snap.maintenanceMessage).slice(0, 200)
     : "—";
@@ -112,8 +122,6 @@ function statusEmbed(snap) {
     .setTitle("Men of the Line — Status")
     .setColor(0x2f5d3a)
     .addFields(
-      { name: "Version", value: String(snap.version || "—"), inline: true },
-      { name: "Env", value: String(snap.nodeEnv || "—"), inline: true },
       { name: "Uptime", value: formatUptime(snap.uptimeSec), inline: true },
       {
         name: "Rooms",
@@ -131,20 +139,14 @@ function statusEmbed(snap) {
         inline: false,
       },
       { name: "Listed lobbies", value: String(snap.lobbies ?? 0), inline: true },
-      { name: "Sockets", value: String(snap.sockets ?? 0), inline: true },
-      { name: "Matchmaking paused", value: paused, inline: true },
       { name: "Maintenance", value: maint, inline: false },
-      {
-        name: "Worker",
-        value: `index ${snap.workerIndex ?? 0} · pid ${snap.pid ?? "—"}`,
-        inline: false,
-      },
     )
     .setTimestamp();
 }
 
 function profileEmbed(profile, base) {
-  const embed = new EmbedBuilder()
+  // profile.tickets / profile.held still come back for self lookups — kept for later use
+  return new EmbedBuilder()
     .setTitle(profile.name || "Player")
     .setURL(`${base}${profile.profilePath}`)
     .setColor(0x3a4a6b)
@@ -160,12 +162,63 @@ function profileEmbed(profile, base) {
       },
     )
     .setTimestamp();
-  if (profile.tickets != null) {
-    embed.addFields({
-      name: "Tickets",
-      value: `${profile.tickets}${profile.held ? ` (${profile.held} held)` : ""}`,
-      inline: true,
+}
+
+function clip(text, max = 200) {
+  const s = String(text || "").trim();
+  if (!s) return "—";
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function warEffortEmbed(data, base) {
+  const fields = [];
+  const funding = data.funding || [];
+  for (let i = 0; i < funding.length; i += 1) {
+    const g = funding[i];
+    if (!g) {
+      fields.push({ name: `Funding ${i + 1}`, value: "Not configured", inline: false });
+      continue;
+    }
+    const badges = [];
+    if (g.goalReached) badges.push("goal reached");
+    if (g.status === "fulfilled") badges.push("fulfilled");
+    const badgeSuffix = badges.length ? ` · ${badges.join(", ")}` : "";
+    fields.push({
+      name: `Funding: ${clip(g.title, 80)}`,
+      value: [
+        clip(g.description),
+        `${g.contributedTickets ?? 0}/${g.targetTickets ?? 0} tickets (${g.percentOfTarget ?? 0}%)${badgeSuffix}`,
+      ].join("\n"),
+      inline: false,
     });
+  }
+  const development = data.development || [];
+  for (let i = 0; i < development.length; i += 1) {
+    const d = development[i];
+    if (!d) {
+      fields.push({ name: `Development ${i + 1}`, value: "Not configured", inline: false });
+      continue;
+    }
+    fields.push({
+      name: `Dev: ${clip(d.title, 80)}`,
+      value: [
+        clip(d.description),
+        `${d.percent ?? 0}% · ${d.contributedTickets ?? 0} tickets`,
+      ].join("\n"),
+      inline: false,
+    });
+  }
+  if (!fields.length) {
+    fields.push({ name: "Status", value: "No goals configured yet.", inline: false });
+  }
+  const embed = new EmbedBuilder()
+    .setTitle("War Effort")
+    .setURL(`${base}/games`)
+    .setColor(0x6b4a2a)
+    .addFields(fields)
+    .setTimestamp();
+  if (data.disclaimer) {
+    embed.setFooter({ text: clip(data.disclaimer, 200) });
   }
   return embed;
 }
@@ -222,8 +275,119 @@ async function handleProfile(interaction) {
   }
 }
 
+async function handleWarEffort(interaction) {
+  await interaction.deferReply();
+  try {
+    const data = await motlFetch("/api/v1/bot/wareffort");
+    if (!data.enabled) {
+      await interaction.editReply({ content: "War Effort is not enabled on this server." });
+      return;
+    }
+    await interaction.editReply({ embeds: [warEffortEmbed(data, API_BASE)] });
+  } catch (err) {
+    log.warn({ event: "discord_bot_wareffort_failed", err: asErr(err) }, "wareffort command failed");
+    await interaction.editReply({ content: "Men of the Line server unreachable." });
+  }
+}
+
+function verifiedRoleSyncEnabled() {
+  return Boolean(GUILD_ID && VERIFIED_ROLE_ID);
+}
+
+async function applyVerifiedRole(member, eligible) {
+  if (!member || !VERIFIED_ROLE_ID) return;
+  const has = member.roles.cache.has(VERIFIED_ROLE_ID);
+  if (eligible && !has) {
+    await member.roles.add(VERIFIED_ROLE_ID, "MOTL verified email");
+    log.info({ event: "discord_verified_role_add", userId: member.id }, "added verified role");
+  } else if (!eligible && has) {
+    await member.roles.remove(VERIFIED_ROLE_ID, "MOTL email no longer verified");
+    log.info({ event: "discord_verified_role_remove", userId: member.id }, "removed verified role");
+  }
+}
+
+async function syncMemberVerifiedRole(member) {
+  if (!verifiedRoleSyncEnabled() || !member || member.user?.bot) return;
+  try {
+    const data = await motlFetch(
+      `/api/v1/bot/discord-verified?discordId=${encodeURIComponent(member.id)}`,
+    );
+    await applyVerifiedRole(member, Boolean(data.eligible));
+  } catch (err) {
+    log.warn({
+      event: "discord_verified_role_member_failed",
+      userId: member.id,
+      err: asErr(err),
+    }, "verified role member sync failed");
+  }
+}
+
+async function syncVerifiedRoles(client) {
+  if (!verifiedRoleSyncEnabled()) return;
+  let guild;
+  try {
+    guild = await client.guilds.fetch(GUILD_ID);
+  } catch (err) {
+    log.warn({ event: "discord_verified_role_guild_failed", err: asErr(err) }, "guild fetch failed");
+    return;
+  }
+  let want;
+  try {
+    const data = await motlFetch("/api/v1/bot/discord-verified");
+    want = new Set((data.discordIds || []).map(String));
+  } catch (err) {
+    log.warn({ event: "discord_verified_role_list_failed", err: asErr(err) }, "verified list fetch failed");
+    return;
+  }
+
+  let added = 0;
+  let removed = 0;
+  for (const discordId of want) {
+    try {
+      const member = await guild.members.fetch(discordId);
+      if (!member.roles.cache.has(VERIFIED_ROLE_ID)) {
+        await member.roles.add(VERIFIED_ROLE_ID, "MOTL verified email");
+        added += 1;
+      }
+    } catch {
+      // Member not in guild or role hierarchy error — skip
+    }
+  }
+
+  try {
+    await guild.members.fetch();
+    const role = await guild.roles.fetch(VERIFIED_ROLE_ID);
+    if (role) {
+      for (const member of role.members.values()) {
+        if (member.user?.bot) continue;
+        if (!want.has(member.id)) {
+          try {
+            await member.roles.remove(VERIFIED_ROLE_ID, "MOTL email no longer verified");
+            removed += 1;
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log.warn({ event: "discord_verified_role_sweep_failed", err: asErr(err) }, "verified role sweep failed");
+  }
+
+  log.info({
+    event: "discord_verified_role_sync",
+    eligible: want.size,
+    added,
+    removed,
+  }, "verified role sync complete");
+}
+
 async function main() {
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const intents = [GatewayIntentBits.Guilds];
+  if (verifiedRoleSyncEnabled()) {
+    intents.push(GatewayIntentBits.GuildMembers);
+  }
+  const client = new Client({ intents });
 
   client.once(Events.ClientReady, async () => {
     log.info({ event: "discord_bot_ready", user: client.user?.tag }, "Discord bot ready");
@@ -232,6 +396,32 @@ async function main() {
     } catch (err) {
       log.error({ event: "discord_bot_register_failed", err: asErr(err) }, "command registration failed");
     }
+    if (verifiedRoleSyncEnabled()) {
+      log.info({
+        event: "discord_verified_role_enabled",
+        guildId: GUILD_ID,
+        roleId: VERIFIED_ROLE_ID,
+        syncMs: VERIFIED_ROLE_SYNC_MS,
+      }, "verified role sync enabled");
+      syncVerifiedRoles(client).catch((err) => {
+        log.warn({ event: "discord_verified_role_sync_failed", err: asErr(err) }, "initial verified sync failed");
+      });
+      const timer = setInterval(() => {
+        syncVerifiedRoles(client).catch((err) => {
+          log.warn({ event: "discord_verified_role_sync_failed", err: asErr(err) }, "verified sync failed");
+        });
+      }, VERIFIED_ROLE_SYNC_MS);
+      timer.unref?.();
+    } else if (VERIFIED_ROLE_ID && !GUILD_ID) {
+      log.warn({
+        event: "discord_verified_role_needs_guild",
+      }, "DISCORD_VERIFIED_ROLE_ID set but DISCORD_BOT_GUILD_ID missing; role sync disabled");
+    }
+  });
+
+  client.on(Events.GuildMemberAdd, async (member) => {
+    if (String(member.guild?.id) !== GUILD_ID) return;
+    await syncMemberVerifiedRole(member);
   });
 
   client.on("interactionCreate", async (interaction) => {
@@ -239,6 +429,7 @@ async function main() {
     try {
       if (interaction.commandName === "status") await handleStatus(interaction);
       else if (interaction.commandName === "profile") await handleProfile(interaction);
+      else if (interaction.commandName === "wareffort") await handleWarEffort(interaction);
     } catch (err) {
       log.error({ event: "discord_bot_interaction_failed", err: asErr(err) }, "interaction failed");
       const msg = { content: "Something went wrong.", ephemeral: true };
